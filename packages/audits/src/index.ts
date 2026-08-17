@@ -23,6 +23,7 @@ export {
 } from "./content.js";
 export {
   auditRenderArtifacts,
+  type RenderAuditOptions,
 } from "./surface-lineage.js";
 export {
   auditFigureArtifacts,
@@ -49,6 +50,7 @@ export interface ProposalAuditInput {
   readonly root: string;
   readonly docx: DocxAuditInput;
   readonly renderManifestPath: string;
+  readonly trustedPdftotextPath?: string;
   readonly figures: readonly FigureAuditInput[];
   readonly outputPath: string;
 }
@@ -64,7 +66,7 @@ export interface ProposalAuditReport {
 export async function auditProposal(input: ProposalAuditInput): Promise<ProposalAuditReport> {
   const combined = combineSlices(await Promise.all([
     auditDocxArtifacts(input.docx),
-    auditRenderArtifacts(input.renderManifestPath),
+    auditRenderArtifacts(input.renderManifestPath, { trustedPdftotextPath: input.trustedPdftotextPath }),
     auditFigureArtifacts(input.figures),
     auditReleaseReadiness(resolve(input.root)),
     auditCrossSurfaceLineage(input.docx.docxPath, input.renderManifestPath),

@@ -43,14 +43,23 @@ describe("artifact-backed proposal audits", () => {
   test("recomputes PDF, page image, and searchable Korean text lineage from real files", async () => {
     const fixture = await renderFixture();
 
-    const passed = await auditRenderArtifacts(fixture.manifestPath);
+    const passed = await auditRenderArtifacts(fixture.manifestPath, { trustedPdftotextPath: fixture.extractorPath });
     expect(passed.status).toBe("PASS");
     expect(passed.artifacts.map((artifact) => artifact.sha256)).toContain(await sha256File(fixture.pdfPath));
 
     await writeFile(fixture.pagePath, "stale-page", "utf8");
-    const blocked = await auditRenderArtifacts(fixture.manifestPath);
+    const blocked = await auditRenderArtifacts(fixture.manifestPath, { trustedPdftotextPath: fixture.extractorPath });
     expect(blocked.status).toBe("BLOCKED");
     expect(blocked.findings.map((finding) => finding.code)).toContain("KPP_DESIGN_SURFACE_LINEAGE");
+  });
+
+  test("does not execute a pdftotext path supplied only by an untrusted render manifest", async () => {
+    const fixture = await renderFixture();
+
+    const result = await auditRenderArtifacts(fixture.manifestPath);
+
+    expect(result.status).toBe("BLOCKED");
+    expect(result.findings.map((finding) => finding.code)).toContain("KPP_RENDER_EXTRACTOR_UNTRUSTED");
   });
 
   test("requires structural Gantt roles in the actual deterministic SVG", async () => {
@@ -93,6 +102,7 @@ describe("artifact-backed proposal audits", () => {
       root,
       docx,
       renderManifestPath: render.manifestPath,
+      trustedPdftotextPath: render.extractorPath,
       figures: [figure],
       outputPath,
     });
@@ -101,6 +111,7 @@ describe("artifact-backed proposal audits", () => {
       root,
       docx,
       renderManifestPath: render.manifestPath,
+      trustedPdftotextPath: render.extractorPath,
       figures: [figure],
       outputPath,
     });
@@ -121,6 +132,7 @@ describe("artifact-backed proposal audits", () => {
       root,
       docx,
       renderManifestPath: render.manifestPath,
+      trustedPdftotextPath: render.extractorPath,
       figures: [figure],
       outputPath: join(root, "audit", "audit.json"),
     });
@@ -188,6 +200,7 @@ async function renderFixture(docxInput?: string): Promise<{
   readonly manifestPath: string;
   readonly pdfPath: string;
   readonly pagePath: string;
+  readonly extractorPath: string;
 }> {
   const root = await makeRoot("kpp-audit-render-");
   const docxPath = docxInput ?? join(root, "document.docx");
@@ -217,7 +230,7 @@ async function renderFixture(docxInput?: string): Promise<{
       hangulCodePointCount: 9,
     },
   }, null, 2)}\n`, "utf8");
-  return { manifestPath, pdfPath, pagePath };
+  return { manifestPath, pdfPath, pagePath, extractorPath };
 }
 
 async function figureFixture(): Promise<{

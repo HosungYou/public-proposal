@@ -11,7 +11,19 @@ import {
   type AuditSlice,
 } from "./source.js";
 
-export async function auditRenderArtifacts(manifestPath: string): Promise<AuditSlice> {
+export interface RenderAuditOptions {
+  readonly trustedPdftotextPath?: string;
+}
+
+const APPROVED_PDFTOTEXT_PATHS = [
+  "/opt/homebrew/bin/pdftotext",
+  "/usr/local/bin/pdftotext",
+] as const;
+
+export async function auditRenderArtifacts(
+  manifestPath: string,
+  options: RenderAuditOptions = {},
+): Promise<AuditSlice> {
   const findings: AuditFinding[] = [];
   const artifacts: AuditArtifact[] = [];
   try {
@@ -65,6 +77,11 @@ export async function auditRenderArtifacts(manifestPath: string): Promise<AuditS
     }
     if (typeof extractor?.path !== "string" || typeof proof?.textSha256 !== "string") {
       findings.push(blocked("KPP_RENDER_SEARCHABLE_KOREAN", "검색 가능한 한글 proof 또는 extractor가 없습니다.", { path: manifestPath }));
+    } else if (!trustedExtractor(extractor.path, options)) {
+      findings.push(blocked("KPP_RENDER_EXTRACTOR_UNTRUSTED", "render manifest가 지정한 extractor는 실행 권한의 근거가 될 수 없습니다.", {
+        path: extractor.path,
+        expected: options.trustedPdftotextPath ?? APPROVED_PDFTOTEXT_PATHS,
+      }));
     } else {
       const metadata = await stat(extractor.path);
       if (!metadata.isFile()) throw new Error("pdftotext path is not a regular file");
@@ -89,6 +106,11 @@ export async function auditRenderArtifacts(manifestPath: string): Promise<AuditS
     }));
   }
   return makeSlice(findings, artifacts);
+}
+
+function trustedExtractor(path: string, options: RenderAuditOptions): boolean {
+  return options.trustedPdftotextPath === path
+    || (options.trustedPdftotextPath === undefined && APPROVED_PDFTOTEXT_PATHS.includes(path as typeof APPROVED_PDFTOTEXT_PATHS[number]));
 }
 
 function objectAt(value: Record<string, unknown>, ...keys: string[]): Record<string, unknown> | undefined {
