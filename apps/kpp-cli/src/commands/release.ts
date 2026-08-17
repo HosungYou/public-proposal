@@ -24,7 +24,6 @@ export interface ReleaseProjectResult {
 }
 
 interface ReleaseFile {
-  readonly sourcePath: string;
   readonly releasePath: string;
   readonly sha256: string;
   readonly bytes: number;
@@ -173,7 +172,7 @@ async function copyAllowlistedArtifacts(root: string, staging: string, inputs: r
       throw new KppError("KPP_RELEASE_COPY_INVALID", "release artifact copy의 hash를 검증할 수 없습니다.", { path: source, stage: "HUMAN_APPROVED" });
     }
     await syncFile(destination);
-    copied.push({ sourcePath: source, releasePath, sha256: destinationHash, bytes: metadata.size });
+    copied.push({ releasePath, sha256: destinationHash, bytes: metadata.size });
   }
   return copied.sort((left, right) => left.releasePath.localeCompare(right.releasePath));
 }
@@ -182,7 +181,7 @@ function isSubmissionArtifact(root: string, path: string): boolean {
   const canonical = resolve(path);
   if (!isWithin(root, canonical)) return false;
   const local = relative(root, canonical);
-  const isBuildGeneration = /^\.kpp-build-[a-f0-9]{16}\/generations\/[^/]+\/(?:document\.docx|manifest\.json)$/u.test(local);
+  const isBuildGeneration = /^(?:build\/)?\.kpp-build-[a-f0-9]{16}\/generations\/[^/]+\/(?:document\.docx|manifest\.json)$/u.test(local);
   const isRenderGeneration = /^rendered\/generations\/[^/]+\/(?:render\.json|proposal\.pdf|page-\d{4}\.png)$/u.test(local);
   return local === "audit/audit.json" || local === "audit/docx-geometry.json" || isBuildGeneration || isRenderGeneration;
 }

@@ -82,7 +82,9 @@ export async function buildProject(
   }
 
   const pythonPath = await resolveManagedPython(options.pythonPath);
+  const generationsBefore = await existingGenerationPaths(root);
   let generationPath: string | undefined;
+  let receiptCreated = false;
   try {
     const result = await executeFile(pythonPath, ["-c", PYTHON_BRIDGE, requestPath], {
       cwd: root,
@@ -108,6 +110,7 @@ export async function buildProject(
       output: receiptPath,
       toolVersion: BUILDER_VERSION,
     });
+    receiptCreated = true;
     await advanceProject(root, "BUILT");
     return {
       state: "BUILT",
@@ -122,8 +125,8 @@ export async function buildProject(
     // remove only the generation and compatibility aliases created by this call.
     const state = await verifyProjectState(root).catch(() => undefined);
     if (state?.state !== "BUILT") {
-      await removeUnpublishedBuild(outputs, generationPath);
-      await rm(receiptPath, { force: true });
+      await removeUnpublishedBuild(outputs, generationPath, generationsBefore);
+      if (receiptCreated) await rm(receiptPath, { force: true });
     }
     throw error;
   }
@@ -423,14 +426,47 @@ async function outputPathWithin(root: string, input: string): Promise<string> {
   if (metadata?.isSymbolicLink()) {
     throw new KppError("KPP_BUILD_OUTPUT_SYMLINK", "Build output symlink는 허용되지 않습니다.", { path, stage: "CONTENT_APPROVED" });
   }
+  if (metadata !== undefined) {
+    throw new KppError("KPP_BUILD_OUTPUT_EXISTS", "Build output은 이번 실행 전 비어 있는 compiler-owned 경로여야 합니다.", {
+      path,
+      stage: "CONTENT_APPROVED",
+    });
+  }
+  const outputRoot = await realpath(join(root, "build")).catch(() => undefined);
+  if (outputRoot === undefined || parent !== outputRoot) {
+    throw new KppError("KPP_BUILD_OUTPUT_RESERVED", "Build output은 프로젝트의 compiler-owned build 디렉터리에 있어야 합니다.", {
+      expected: join(root, "build"),
+      actual: parent ?? dirname(path),
+      stage: "CONTENT_APPROVED",
+    });
+  }
   return path;
 }
 
-async function removeUnpublishedBuild(outputs: BuildRequestPaths, generationPath: string | undefined): Promise<void> {
+async function existingGenerationPaths(root: string): Promise<ReadonlySet<string>> {
+  const outputRoot = join(root, "build");
+  const result = new Set<string>();
+  for (const bundle of await readdir(outputRoot, { withFileTypes: true })) {
+    if (!bundle.isDirectory() || !/^\.kpp-build-[a-f0-9]{16}$/u.test(bundle.name)) continue;
+    const generations = join(outputRoot, bundle.name, "generations");
+    for (const generation of await readdir(generations, { withFileTypes: true }).catch(() => [])) {
+      if (generation.isDirectory()) result.add(join(generations, generation.name));
+    }
+  }
+  return result;
+}
+
+async function removeUnpublishedBuild(
+  outputs: BuildRequestPaths,
+  generationPath: string | undefined,
+  generationsBefore: ReadonlySet<string>,
+): Promise<void> {
   await Promise.all([
     rm(outputs.docxPath, { force: true }),
     rm(outputs.manifestPath, { force: true }),
-    ...(generationPath === undefined ? [] : [rm(generationPath, { recursive: true, force: true })]),
+    ...(generationPath === undefined || generationsBefore.has(generationPath)
+      ? []
+      : [rm(generationPath, { recursive: true, force: true })]),
   ]);
 }
 

@@ -1,7 +1,8 @@
 import { access, chmod, copyFile, mkdir, mkdtemp, readFile, readdir, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
-import { advanceProject, initializeProject, sha256File, writeReceipt } from "@kpp/core";
+import { advanceProject, initializeProject, sha256File, verifyProjectState, writeReceipt } from "@kpp/core";
+import { R08_TOKEN_PROFILE_SHA256, renderFigureArtifact, type GanttFigureSpec } from "@kpp/renderers";
 import { afterEach, describe, expect, it } from "vitest";
 import { buildProject } from "../src/commands/build.js";
 import { auditProject } from "../src/commands/audit.js";
@@ -21,15 +22,21 @@ describe("verified proposal release flow", () => {
     }));
   });
 
-  it("exposes governed build, audit, approval, and release entrypoints", async () => {
-    const root = await mkdtemp(join(tmpdir(), "kpp-release-contract-"));
-    roots.push(root);
-    expect(buildProject).toBeTypeOf("function");
-    expect(auditProject).toBeTypeOf("function");
-    expect(approveProject).toBeTypeOf("function");
-    expect(releaseProject).toBeTypeOf("function");
-    await expect(access(join(root, "release"))).rejects.toBeDefined();
-    await expect(readFile(join(root, "release.json"), "utf8")).rejects.toBeDefined();
+  it("rejects an existing locked input as an output before the worker and preserves its bytes", async () => {
+    const fixture = await createContentApprovedProject(roots);
+    const lockedPath = join(fixture.root, "content", "page-plan.json");
+    const before = await sha256File(lockedPath);
+    const request = JSON.parse(await readFile(fixture.requestPath, "utf8")) as {
+      output: { manifestPath: string };
+    };
+    request.output.manifestPath = lockedPath;
+    await writeFile(fixture.requestPath, `${JSON.stringify(request)}\n`);
+
+    await expect(buildProject(fixture.root, { requestPath: fixture.requestPath }))
+      .rejects.toMatchObject({ code: "KPP_BUILD_OUTPUT_EXISTS" });
+    expect(await sha256File(lockedPath)).toBe(before);
+    expect((await verifyProjectState(fixture.root)).state).toBe("CONTENT_APPROVED");
+    await expect(access(join(fixture.root, "receipts", "build.json"))).rejects.toBeDefined();
   });
 
   it("builds a locked request, renders it, and blocks approval after a blocked technical audit", async () => {
@@ -56,6 +63,38 @@ describe("verified proposal release flow", () => {
       outputParent: releaseOutput,
     })).rejects.toMatchObject({ code: "KPP_RELEASE_STATE" });
     await expect(access(releaseOutput)).rejects.toBeDefined();
+  }, 60_000);
+
+  it("runs managed build, real render, file-backed PASS audit, human approval, and immutable release", async () => {
+    const fixture = await createContentApprovedProject(roots, true);
+    const built = await buildProject(fixture.root, { requestPath: fixture.requestPath });
+    expect((await verifyProjectState(fixture.root)).state).toBe("BUILT");
+    const rendered = await renderProject(fixture.root, { docxPath: built.docxPath });
+    expect((await verifyProjectState(fixture.root)).state).toBe("RENDERED");
+    const audited = await auditProject(fixture.root, {
+      docxPath: built.docxPath,
+      buildManifestPath: built.manifestPath,
+      renderManifestPath: rendered.manifestPath,
+      figures: fixture.auditFigures,
+    });
+    expect(audited.report).toMatchObject({ status: "PASS", humanBoundary: "TECHNICAL_GATE_ONLY" });
+    expect(audited.state).toBe("AUDITED");
+    expect((await verifyProjectState(fixture.root)).state).toBe("AUDITED");
+    const approved = await approveProject(fixture.root, { approvedBy: "제출책임자", auditPath: audited.auditPath });
+    expect(approved.state).toBe("HUMAN_APPROVED");
+    const output = join(fixture.root, "release-output");
+    const released = await releaseProject(fixture.root, { approvalPath: approved.receiptPath, outputParent: output });
+    expect(released.state).toBe("RELEASED");
+    expect((await verifyProjectState(fixture.root)).state).toBe("RELEASED");
+    const manifestText = await readFile(released.manifestPath, "utf8");
+    expect(manifestText).not.toContain(fixture.root);
+    expect(manifestText).not.toContain("sourcePath");
+    expect(await listedFiles(released.releasePath)).toEqual(expect.arrayContaining([
+      "submission/document.docx",
+      "submission/proposal.pdf",
+      "audit/audit.json",
+      "release.json",
+    ]));
   }, 60_000);
 
   it("rejects a BuildRequest body that is not the approved authoring response", async () => {
@@ -88,7 +127,8 @@ describe("verified proposal release flow", () => {
     const output = join(fixture.root, "release-output");
     const released = await releaseProject(fixture.root, { approvalPath: approved.receiptPath, outputParent: output });
     expect(released.state).toBe("RELEASED");
-    const manifest = JSON.parse(await readFile(released.manifestPath, "utf8")) as { humanBoundary: string; files: { releasePath: string }[] };
+    const manifestText = await readFile(released.manifestPath, "utf8");
+    const manifest = JSON.parse(manifestText) as { humanBoundary: string; files: { releasePath: string }[] };
     expect(manifest.humanBoundary).toBe("HUMAN_APPROVED");
     expect(manifest.files.map((file) => file.releasePath)).toEqual(expect.arrayContaining([
       "submission/document.docx",
@@ -99,6 +139,10 @@ describe("verified proposal release flow", () => {
     const members = await listedFiles(released.releasePath);
     expect(members).toContain("release.json");
     expect(members.some((path) => path.includes("sources/") || path.includes("receipts/") || path.includes(".omo/"))).toBe(false);
+    expect(manifestText).not.toContain(fixture.root);
+    expect(manifestText).not.toContain("sourcePath");
+    expect(manifestText).not.toContain("receipts/");
+    expect(manifestText).not.toContain(".omo/");
   });
 
   it("rejects a changed PDF after human approval without publishing or changing project state", async () => {
@@ -114,13 +158,49 @@ describe("verified proposal release flow", () => {
   });
 });
 
-async function createContentApprovedProject(roots: string[]): Promise<{ readonly root: string; readonly requestPath: string }> {
+async function createContentApprovedProject(
+  roots: string[],
+  withFigure = false,
+): Promise<{
+  readonly root: string;
+  readonly requestPath: string;
+  readonly auditFigures: readonly { readonly specPath: string; readonly svgPath: string; readonly manifestPath: string }[];
+}> {
   const root = await mkdtemp(join(tmpdir(), "kpp-release-build-"));
   roots.push(root);
   await initializeProject(root, { projectId: "release-build-fixture" });
+  const semanticFigure: GanttFigureSpec = {
+    figureId: "FIG-GANTT-01",
+    family: "gantt",
+    title: "100일 연구 수행계획",
+    caption: "그림 1. 연구 수행계획과 검토 관문",
+    evidenceIds: ["EV-01"],
+    claimIds: ["CLM-01"],
+    inputKind: "semantic",
+    tokenProfileHash: R08_TOKEN_PROFILE_SHA256,
+    data: {
+      kind: "time_axis",
+      periods: ["D1", "D50", "D100"],
+      workPackages: [{ id: "WP1", label: "현황 진단", owner: "연구책임자", start: 0, end: 2, evidenceIds: ["EV-01"] }],
+      milestones: [{ id: "M1", label: "최종 검토", period: 2, owner: "발주기관", evidenceIds: ["EV-01"], acceptance: "승인" }],
+    },
+  };
+  const plannedFigure = {
+    figureId: semanticFigure.figureId,
+    requirementId: "REQ-01",
+    pageId: "P-01",
+    title: semanticFigure.title,
+    intent: "schedule",
+    dataShape: "time_axis",
+    decisionTask: "연구 단계와 검토 관문을 확인한다.",
+    claimIds: ["CLM-01"],
+    evidenceIds: ["EV-01"],
+    family: "gantt",
+    renderer: "svg-gantt",
+  };
   const pagePlan = {
     schemaVersion: "1.0.0",
-    pages: [{ pageId: "P-01", requirementId: "REQ-01", pageRole: "research_method", surfaceTemplateId: "r08-research-method-v1", claimIds: ["CLM-01"], figureSpecs: [] }],
+    pages: [{ pageId: "P-01", requirementId: "REQ-01", pageRole: "research_method", surfaceTemplateId: "r08-research-method-v1", claimIds: ["CLM-01"], figureSpecs: withFigure ? [plannedFigure] : [] }],
   };
   const evidenceLedger = {
     schemaVersion: "1.0.0",
@@ -135,23 +215,61 @@ async function createContentApprovedProject(roots: string[]): Promise<{ readonly
   await writeFile(join(root, "evidence", "evidence-ledger.json"), `${JSON.stringify(evidenceLedger)}\n`);
   await writeFile(join(root, "evidence", "source.txt"), "synthetic source\n");
   await writeFile(join(root, "figures", "design-profile.json"), `${JSON.stringify(profile)}\n`);
+  const auditFigures: { specPath: string; svgPath: string; manifestPath: string }[] = [];
+  let embeddedFigure: Record<string, unknown> | undefined;
+  if (withFigure) {
+    const imagePath = join(root, "figures", "FIG-GANTT-01.png");
+    await copyFile(resolve("fixtures/valid/r08-reference/ooxml/word/media/image1.png"), imagePath);
+    embeddedFigure = {
+      figureId: semanticFigure.figureId,
+      requirementId: "REQ-01",
+      pageId: "P-01",
+      claimIds: ["CLM-01"],
+      renderer: "svg-gantt",
+      path: imagePath,
+      sha256: await sha256File(imagePath),
+      format: "png",
+      caption: semanticFigure.caption,
+      evidenceIds: ["EV-01"],
+      widthDxa: 7200,
+    };
+    const semantic = await renderFigureArtifact(semanticFigure);
+    const specPath = join(root, "figures", "FIG-GANTT-01.spec.json");
+    const svgPath = join(root, "figures", "FIG-GANTT-01.svg");
+    const manifestPath = join(root, "figures", "FIG-GANTT-01.render.json");
+    await writeFile(specPath, `${JSON.stringify(semanticFigure)}\n`);
+    await writeFile(svgPath, semantic.svg);
+    await writeFile(manifestPath, `${JSON.stringify(semantic.manifest)}\n`);
+    auditFigures.push({ specPath, svgPath, manifestPath });
+  }
   const approvedText = "공식 근거와 현장 검증을 연결하여 연구 결과의 활용 가능성을 높인다.";
   const tables = [{ tableId: "TBL-01", caption: "표 1. 연구 단계별 산출물", headers: ["단계", "산출물"], rows: [["착수", "연구설계서"]], columnWidthsDxa: [2400, 6000] }];
   const responsePath = join(root, "content", "authoring-response.json");
   const structurePath = join(root, "content", "build-structure.json");
   const figureManifestPath = join(root, "figures", "build-figure-manifest.json");
-  const figureManifest = { schemaVersion: "1.0.0", figures: [] };
+  const figureManifest = { schemaVersion: "1.0.0", figures: embeddedFigure === undefined ? [] : [embeddedFigure] };
   await writeFile(responsePath, `${JSON.stringify({ schemaVersion: "1.0.0", blocks: [{ pageId: "P-01", claimIds: ["CLM-01"], evidenceIds: ["EV-01"], status: "provisional", text: approvedText, evaluatorAnswer: "합성 평가자 답변", pendingBlankFieldIds: [] }] })}\n`);
-  await writeFile(structurePath, `${JSON.stringify({ schemaVersion: "1.0.0", blocks: [{ pageId: "P-01", heading: "1. 연구 수행방법", tables, figureIds: [] }] })}\n`);
+  const figureIds = withFigure ? [semanticFigure.figureId] : [];
+  await writeFile(structurePath, `${JSON.stringify({ schemaVersion: "1.0.0", blocks: [{ pageId: "P-01", heading: "1. 연구 수행방법", tables, figureIds }] })}\n`);
   await writeFile(figureManifestPath, `${JSON.stringify(figureManifest)}\n`);
-  await advanceToContentApproved(root, [responsePath, structurePath], [figureManifestPath]);
+  await advanceToContentApproved(
+    root,
+    [responsePath, structurePath],
+    withFigure
+      ? [
+          figureManifestPath,
+          join(root, "figures", "FIG-GANTT-01.png"),
+          ...auditFigures.flatMap((figure) => [figure.specPath, figure.svgPath, figure.manifestPath]),
+        ]
+      : [figureManifestPath],
+  );
   const request = {
     schemaVersion: "1.0.0",
     projectId: "release-build-fixture",
     template: { assetId: "korean-public-proposal-a4-v1", path: TEMPLATE, sha256: await sha256File(TEMPLATE) },
     pagePlan,
     evidenceLedger,
-    contentBlocks: [{ pageId: "P-01", heading: "1. 연구 수행방법", paragraphs: [{ text: approvedText, claimIds: ["CLM-01"], evidenceIds: ["EV-01"] }], tables, figureIds: [] }],
+    contentBlocks: [{ pageId: "P-01", heading: "1. 연구 수행방법", paragraphs: [{ text: approvedText, claimIds: ["CLM-01"], evidenceIds: ["EV-01"] }], tables, figureIds }],
     figureManifest,
     surfaceProfile: profile,
     output: { docxPath: join(root, "build", "proposal.docx"), manifestPath: join(root, "build", "build-manifest.json") },
@@ -159,7 +277,7 @@ async function createContentApprovedProject(roots: string[]): Promise<{ readonly
   const requestPath = join(root, "build", "build-request.json");
   await mkdir(join(root, "build"), { recursive: true });
   await writeFile(requestPath, `${JSON.stringify(request)}\n`);
-  return { root, requestPath };
+  return { root, requestPath, auditFigures };
 }
 
 async function createAuditedProject(roots: string[]): Promise<{ readonly root: string; readonly auditPath: string; readonly pdfPath: string }> {
