@@ -60,10 +60,8 @@ export async function extractRequirementCandidates(
   sourcePath: string,
   options: TextExtractionOptions = {},
 ): Promise<readonly RfpCandidate[]> {
-  const [document, sourceSha256] = await Promise.all([
-    extractTextDocument(sourcePath, options),
-    sha256File(sourcePath),
-  ]);
+  const document = await extractTextDocument(sourcePath, options);
+  const sourceSha256 = await sha256File(document.sourcePath);
 
   let candidateNumber = 0;
   const candidates = document.pages.flatMap(({ sourceLocator, text }) => (
@@ -76,7 +74,7 @@ export async function extractRequirementCandidates(
         candidateNumber += 1;
         return {
           candidateId: `CAND-${String(candidateNumber).padStart(3, "0")}`,
-          sourcePath,
+          sourcePath: document.sourcePath,
           sourceSha256,
           sourceLocator,
           extractedText,

@@ -1,9 +1,9 @@
 import { createHash } from "node:crypto";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { RfpCandidatesFileSchema } from "@kpp/schemas";
+import { RfpCandidateSchema, RfpCandidatesFileSchema } from "@kpp/schemas";
 import {
   extractRequirementCandidates,
   extractTextDocument,
@@ -80,10 +80,10 @@ describe("RFP requirement candidate extraction", () => {
     });
   });
 
-  it("uses argument arrays for the PDF adapter and preserves its page locator", async () => {
+  it("normalizes a relative option-like PDF filename before passing it to the adapter", async () => {
     const seen: Array<{ command: string; args: readonly string[] }> = [];
 
-    const document = await extractTextDocument("/tmp/RFP name; unsafe.pdf", {
+    const document = await extractTextDocument("-help.pdf", {
       run: async (command, args) => {
         seen.push({ command, args });
         return "first page\f제안서 분량은 30쪽 이내로 한다.";
@@ -92,11 +92,44 @@ describe("RFP requirement candidate extraction", () => {
 
     expect(seen).toEqual([{
       command: "pdftotext",
-      args: ["-layout", "/tmp/RFP name; unsafe.pdf", "-"],
+      args: ["-layout", resolve("-help.pdf"), "-"],
     }]);
+    expect(document.sourcePath).toBe(resolve("-help.pdf"));
     expect(document.pages).toEqual([
       { sourceLocator: "page:1", text: "first page" },
       { sourceLocator: "page:2", text: "제안서 분량은 30쪽 이내로 한다." },
     ]);
+  });
+
+  it("normalizes a relative option-like DOCX filename before passing it to the adapter", async () => {
+    const seen: Array<{ command: string; args: readonly string[] }> = [];
+
+    await extractTextDocument("-help.docx", {
+      run: async (command, args) => {
+        seen.push({ command, args });
+        return "제안서 분량은 30쪽 이내로 한다.";
+      },
+    });
+
+    expect(seen).toEqual([{
+      command: "textutil",
+      args: ["-convert", "txt", "-stdout", resolve("-help.docx")],
+    }]);
+  });
+
+  it("rejects malformed candidate locators", () => {
+    const candidate = {
+      candidateId: "CAND-001",
+      sourcePath: "/tmp/rfp.txt",
+      sourceSha256: "a".repeat(64),
+      extractedText: "제안서 분량은 20쪽 이내로 한다.",
+      category: "page_limit",
+      confidence: 0.82,
+      status: "pending",
+    };
+
+    for (const sourceLocator of ["page:0", "section:00", "page:1.5", "chapter:1", "page:-1"]) {
+      expect(() => RfpCandidateSchema.parse({ ...candidate, sourceLocator })).toThrow();
+    }
   });
 });

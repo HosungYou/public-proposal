@@ -1,6 +1,7 @@
 import { z } from "zod";
 
 const Sha256Schema = z.string().regex(/^[a-f0-9]{64}$/);
+const SourceLocatorSchema = z.string().regex(/^(?:page|section):[1-9]\d*$/);
 
 export const RfpCandidateCategorySchema = z.enum([
   "page_limit",
@@ -17,7 +18,7 @@ export const RfpCandidateSchema = z.object({
   candidateId: z.string().min(1),
   sourcePath: z.string().min(1),
   sourceSha256: Sha256Schema,
-  sourceLocator: z.string().min(1),
+  sourceLocator: SourceLocatorSchema,
   extractedText: z.string().min(1),
   category: RfpCandidateCategorySchema,
   confidence: z.number().gt(0).lt(1),

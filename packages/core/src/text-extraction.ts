@@ -1,6 +1,6 @@
 import { spawn } from "node:child_process";
 import { readFile } from "node:fs/promises";
-import { extname } from "node:path";
+import { extname, resolve } from "node:path";
 import { KppError } from "./errors.js";
 
 export interface ExtractedTextPage {
@@ -26,35 +26,36 @@ export async function extractTextDocument(
   sourcePath: string,
   options: TextExtractionOptions = {},
 ): Promise<ExtractedTextDocument> {
-  const extension = extname(sourcePath).toLowerCase();
+  const normalizedSourcePath = resolve(sourcePath);
+  const extension = extname(normalizedSourcePath).toLowerCase();
   let text: string;
   let locatorKind: "page" | "section";
 
   if (isPlainTextExtension(extension)) {
     try {
-      text = await readFile(sourcePath, "utf8");
+      text = await readFile(normalizedSourcePath, "utf8");
     } catch (error) {
       throw new KppError("KPP_INPUT_SOURCE_READ", "RFP 원문을 읽을 수 없습니다.", {
-        path: sourcePath,
+        path: normalizedSourcePath,
         actual: error instanceof Error ? error.message : error,
       });
     }
     locatorKind = text.includes("\f") ? "page" : "section";
   } else if (extension === ".pdf") {
-    text = await (options.run ?? runTextExtractionCommand)("pdftotext", ["-layout", sourcePath, "-"]);
+    text = await (options.run ?? runTextExtractionCommand)("pdftotext", ["-layout", normalizedSourcePath, "-"]);
     locatorKind = "page";
   } else if (extension === ".docx") {
-    text = await (options.run ?? runTextExtractionCommand)("textutil", ["-convert", "txt", "-stdout", sourcePath]);
+    text = await (options.run ?? runTextExtractionCommand)("textutil", ["-convert", "txt", "-stdout", normalizedSourcePath]);
     locatorKind = text.includes("\f") ? "page" : "section";
   } else {
     throw new KppError("KPP_INPUT_SOURCE_UNSUPPORTED", "지원하지 않는 RFP 원본 형식입니다.", {
-      path: sourcePath,
+      path: normalizedSourcePath,
       actual: extension || "no extension",
     });
   }
 
   return {
-    sourcePath,
+    sourcePath: normalizedSourcePath,
     pages: textToPages(text, locatorKind),
   };
 }
