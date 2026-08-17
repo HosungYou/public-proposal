@@ -52,6 +52,10 @@ export { renderRaci } from "./raci.js";
 
 export async function renderFigure(figure: FigureSpec): Promise<string> {
   assertFigureBase(figure);
+  return renderFigureSync(figure);
+}
+
+function renderFigureSync(figure: FigureSpec): string {
   if (figure.family === "gantt") {
     return renderGantt(figure);
   }
@@ -92,7 +96,12 @@ export async function renderFigureManifest(figure: FigureSpec): Promise<FigureMa
   return (await renderFigureArtifact(figure)).manifest;
 }
 
-export function verifyFigureArtifact(artifact: FigureArtifact): true {
+export function verifyFigureArtifact(artifact: FigureArtifact, figure: FigureSpec): true {
+  assertFigureBase(figure);
+  if (artifact.manifest.schemaVersion !== "1"
+    || artifact.manifest.input.kind !== "semantic") {
+    throw new Error("Figure manifest lineage schema mismatch");
+  }
   if (artifact.manifest.renderer.name !== "@kpp/renderers"
     || artifact.manifest.renderer.version !== FIGURE_RENDERER_VERSION) {
     throw new Error("Figure manifest renderer identity does not match this renderer");
@@ -101,13 +110,31 @@ export function verifyFigureArtifact(artifact: FigureArtifact): true {
     || artifact.manifest.tokenProfile.sha256 !== R08_TOKEN_PROFILE_SHA256) {
     throw new Error("Figure manifest token profile hash mismatch");
   }
+  if (artifact.manifest.input.sha256 !== sha256(stableCanonicalJson(figure))) {
+    throw new Error("Figure semantic input lineage hash mismatch");
+  }
+  if (artifact.manifest.figure.id !== figure.figureId
+    || artifact.manifest.figure.family !== figure.family) {
+    throw new Error("Figure manifest identity or family mismatch");
+  }
+  if (!sameOrderedStrings(artifact.manifest.bindings.evidenceIds, figure.evidenceIds)
+    || !sameOrderedStrings(artifact.manifest.bindings.claimIds, figure.claimIds)) {
+    throw new Error("Figure manifest evidence or claim binding mismatch");
+  }
   if (artifact.manifest.output.format !== "svg"
     || artifact.manifest.output.sha256 !== sha256(artifact.svg)) {
     throw new Error("Figure output hash mismatch");
+  }
+  if (artifact.svg !== renderFigureSync(figure)) {
+    throw new Error("Figure SVG does not match the locked semantic input lineage");
   }
   return true;
 }
 
 function sha256(value: string): string {
   return createHash("sha256").update(value).digest("hex");
+}
+
+function sameOrderedStrings(actual: readonly string[], expected: readonly string[]): boolean {
+  return actual.length === expected.length && actual.every((value, index) => value === expected[index]);
 }

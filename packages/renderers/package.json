@@ -3,6 +3,9 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
+  "files": [
+    "dist"
+  ],
   "exports": {
     ".": {
       "types": "./dist/index.d.ts",
@@ -11,7 +14,9 @@
   },
   "scripts": {
     "build": "tsc -p tsconfig.json",
+    "prepack": "npm run build",
     "render:fixture": "tsx scripts/render-fixture.ts",
+    "verify:pack": "node scripts/verify-pack.mjs",
     "typecheck": "tsc --noEmit -p tsconfig.json"
   }
 }

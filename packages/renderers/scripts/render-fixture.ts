@@ -2,8 +2,13 @@ import { mkdir, writeFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import { renderFigureArtifact } from "../src/index.js";
 import { ganttFixture } from "../test/fixtures.js";
+import { resolveFixtureOutputDirectory } from "./paths.js";
 
-const outputDirectory = resolve(process.argv[2] ?? ".omo/evidence/document-pipeline-task-3-fix-artifacts");
+const invocationRoot = process.env.INIT_CWD ?? process.cwd();
+const outputDirectory = resolveFixtureOutputDirectory(
+  process.argv[2] ?? ".omo/evidence/document-pipeline-task-3-fix-artifacts",
+  invocationRoot,
+);
 const artifact = await renderFigureArtifact(ganttFixture);
 
 await mkdir(outputDirectory, { recursive: true });

@@ -146,7 +146,7 @@ describe("deterministic proposal figure renderers", () => {
     expect(first.manifest.input.sha256).toMatch(/^[a-f0-9]{64}$/);
     expect(first.manifest.output.sha256).toBe(createHash("sha256").update(first.svg).digest("hex"));
     expect(first.manifest).not.toHaveProperty("png");
-    expect(verifyFigureArtifact(first)).toBe(true);
+    expect(verifyFigureArtifact(first, gantt)).toBe(true);
   });
 
   it("rejects a missing or forged R08 token profile hash", async () => {
@@ -157,7 +157,7 @@ describe("deterministic proposal figure renderers", () => {
 
   it("detects a manifest/output hash mismatch", async () => {
     const artifact = await renderFigureArtifact(gantt);
-    expect(() => verifyFigureArtifact({ ...artifact, svg: `${artifact.svg}\n<!-- tampered -->` })).toThrow(
+    expect(() => verifyFigureArtifact({ ...artifact, svg: `${artifact.svg}\n<!-- tampered -->` }, gantt)).toThrow(
       /output.*hash|hash.*mismatch/i,
     );
     expect(() => verifyFigureArtifact({
@@ -166,7 +166,40 @@ describe("deterministic proposal figure renderers", () => {
         ...artifact.manifest,
         tokenProfile: { ...artifact.manifest.tokenProfile, sha256: "0".repeat(64) },
       },
-    })).toThrow(/token.*hash|hash.*mismatch/i);
+    }, gantt)).toThrow(/token.*hash|hash.*mismatch/i);
+  });
+
+  it("rejects tampered semantic input and manifest bindings", async () => {
+    const artifact = await renderFigureArtifact(gantt);
+    const manifestMutations = [
+      { ...artifact.manifest, input: { ...artifact.manifest.input, sha256: "0".repeat(64) } },
+      { ...artifact.manifest, figure: { ...artifact.manifest.figure, id: "FIG-TAMPERED" } },
+      { ...artifact.manifest, figure: { ...artifact.manifest.figure, family: "raci" as const } },
+      { ...artifact.manifest, bindings: { ...artifact.manifest.bindings, evidenceIds: ["EV-TAMPERED"] } },
+      { ...artifact.manifest, bindings: { ...artifact.manifest.bindings, claimIds: ["CL-TAMPERED"] } },
+    ];
+
+    for (const manifest of manifestMutations) {
+      expect(() => verifyFigureArtifact({ ...artifact, manifest }, gantt)).toThrow(
+        /input|figure|family|binding|lineage|mismatch/i,
+      );
+    }
+
+    expect(() => verifyFigureArtifact(artifact, { ...gantt, title: "변조된 입력" })).toThrow(
+      /input|lineage|mismatch/i,
+    );
+  });
+
+  it("rejects a manifest rebound to changed semantics without the corresponding SVG", async () => {
+    const original = await renderFigureArtifact(gantt);
+    const changedFigure = { ...gantt, title: "변경된 연구 수행 일정" };
+    const changed = await renderFigureArtifact(changedFigure);
+    const rebound = {
+      svg: original.svg,
+      manifest: { ...changed.manifest, output: original.manifest.output },
+    };
+
+    expect(() => verifyFigureArtifact(rebound, changedFigure)).toThrow(/render|semantic|lineage|mismatch/i);
   });
 
   it("rejects empty evidence bindings and mismatched family data", async () => {
