@@ -9,6 +9,7 @@ export interface DocxAuditInput {
   readonly docxPath: string;
   readonly buildManifestPath: string;
   readonly geometryReportPath: string;
+  readonly workerPythonPath?: string;
 }
 
 export async function auditDocxArtifacts(input: DocxAuditInput): Promise<AuditSlice> {
@@ -32,7 +33,7 @@ export async function auditDocxArtifacts(input: DocxAuditInput): Promise<AuditSl
     const body = styles === undefined ? undefined : objectAt(styles, "body");
     const figures = Array.isArray(manifest.figures) ? manifest.figures : [];
     const tables = Array.isArray(manifest.tables) ? manifest.tables : [];
-    const liveGeometry = await inspectDocxGeometry(input.docxPath, manifestProfile?.sha256);
+    const liveGeometry = await inspectDocxGeometry(input.docxPath, manifestProfile?.sha256, input.workerPythonPath);
     const facts = objectAt(liveGeometry, "facts");
     if (manifestDocx?.sha256 !== docx.sha256 || !(await sameExistingPath(manifestDocx?.path, input.docxPath))
       || geometryDocx?.sha256 !== docx.sha256 || !(await sameExistingPath(geometryDocx?.path, input.docxPath))) {
@@ -129,12 +130,14 @@ async function sameExistingPath(left: unknown, right: string): Promise<boolean> 
 async function inspectDocxGeometry(
   docxPath: string,
   profileSha256: unknown,
+  configuredPythonPath?: string,
 ): Promise<Record<string, unknown>> {
   if (typeof profileSha256 !== "string") {
     throw new Error("locked profile SHA-256 is missing");
   }
   const root = resolve(dirname(fileURLToPath(import.meta.url)), "../../..");
-  const python = "/usr/bin/python3";
+  const python = configuredPythonPath ?? resolve(root, "workers/docx-python/.venv/bin/python");
+  await assertSupportedPython(python);
   const worker = resolve(root, "workers/docx-python/src/kpp_docx/audit_geometry.py");
   const result = await executeFile(python, [worker, docxPath, "--profile-sha256", profileSha256]);
   const parsed: unknown = JSON.parse(result.stdout);
@@ -142,6 +145,17 @@ async function inspectDocxGeometry(
     throw new Error("DOCX geometry worker returned a non-object report");
   }
   return parsed as Record<string, unknown>;
+}
+
+async function assertSupportedPython(path: string): Promise<void> {
+  const identity = await executeFile(path, ["--version"]);
+  const version = `${identity.stdout}${identity.stderr}`.trim();
+  const match = /^Python\s+(\d+)\.(\d+)(?:\.\d+)?$/u.exec(version);
+  const major = match === null ? Number.NaN : Number(match[1]);
+  const minor = match === null ? Number.NaN : Number(match[2]);
+  if (major !== 3 || minor < 11 || minor >= 15) {
+    throw new Error(`DOCX worker requires Python >=3.11,<3.15; observed ${version || "unknown version"} at ${path}`);
+  }
 }
 
 function sameGeometryEvidence(

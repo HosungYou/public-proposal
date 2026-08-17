@@ -31,6 +31,7 @@ export {
 } from "./figure-family.js";
 export {
   auditReleaseReadiness,
+  type ReleaseArtifactBindings,
 } from "./release.js";
 export {
   type AuditArtifact,
@@ -42,7 +43,7 @@ export {
 import { resolve } from "node:path";
 import { auditDocxArtifacts, type DocxAuditInput } from "./content.js";
 import { auditFigureArtifacts, type FigureAuditInput } from "./figure-family.js";
-import { auditReleaseReadiness } from "./release.js";
+import { auditReleaseReadiness, type ReleaseArtifactBindings } from "./release.js";
 import { blocked, combineSlices, inspectArtifact, makeSlice, readJsonObject, writeStableJson, type AuditArtifact, type AuditFinding, type AuditStatus } from "./source.js";
 import { auditRenderArtifacts } from "./surface-lineage.js";
 
@@ -64,11 +65,12 @@ export interface ProposalAuditReport {
 }
 
 export async function auditProposal(input: ProposalAuditInput): Promise<ProposalAuditReport> {
+  const receiptBindings = await proposalReceiptBindings(input);
   const combined = combineSlices(await Promise.all([
     auditDocxArtifacts(input.docx),
     auditRenderArtifacts(input.renderManifestPath, { trustedPdftotextPath: input.trustedPdftotextPath }),
     auditFigureArtifacts(input.figures),
-    auditReleaseReadiness(resolve(input.root)),
+    auditReleaseReadiness(resolve(input.root), receiptBindings),
     auditCrossSurfaceLineage(input.docx.docxPath, input.renderManifestPath),
   ]));
   const report: ProposalAuditReport = {
@@ -80,6 +82,31 @@ export async function auditProposal(input: ProposalAuditInput): Promise<Proposal
   };
   await writeStableJson(input.outputPath, report);
   return report;
+}
+
+async function proposalReceiptBindings(input: ProposalAuditInput): Promise<ReleaseArtifactBindings> {
+  const rendered = [input.renderManifestPath];
+  try {
+    const manifest = await readJsonObject(input.renderManifestPath);
+    const output = objectAt(manifest, "output");
+    const pdf = objectAt(output, "pdf");
+    if (typeof pdf?.path === "string") rendered.push(pdf.path);
+    const pages = output?.pages;
+    if (Array.isArray(pages)) {
+      for (const value of pages) {
+        if (value !== null && typeof value === "object" && !Array.isArray(value)) {
+          const path = (value as Record<string, unknown>).path;
+          if (typeof path === "string") rendered.push(path);
+        }
+      }
+    }
+  } catch {
+    // The render audit reports malformed/unreadable manifests; receipt binding still requires the manifest itself.
+  }
+  return {
+    built: [input.docx.buildManifestPath, input.docx.docxPath],
+    rendered,
+  };
 }
 
 async function auditCrossSurfaceLineage(docxPath: string, renderManifestPath: string) {
@@ -109,4 +136,15 @@ async function auditCrossSurfaceLineage(docxPath: string, renderManifestPath: st
       actual: error instanceof Error ? error.message : error,
     })], []);
   }
+}
+
+function objectAt(value: Record<string, unknown> | undefined, ...keys: string[]): Record<string, unknown> | undefined {
+  let current: unknown = value;
+  for (const key of keys) {
+    if (current === null || typeof current !== "object" || Array.isArray(current)) return undefined;
+    current = (current as Record<string, unknown>)[key];
+  }
+  return current !== null && typeof current === "object" && !Array.isArray(current)
+    ? current as Record<string, unknown>
+    : undefined;
 }

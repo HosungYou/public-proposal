@@ -62,6 +62,18 @@ describe("artifact-backed proposal audits", () => {
     expect(result.findings.map((finding) => finding.code)).toContain("KPP_SOURCE_DOCX_GEOMETRY");
   });
 
+  test("blocks a configured DOCX worker interpreter outside the supported Python range", async () => {
+    const fixture = await docxFixture();
+    const interpreter = join(dirname(fixture.docxPath), "unsupported-python");
+    await writeFile(interpreter, "#!/bin/sh\nif [ \"$1\" = \"--version\" ]; then echo 'Python 3.10.13'; exit 0; fi\nexec /usr/bin/python3 \"$@\"\n", "utf8");
+    await chmod(interpreter, 0o755);
+
+    const result = await auditDocxArtifacts({ ...fixture, workerPythonPath: interpreter });
+
+    expect(result.status).toBe("BLOCKED");
+    expect(result.findings.map((finding) => finding.code)).toContain("KPP_SOURCE_DOCX_READ");
+  });
+
   test("recomputes PDF, page image, and searchable Korean text lineage from real files", async () => {
     const fixture = await renderFixture();
 
@@ -86,9 +98,22 @@ describe("artifact-backed proposal audits", () => {
     expect(result.findings.map((finding) => finding.code)).toContain("KPP_RENDER_PDF_INVALID");
   });
 
-  test("blocks a fake PNG page even when its manifest hash and byte count match", async () => {
+  test("blocks a signature-only PNG page even when its manifest hash and byte count match", async () => {
     const fixture = await renderFixture();
-    await writeFile(fixture.pagePath, "png-bytes", "utf8");
+    await writeFile(fixture.pagePath, Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]));
+    await rebindRenderArtifact(fixture.manifestPath, "page", fixture.pagePath);
+
+    const result = await auditRenderArtifacts(fixture.manifestPath, { trustedPdftotextPath: fixture.extractorPath });
+
+    expect(result.status).toBe("BLOCKED");
+    expect(result.findings.map((finding) => finding.code)).toContain("KPP_RENDER_PAGE_IMAGES");
+  });
+
+  test("blocks a PNG page with a corrupt chunk CRC even when its manifest is rebound", async () => {
+    const fixture = await renderFixture();
+    const png = await readFile(fixture.pagePath);
+    png[png.length - 1] = (png[png.length - 1] ?? 0) ^ 0xff;
+    await writeFile(fixture.pagePath, png);
     await rebindRenderArtifact(fixture.manifestPath, "page", fixture.pagePath);
 
     const result = await auditRenderArtifacts(fixture.manifestPath, { trustedPdftotextPath: fixture.extractorPath });
@@ -192,7 +217,10 @@ describe("artifact-backed proposal audits", () => {
     const docx = await docxFixture();
     const render = await renderFixture(docx.docxPath);
     const figure = await figureFixture();
-    const root = await renderedProjectFixture();
+    const root = await renderedProjectFixture({
+      built: [docx.buildManifestPath, docx.docxPath],
+      rendered: [render.manifestPath, render.pdfPath, render.pagePath],
+    });
     const outputPath = join(root, "audit", "audit.json");
 
     const first = await auditProposal({
@@ -217,6 +245,25 @@ describe("artifact-backed proposal audits", () => {
     expect(second).toEqual(first);
     expect(await readFile(outputPath, "utf8")).toBe(firstBytes);
     expect(first.artifacts.every((artifact) => /^[a-f0-9]{64}$/u.test(artifact.sha256))).toBe(true);
+  });
+
+  test("blocks a proposal whose valid receipt chain binds only unrelated placeholders", async () => {
+    const docx = await docxFixture();
+    const render = await renderFixture(docx.docxPath);
+    const figure = await figureFixture();
+    const root = await renderedProjectFixture();
+
+    const report = await auditProposal({
+      root,
+      docx,
+      renderManifestPath: render.manifestPath,
+      trustedPdftotextPath: render.extractorPath,
+      figures: [figure],
+      outputPath: join(root, "audit", "audit.json"),
+    });
+
+    expect(report.status).toBe("BLOCKED");
+    expect(report.findings.map((finding) => finding.code)).toContain("KPP_RELEASE_RECEIPT_BINDING");
   });
 
   test("blocks when the rendered PDF was produced from a different DOCX", async () => {
@@ -426,7 +473,10 @@ async function figureFixture(): Promise<{
   return { specPath, svgPath, manifestPath };
 }
 
-async function renderedProjectFixture(): Promise<string> {
+async function renderedProjectFixture(bindings?: {
+  readonly built: readonly string[];
+  readonly rendered: readonly string[];
+}): Promise<string> {
   const root = await makeRoot("kpp-audit-project-");
   await initializeProject(root, { projectId: "audit-project" });
   const stages = [
@@ -446,7 +496,11 @@ async function renderedProjectFixture(): Promise<string> {
     const receipt = join(root, "receipts", filename);
     await writeReceipt({
       stage,
-      files: [artifact],
+      files: stage === "BUILT"
+        ? bindings?.built ?? [artifact]
+        : stage === "RENDERED"
+          ? bindings?.rendered ?? [artifact]
+          : [artifact],
       inputReceiptHashes: predecessor === undefined ? [] : [predecessor],
       output: receipt,
     });

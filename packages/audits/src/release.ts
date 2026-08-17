@@ -1,4 +1,4 @@
-import { lstat } from "node:fs/promises";
+import { lstat, realpath } from "node:fs/promises";
 import { join } from "node:path";
 import { PROJECT_STATES, readProject, sha256File, verifyReceipt } from "@kpp/core";
 import type { ProjectState } from "@kpp/schemas";
@@ -24,7 +24,15 @@ const RECEIPTS: Partial<Record<ProjectState, string>> = {
   RELEASED: "release.json",
 };
 
-export async function auditReleaseReadiness(root: string): Promise<AuditSlice> {
+export interface ReleaseArtifactBindings {
+  readonly built: readonly string[];
+  readonly rendered: readonly string[];
+}
+
+export async function auditReleaseReadiness(
+  root: string,
+  bindings?: ReleaseArtifactBindings,
+): Promise<AuditSlice> {
   const findings: AuditFinding[] = [];
   const artifacts: AuditArtifact[] = [];
   let project;
@@ -61,6 +69,14 @@ export async function auditReleaseReadiness(root: string): Promise<AuditSlice> {
           actual: verification,
         }));
       }
+      const expectedPaths = stage === "BUILT"
+        ? bindings?.built
+        : stage === "RENDERED"
+          ? bindings?.rendered
+          : undefined;
+      if (expectedPaths !== undefined) {
+        await bindExpectedArtifacts(path, expectedPaths, verification.receipt.files, findings, artifacts);
+      }
       if (predecessorHash !== undefined && !verification.receipt.inputReceiptHashes.includes(predecessorHash)) {
         findings.push(blocked("KPP_RELEASE_RECEIPT_CHAIN", "선행 receipt hash가 누락되었거나 stale입니다.", {
           path,
@@ -80,6 +96,42 @@ export async function auditReleaseReadiness(root: string): Promise<AuditSlice> {
   await rejectPrematureReceipt(root, "approval.json", "HUMAN_APPROVED", stateIndex, findings, artifacts);
   await rejectPrematureReceipt(root, "release.json", "RELEASED", stateIndex, findings, artifacts);
   return makeSlice(findings, artifacts);
+}
+
+async function bindExpectedArtifacts(
+  receiptPath: string,
+  expectedPaths: readonly string[],
+  receiptFiles: readonly { readonly path: string; readonly sha256: string }[],
+  findings: AuditFinding[],
+  artifacts: AuditArtifact[],
+): Promise<void> {
+  for (const expectedPath of expectedPaths) {
+    try {
+      const artifact = await inspectArtifact(expectedPath);
+      artifacts.push(artifact);
+      const canonicalExpected = await realpath(expectedPath);
+      let matchingReceiptFile: { readonly path: string; readonly sha256: string } | undefined;
+      for (const receiptFile of receiptFiles) {
+        const canonicalReceiptPath = await realpath(receiptFile.path).catch(() => undefined);
+        if (canonicalReceiptPath === canonicalExpected) {
+          matchingReceiptFile = receiptFile;
+          break;
+        }
+      }
+      if (matchingReceiptFile?.sha256 !== artifact.sha256) {
+        findings.push(blocked("KPP_RELEASE_RECEIPT_BINDING", "감사 대상 아티팩트가 stage receipt의 현재 path/hash에 연결되지 않았습니다.", {
+          path: receiptPath,
+          expected: artifact,
+          actual: matchingReceiptFile,
+        }));
+      }
+    } catch (error) {
+      findings.push(blocked("KPP_RELEASE_RECEIPT_BINDING", "감사 대상 아티팩트의 receipt 연결을 확인할 수 없습니다.", {
+        path: expectedPath,
+        actual: error instanceof Error ? error.message : error,
+      }));
+    }
+  }
 }
 
 async function rejectPrematureReceipt(

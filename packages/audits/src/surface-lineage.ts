@@ -1,4 +1,4 @@
-import { open, stat } from "node:fs/promises";
+import { open, readFile, stat } from "node:fs/promises";
 import { basename } from "node:path";
 import { executeFile } from "@kpp/core";
 import {
@@ -83,10 +83,10 @@ export async function auditRenderArtifacts(
         }));
       }
       if (basename(value.path) !== `page-${String(value.page).padStart(4, "0")}.png`
-        || !(await hasPngSignature(value.path))) {
+        || !(await hasValidPngStructure(value.path))) {
         findings.push(blocked("KPP_RENDER_PAGE_IMAGES", "page image가 numbered PNG 아티팩트가 아닙니다.", {
           path: value.path,
-          expected: `page-${String(value.page).padStart(4, "0")}.png with PNG signature`,
+          expected: `page-${String(value.page).padStart(4, "0")}.png with valid PNG structure`,
         }));
       }
     }
@@ -193,8 +193,78 @@ async function hasPdfSignature(path: string): Promise<boolean> {
   return (await readPrefix(path, 5)).equals(Buffer.from("%PDF-", "ascii"));
 }
 
-async function hasPngSignature(path: string): Promise<boolean> {
-  return (await readPrefix(path, PNG_SIGNATURE.length)).equals(PNG_SIGNATURE);
+async function hasValidPngStructure(path: string): Promise<boolean> {
+  const png = await readFile(path);
+  if (png.length < PNG_SIGNATURE.length + 12 || !png.subarray(0, PNG_SIGNATURE.length).equals(PNG_SIGNATURE)) {
+    return false;
+  }
+
+  let offset = PNG_SIGNATURE.length;
+  let chunkIndex = 0;
+  let sawHeader = false;
+  let sawImageData = false;
+  while (offset < png.length) {
+    if (png.length - offset < 12) return false;
+    const length = png.readUInt32BE(offset);
+    const typeStart = offset + 4;
+    const dataStart = typeStart + 4;
+    const dataEnd = dataStart + length;
+    const chunkEnd = dataEnd + 4;
+    if (dataEnd < dataStart || chunkEnd > png.length) return false;
+
+    const type = png.subarray(typeStart, dataStart);
+    if (![...type].every((byte) => (byte >= 0x41 && byte <= 0x5a) || (byte >= 0x61 && byte <= 0x7a))) {
+      return false;
+    }
+    if (png.readUInt32BE(dataEnd) !== crc32(png.subarray(typeStart, dataEnd))) return false;
+
+    const name = type.toString("ascii");
+    if (chunkIndex === 0) {
+      if (name !== "IHDR" || length !== 13 || !validPngHeader(png.subarray(dataStart, dataEnd))) return false;
+      sawHeader = true;
+    } else if (name === "IHDR") {
+      return false;
+    } else if (name === "IDAT") {
+      sawImageData = true;
+    } else if (name === "IEND") {
+      return length === 0 && sawHeader && sawImageData && chunkEnd === png.length;
+    }
+
+    offset = chunkEnd;
+    chunkIndex += 1;
+  }
+  return false;
+}
+
+function validPngHeader(header: Buffer): boolean {
+  const width = header.readUInt32BE(0);
+  const height = header.readUInt32BE(4);
+  const bitDepth = header[8];
+  const colorType = header[9];
+  const validDepths: Readonly<Record<number, readonly number[]>> = {
+    0: [1, 2, 4, 8, 16],
+    2: [8, 16],
+    3: [1, 2, 4, 8],
+    4: [8, 16],
+    6: [8, 16],
+  };
+  return width > 0 && width <= 0x7fff_ffff
+    && height > 0 && height <= 0x7fff_ffff
+    && typeof colorType === "number" && typeof bitDepth === "number"
+    && validDepths[colorType]?.includes(bitDepth) === true
+    && header[10] === 0 && header[11] === 0
+    && (header[12] === 0 || header[12] === 1);
+}
+
+function crc32(bytes: Buffer): number {
+  let crc = 0xffff_ffff;
+  for (const byte of bytes) {
+    crc ^= byte;
+    for (let bit = 0; bit < 8; bit += 1) {
+      crc = (crc >>> 1) ^ ((crc & 1) === 1 ? 0xedb8_8320 : 0);
+    }
+  }
+  return (crc ^ 0xffff_ffff) >>> 0;
 }
 
 async function readPrefix(path: string, length: number): Promise<Buffer> {
