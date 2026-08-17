@@ -36,6 +36,19 @@ export {
   type RequirementsFile,
 } from "./requirements.js";
 export {
+  RequirementConflictResolutionSchema,
+  RequirementDecisionFileSchema,
+  RequirementDecisionOutcomeSchema,
+  RequirementDecisionRequirementsSchema,
+  RequirementDecisionSchema,
+  RequirementSourceAuthoritySchema,
+  type RequirementConflictResolution,
+  type RequirementDecision,
+  type RequirementDecisionFile,
+  type RequirementDecisionOutcome,
+  type RequirementSourceAuthority,
+} from "./requirement-decision.js";
+export {
   PagePlanItemSchema,
   PagePlanSchema,
   type PagePlan,

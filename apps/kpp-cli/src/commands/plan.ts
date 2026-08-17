@@ -101,7 +101,7 @@ export async function planCommand(
     });
     await advanceProject(root, "REQUIREMENTS_LOCKED");
   } else {
-    await assertRecoveryArtifactsMatch(
+    await assertRequirementsLockedRecovery(
       persistedRequirementsPath,
       pagePlanPath,
       requirements,
@@ -245,19 +245,17 @@ function unresolvedEvidence(
   );
 }
 
-async function assertRecoveryArtifactsMatch(
+async function assertRequirementsLockedRecovery(
   persistedRequirementsPath: string,
   pagePlanPath: string,
   requirements: ConfirmedRequirements,
   pagePlan: PagePlan,
 ): Promise<void> {
   let persistedRequirements: unknown;
-  let persistedPagePlan: unknown;
   try {
     persistedRequirements = ConfirmedRequirementsSchema.parse(
       await readJsonFile(persistedRequirementsPath),
     );
-    persistedPagePlan = PagePlanSchema.parse(await readJsonFile(pagePlanPath));
   } catch (error) {
     throw new KppError(
       "KPP_INPUT_REQUIREMENTS_RECOVERY_MISMATCH",
@@ -268,10 +266,7 @@ async function assertRecoveryArtifactsMatch(
       },
     );
   }
-  if (
-    JSON.stringify(persistedRequirements) !== JSON.stringify(requirements)
-    || JSON.stringify(persistedPagePlan) !== JSON.stringify(pagePlan)
-  ) {
+  if (JSON.stringify(persistedRequirements) !== JSON.stringify(requirements)) {
     throw new KppError(
       "KPP_INPUT_REQUIREMENTS_RECOVERY_MISMATCH",
       "잠긴 요구사항 산출물이 재시도 입력과 일치하지 않습니다.",
@@ -282,4 +277,39 @@ async function assertRecoveryArtifactsMatch(
       },
     );
   }
+
+  try {
+    await stat(pagePlanPath);
+  } catch (error) {
+    if (isMissingFile(error)) {
+      await writeJsonAtomically(pagePlanPath, pagePlan);
+      return;
+    }
+    throw recoveryMismatch("locked_page_plan_unreadable", error);
+  }
+
+  let persistedPagePlan: PagePlan;
+  try {
+    persistedPagePlan = PagePlanSchema.parse(await readJsonFile(pagePlanPath));
+  } catch (error) {
+    throw recoveryMismatch("locked_page_plan_invalid", error);
+  }
+  if (JSON.stringify(persistedPagePlan) !== JSON.stringify(pagePlan)) {
+    throw recoveryMismatch("locked_input_changed", "retry input differs from locked artifacts");
+  }
+}
+
+function recoveryMismatch(rule: string, actual: unknown): KppError {
+  return new KppError(
+    "KPP_INPUT_REQUIREMENTS_RECOVERY_MISMATCH",
+    "잠긴 요구사항 산출물이 재시도 입력과 일치하지 않습니다.",
+    { rule, actual },
+  );
+}
+
+function isMissingFile(error: unknown): boolean {
+  return typeof error === "object"
+    && error !== null
+    && "code" in error
+    && error.code === "ENOENT";
 }

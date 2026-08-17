@@ -33,3 +33,8 @@ export {
   type ReceiptVerification,
   type ReceiptVerificationMismatch,
 } from "./receipts.js";
+export {
+  lockRequirements,
+  type RequirementLockInput,
+  type RequirementLockResult,
+} from "./requirement-lock.js";

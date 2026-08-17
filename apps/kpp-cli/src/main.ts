@@ -5,6 +5,7 @@ import { doctorCommand } from "./commands/doctor.js";
 import { ingestCommand } from "./commands/ingest.js";
 import { initializeCommand } from "./commands/init.js";
 import { planCommand } from "./commands/plan.js";
+import { requirementsCommand } from "./commands/requirements.js";
 import { statusCommand } from "./commands/status.js";
 import { failure, writeEnvelope } from "./output.js";
 
@@ -52,6 +53,18 @@ export async function runCli(argv: readonly string[]): Promise<number> {
     .option("--json", "JSON 형식으로 출력")
     .action(async (root: string, rfp: string, options: JsonOption) => {
       writeEnvelope(await ingestCommand(root, rfp), options.json === true);
+    });
+
+  program
+    .command("requirements <root>")
+    .requiredOption("--candidates <path>", "pending 후보 요구사항 JSON")
+    .requiredOption("--decisions <path>", "사람 확인·충돌해소 JSON")
+    .option("--json", "JSON 형식으로 출력")
+    .action(async (root: string, options: JsonOption & { candidates: string; decisions: string }) => {
+      writeEnvelope(
+        await requirementsCommand(root, options.candidates, options.decisions),
+        options.json === true,
+      );
     });
 
   program
