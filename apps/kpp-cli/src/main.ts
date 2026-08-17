@@ -2,7 +2,9 @@
 
 import { Command } from "commander";
 import { doctorCommand } from "./commands/doctor.js";
+import { exportAuthoringCommand } from "./commands/export-authoring.js";
 import { ingestCommand } from "./commands/ingest.js";
+import { importAuthoringCommand } from "./commands/import-authoring.js";
 import { initializeCommand } from "./commands/init.js";
 import { planCommand } from "./commands/plan.js";
 import { requirementsCommand } from "./commands/requirements.js";
@@ -73,6 +75,26 @@ export async function runCli(argv: readonly string[]): Promise<number> {
     .option("--json", "JSON 형식으로 출력")
     .action(async (root: string, options: JsonOption & { requirements: string }) => {
       writeEnvelope(await planCommand(root, options.requirements), options.json === true);
+    });
+
+  program
+    .command("export-authoring <root>")
+    .option("--issuer-profile <path>", "확인된 기관 프로필 JSON")
+    .option("--terminology <path>", "승인된 용어집 JSON")
+    .option("--json", "JSON 형식으로 출력")
+    .action(async (
+      root: string,
+      options: JsonOption & { issuerProfile?: string; terminology?: string },
+    ) => {
+      writeEnvelope(await exportAuthoringCommand(root, options), options.json === true);
+    });
+
+  program
+    .command("import-authoring <root>")
+    .requiredOption("--response <path>", "작성 어댑터 응답 JSON")
+    .option("--json", "JSON 형식으로 출력")
+    .action(async (root: string, options: JsonOption & { response: string }) => {
+      writeEnvelope(await importAuthoringCommand(root, options.response), options.json === true);
     });
 
   try {

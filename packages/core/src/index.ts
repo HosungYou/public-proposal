@@ -38,3 +38,11 @@ export {
   type RequirementLockInput,
   type RequirementLockResult,
 } from "./requirement-lock.js";
+export {
+  exportAuthoring,
+  importAuthoring,
+  type AuthoringSourceInput,
+  type ExportAuthoringInput,
+  type ExportAuthoringResult,
+  type ImportAuthoringResult,
+} from "./authoring-bundle.js";

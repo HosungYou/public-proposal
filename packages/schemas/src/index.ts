@@ -57,6 +57,28 @@ export {
   type PagePlanItem,
 } from "./page-plan.js";
 export {
+  ApprovedTerminologySchema,
+  AuthoringArtifactsSchema,
+  AuthoringClaimScopeSchema,
+  AuthoringContentBlockSchema,
+  AuthoringEvidenceProvenanceSchema,
+  AuthoringInputProvenanceSchema,
+  AuthoringRequestSchema,
+  AuthoringResponseBlockSchema,
+  AuthoringResponseSchema,
+  IssuerProfileSchema,
+  type ApprovedTerminology,
+  type AuthoringArtifacts,
+  type AuthoringClaimScope,
+  type AuthoringContentBlock,
+  type AuthoringEvidenceProvenance,
+  type AuthoringInputProvenance,
+  type AuthoringRequest,
+  type AuthoringResponse,
+  type AuthoringResponseBlock,
+  type IssuerProfile,
+} from "./authoring-bundle.js";
+export {
   ApprovalPolicySchema,
   ProjectSchema,
   ProjectStateSchema,
