@@ -1,7 +1,8 @@
-import { access, chmod, copyFile, mkdir, mkdtemp, readFile, readdir, rm, stat, writeFile } from "node:fs/promises";
+import { access, chmod, copyFile, mkdir, mkdtemp, readFile, readdir, rm, stat, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
-import { advanceProject, initializeProject, sha256File, verifyProjectState, writeReceipt } from "@kpp/core";
+import { pathToFileURL } from "node:url";
+import { advanceProject, executeFile, initializeProject, sha256File, verifyProjectState, writeReceipt } from "@kpp/core";
 import { R08_TOKEN_PROFILE_SHA256, renderFigureArtifact, type GanttFigureSpec } from "@kpp/renderers";
 import { afterEach, describe, expect, it } from "vitest";
 import { buildProject } from "../src/commands/build.js";
@@ -97,6 +98,27 @@ describe("verified proposal release flow", () => {
     ]));
   }, 60_000);
 
+  it("blocks a semantic SVG paired with unrelated locked raster bytes before approval", async () => {
+    const fixture = await createContentApprovedProject(roots, true, true);
+    const built = await buildProject(fixture.root, { requestPath: fixture.requestPath });
+    const rendered = await renderProject(fixture.root, { docxPath: built.docxPath });
+
+    const audited = await auditProject(fixture.root, {
+      docxPath: built.docxPath,
+      buildManifestPath: built.manifestPath,
+      renderManifestPath: rendered.manifestPath,
+      figures: fixture.auditFigures,
+    });
+
+    expect(audited.state).toBe("RENDERED");
+    expect(audited.report.status).toBe("BLOCKED");
+    expect(audited.report.findings.map((finding) => finding.code)).toContain("KPP_DESIGN_FIGURE_MEDIA_LINEAGE");
+    await expect(approveProject(fixture.root, {
+      approvedBy: "제출책임자",
+      auditPath: audited.auditPath,
+    })).rejects.toMatchObject({ code: "KPP_APPROVAL_STATE" });
+  }, 60_000);
+
   it("rejects a BuildRequest body that is not the approved authoring response", async () => {
     const fixture = await createContentApprovedProject(roots);
     const request = JSON.parse(await readFile(fixture.requestPath, "utf8")) as { contentBlocks: { paragraphs: { text: string }[] }[] };
@@ -156,11 +178,27 @@ describe("verified proposal release flow", () => {
     const project = await readFile(join(fixture.root, "kpp.project.yaml"), "utf8");
     expect(project).toContain("state: HUMAN_APPROVED");
   });
+
+  it("rejects a release output beneath a symlinked ancestor", async () => {
+    const fixture = await createAuditedProject(roots);
+    const approved = await approveProject(fixture.root, { approvedBy: "제출책임자", auditPath: fixture.auditPath });
+    const physical = join(fixture.root, "physical-release-output");
+    const linked = join(fixture.root, "linked-release-output");
+    await mkdir(physical);
+    await symlink(physical, linked, "dir");
+
+    await expect(releaseProject(fixture.root, {
+      approvalPath: approved.receiptPath,
+      outputParent: join(linked, "nested"),
+    })).rejects.toMatchObject({ code: "KPP_RELEASE_OUTPUT_SYMLINK" });
+    await expect(access(join(physical, "nested"))).rejects.toBeDefined();
+  });
 });
 
 async function createContentApprovedProject(
   roots: string[],
   withFigure = false,
+  unrelatedFigure = false,
 ): Promise<{
   readonly root: string;
   readonly requestPath: string;
@@ -219,7 +257,18 @@ async function createContentApprovedProject(
   let embeddedFigure: Record<string, unknown> | undefined;
   if (withFigure) {
     const imagePath = join(root, "figures", "FIG-GANTT-01.png");
-    await copyFile(resolve("fixtures/valid/r08-reference/ooxml/word/media/image1.png"), imagePath);
+    const semantic = await renderFigureArtifact(semanticFigure);
+    const specPath = join(root, "figures", "FIG-GANTT-01.spec.json");
+    const svgPath = join(root, "figures", "FIG-GANTT-01.svg");
+    const manifestPath = join(root, "figures", "FIG-GANTT-01.render.json");
+    await writeFile(specPath, `${JSON.stringify(semanticFigure)}\n`);
+    await writeFile(svgPath, semantic.svg);
+    await writeFile(manifestPath, `${JSON.stringify(semantic.manifest)}\n`);
+    if (unrelatedFigure) {
+      await copyFile(resolve("fixtures/valid/r08-reference/ooxml/word/media/image1.png"), imagePath);
+    } else {
+      await rasterizeSvg(svgPath, join(root, "figures"));
+    }
     embeddedFigure = {
       figureId: semanticFigure.figureId,
       requirementId: "REQ-01",
@@ -233,13 +282,6 @@ async function createContentApprovedProject(
       evidenceIds: ["EV-01"],
       widthDxa: 7200,
     };
-    const semantic = await renderFigureArtifact(semanticFigure);
-    const specPath = join(root, "figures", "FIG-GANTT-01.spec.json");
-    const svgPath = join(root, "figures", "FIG-GANTT-01.svg");
-    const manifestPath = join(root, "figures", "FIG-GANTT-01.render.json");
-    await writeFile(specPath, `${JSON.stringify(semanticFigure)}\n`);
-    await writeFile(svgPath, semantic.svg);
-    await writeFile(manifestPath, `${JSON.stringify(semantic.manifest)}\n`);
     auditFigures.push({ specPath, svgPath, manifestPath });
   }
   const approvedText = "공식 근거와 현장 검증을 연결하여 연구 결과의 활용 가능성을 높인다.";
@@ -278,6 +320,23 @@ async function createContentApprovedProject(
   await mkdir(join(root, "build"), { recursive: true });
   await writeFile(requestPath, `${JSON.stringify(request)}\n`);
   return { root, requestPath, auditFigures };
+}
+
+async function rasterizeSvg(svgPath: string, outputDirectory: string): Promise<void> {
+  const profile = await mkdtemp(join(tmpdir(), "kpp-figure-raster-profile-"));
+  try {
+    await executeFile("/Applications/LibreOffice.app/Contents/MacOS/soffice", [
+      `-env:UserInstallation=${pathToFileURL(profile).href}`,
+      "--headless",
+      "--convert-to",
+      "png:draw_png_Export",
+      "--outdir",
+      outputDirectory,
+      svgPath,
+    ], { timeoutMs: 120_000 });
+  } finally {
+    await rm(profile, { recursive: true, force: true });
+  }
 }
 
 async function createAuditedProject(roots: string[]): Promise<{ readonly root: string; readonly auditPath: string; readonly pdfPath: string }> {

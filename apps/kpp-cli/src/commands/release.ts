@@ -198,9 +198,20 @@ function releaseRelativePath(root: string, source: string): string {
 
 async function prepareOutputParent(input: string): Promise<string> {
   const path = resolve(input);
-  const metadata = await lstat(path).catch(() => undefined);
-  if (metadata?.isSymbolicLink()) {
-    throw new KppError("KPP_RELEASE_OUTPUT_SYMLINK", "release output parent symlink는 허용되지 않습니다.", { path, stage: "HUMAN_APPROVED" });
+  let ancestor = path;
+  while (true) {
+    const metadata = await lstat(ancestor).catch(() => undefined);
+    if (metadata?.isSymbolicLink()) {
+      throw new KppError("KPP_RELEASE_OUTPUT_SYMLINK", "release output parent의 미해결 경로에 symlink ancestor는 허용되지 않습니다.", {
+        path: ancestor,
+        actual: path,
+        stage: "HUMAN_APPROVED",
+      });
+    }
+    if (metadata !== undefined) break;
+    const parent = dirname(ancestor);
+    if (parent === ancestor) break;
+    ancestor = parent;
   }
   await mkdir(path, { recursive: true, mode: 0o700 });
   const canonical = await realpath(path);

@@ -27,7 +27,9 @@ export {
 } from "./surface-lineage.js";
 export {
   auditFigureArtifacts,
+  auditFigureDocumentBindings,
   type FigureAuditInput,
+  type FigureDocumentBindingInput,
 } from "./figure-family.js";
 export {
   auditReleaseReadiness,
@@ -42,7 +44,7 @@ export {
 
 import { resolve } from "node:path";
 import { auditDocxArtifacts, type DocxAuditInput } from "./content.js";
-import { auditFigureArtifacts, type FigureAuditInput } from "./figure-family.js";
+import { auditFigureArtifacts, auditFigureDocumentBindings, type FigureAuditInput } from "./figure-family.js";
 import { auditReleaseReadiness, type ReleaseArtifactBindings } from "./release.js";
 import { blocked, combineSlices, inspectArtifact, makeSlice, readJsonObject, writeStableJson, type AuditArtifact, type AuditFinding, type AuditStatus } from "./source.js";
 import { auditRenderArtifacts } from "./surface-lineage.js";
@@ -53,6 +55,7 @@ export interface ProposalAuditInput {
   readonly renderManifestPath: string;
   readonly trustedPdftotextPath?: string;
   readonly figures: readonly FigureAuditInput[];
+  readonly enforceFigureMediaBinding?: boolean;
   readonly outputPath: string;
 }
 
@@ -66,13 +69,21 @@ export interface ProposalAuditReport {
 
 export async function auditProposal(input: ProposalAuditInput): Promise<ProposalAuditReport> {
   const receiptBindings = await proposalReceiptBindings(input);
-  const combined = combineSlices(await Promise.all([
+  const slices = [
     auditDocxArtifacts(input.docx),
     auditRenderArtifacts(input.renderManifestPath, { trustedPdftotextPath: input.trustedPdftotextPath }),
     auditFigureArtifacts(input.figures),
     auditReleaseReadiness(resolve(input.root), receiptBindings),
     auditCrossSurfaceLineage(input.docx.docxPath, input.renderManifestPath),
-  ]));
+  ];
+  if (input.enforceFigureMediaBinding === true) {
+    slices.push(auditFigureDocumentBindings({
+      figures: input.figures,
+      buildManifestPath: input.docx.buildManifestPath,
+      geometryReportPath: input.docx.geometryReportPath,
+    }));
+  }
+  const combined = combineSlices(await Promise.all(slices));
   const report: ProposalAuditReport = {
     schemaVersion: "1",
     status: combined.status,

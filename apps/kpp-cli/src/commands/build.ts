@@ -125,7 +125,7 @@ export async function buildProject(
     // remove only the generation and compatibility aliases created by this call.
     const state = await verifyProjectState(root).catch(() => undefined);
     if (state?.state !== "BUILT") {
-      await removeUnpublishedBuild(outputs, generationPath, generationsBefore);
+      await removeUnpublishedBuild(root, outputs, generationPath, generationsBefore);
       if (receiptCreated) await rm(receiptPath, { force: true });
     }
     throw error;
@@ -457,16 +457,23 @@ async function existingGenerationPaths(root: string): Promise<ReadonlySet<string
 }
 
 async function removeUnpublishedBuild(
+  root: string,
   outputs: BuildRequestPaths,
   generationPath: string | undefined,
   generationsBefore: ReadonlySet<string>,
 ): Promise<void> {
+  const generationsAfter = await existingGenerationPaths(root);
+  const createdGenerations = [...generationsAfter].filter((path) => !generationsBefore.has(path));
+  if (generationPath !== undefined && !generationsBefore.has(generationPath) && !createdGenerations.includes(generationPath)) {
+    createdGenerations.push(generationPath);
+  }
   await Promise.all([
     rm(outputs.docxPath, { force: true }),
     rm(outputs.manifestPath, { force: true }),
-    ...(generationPath === undefined || generationsBefore.has(generationPath)
-      ? []
-      : [rm(generationPath, { recursive: true, force: true })]),
+    ...createdGenerations.flatMap((path) => [
+      rm(path, { recursive: true, force: true }),
+      rm(join(dirname(dirname(path)), "current"), { force: true }),
+    ]),
   ]);
 }
 

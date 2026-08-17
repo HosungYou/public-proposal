@@ -22,6 +22,13 @@ def test_audits_locked_typography_native_table_and_drawing_relationships(tmp_pat
         "drawings": 1,
         "captions": 1,
     }
+    assert report["embeddedMedia"] == [
+        {
+            "relationshipId": "rId1",
+            "member": "word/media/image1.png",
+            "sha256": hashlib.sha256(b"png").hexdigest(),
+        }
+    ]
     assert report["findings"] == []
 
 

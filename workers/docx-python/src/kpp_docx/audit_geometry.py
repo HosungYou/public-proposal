@@ -27,6 +27,7 @@ def audit_docx_geometry(
     docx = Path(path).expanduser().resolve()
     findings: list[dict[str, Any]] = []
     facts = {"bodyParagraphs": 0, "nativeTables": 0, "drawings": 0, "captions": 0}
+    embedded_media: list[dict[str, str]] = []
     try:
         docx_hash = _sha256_file(docx)
     except OSError as error:
@@ -36,6 +37,7 @@ def audit_docx_geometry(
             expected_profile_sha256,
             facts,
             [_finding("KPP_DOCX_PACKAGE_INVALID", "DOCX 파일을 읽을 수 없습니다.", str(error))],
+            embedded_media,
         )
 
     try:
@@ -47,13 +49,13 @@ def audit_docx_geometry(
             _audit_styles(styles, findings)
             _audit_paragraphs(document, findings, facts)
             _audit_tables(document, findings, facts)
-            _audit_drawings(document, relationships, names, findings, facts)
+            _audit_drawings(document, relationships, names, archive, findings, facts, embedded_media)
     except (zipfile.BadZipFile, KeyError, ElementTree.ParseError, ValueError) as error:
         findings.append(
             _finding("KPP_DOCX_PACKAGE_INVALID", "DOCX ZIP/XML 패키지가 올바르지 않습니다.", str(error))
         )
 
-    return _report(docx, docx_hash, expected_profile_sha256, facts, findings)
+    return _report(docx, docx_hash, expected_profile_sha256, facts, findings, embedded_media)
 
 
 def _audit_styles(styles: ElementTree.Element, findings: list[dict[str, Any]]) -> None:
@@ -183,8 +185,10 @@ def _audit_drawings(
     document: ElementTree.Element,
     relationships: dict[str, str],
     names: set[str],
+    archive: zipfile.ZipFile,
     findings: list[dict[str, Any]],
     facts: dict[str, int],
+    embedded_media: list[dict[str, str]],
 ) -> None:
     drawings = document.findall(f".//{W}drawing")
     facts["drawings"] = len(drawings)
@@ -200,6 +204,14 @@ def _audit_drawings(
                     "그림 relationship가 실제 embedded media와 연결되지 않습니다.",
                     relationship_id,
                 )
+            )
+        else:
+            embedded_media.append(
+                {
+                    "relationshipId": relationship_id or "",
+                    "member": member,
+                    "sha256": hashlib.sha256(archive.read(member)).hexdigest(),
+                }
             )
     if facts["captions"] < facts["drawings"]:
         findings.append(
@@ -240,6 +252,7 @@ def _report(
     profile_hash: str,
     facts: dict[str, int],
     findings: list[dict[str, Any]],
+    embedded_media: list[dict[str, str]],
 ) -> dict[str, Any]:
     ordered = sorted(findings, key=lambda item: (item["code"], item["message"]))
     return {
@@ -248,6 +261,7 @@ def _report(
         "docx": {"path": str(path), "sha256": docx_hash},
         "expectedProfileSha256": profile_hash,
         "facts": facts,
+        "embeddedMedia": embedded_media,
         "findings": ordered,
     }
 
