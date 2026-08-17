@@ -35,3 +35,10 @@ export const EvidenceItemSchema = z.discriminatedUnion("status", [
 ]);
 
 export type EvidenceItem = z.infer<typeof EvidenceItemSchema>;
+
+export const EvidenceLedgerSchema = z.object({
+  schemaVersion: z.string().min(1),
+  claims: z.array(EvidenceItemSchema),
+});
+
+export type EvidenceLedger = z.infer<typeof EvidenceLedgerSchema>;

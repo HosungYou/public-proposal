@@ -1,9 +1,30 @@
 export {
   EvidenceItemSchema,
+  EvidenceLedgerSchema,
   EvidenceStatusSchema,
   type EvidenceItem,
+  type EvidenceLedger,
   type EvidenceStatus,
 } from "./evidence.js";
+export {
+  ConfirmedRequirementsSchema,
+  FigureSpecSchema,
+  PendingRequirementsSchema,
+  RequirementClaimSchema,
+  RequirementSchema,
+  RequirementsFileSchema,
+  type ConfirmedRequirements,
+  type FigureSpec,
+  type Requirement,
+  type RequirementClaim,
+  type RequirementsFile,
+} from "./requirements.js";
+export {
+  PagePlanItemSchema,
+  PagePlanSchema,
+  type PagePlan,
+  type PagePlanItem,
+} from "./page-plan.js";
 export {
   ApprovalPolicySchema,
   ProjectSchema,
