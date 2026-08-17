@@ -1,0 +1,23 @@
+{
+  "name": "kpp",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "engines": {
+    "node": ">=22 <27"
+  },
+  "scripts": {
+    "build": "tsc -p apps/kpp-cli/tsconfig.json",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit -p tsconfig.base.json"
+  },
+  "devDependencies": {
+    "tsx": "4.23.12",
+    "typescript": "7.0.2",
+    "vitest": "4.1.10"
+  }
+}
