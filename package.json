@@ -11,7 +11,7 @@
     "node": ">=22 <27"
   },
   "scripts": {
-    "build": "npm run build --workspace @kpp/schemas && npm run build --workspace @kpp/core && npm run build --workspace @enaction-labs/kpp-cli",
+    "build": "npm run build --workspace @kpp/schemas && npm run build --workspace @kpp/core && npm run build --workspace @kpp/audits && npm run build --workspace @enaction-labs/kpp-cli",
     "test": "vitest run",
     "typecheck": "tsc --noEmit -p tsconfig.base.json"
   },

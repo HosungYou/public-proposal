@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 
 import { Command } from "commander";
+import { contentApproveCommand } from "./commands/content.js";
 import { doctorCommand } from "./commands/doctor.js";
 import { exportAuthoringCommand } from "./commands/export-authoring.js";
 import { ingestCommand } from "./commands/ingest.js";
@@ -95,6 +96,14 @@ export async function runCli(argv: readonly string[]): Promise<number> {
     .option("--json", "JSON 형식으로 출력")
     .action(async (root: string, options: JsonOption & { response: string }) => {
       writeEnvelope(await importAuthoringCommand(root, options.response), options.json === true);
+    });
+
+  program
+    .command("content-approve <root>")
+    .requiredOption("--approved-by <name>", "콘텐츠 승인자 표시명")
+    .option("--json", "JSON 형식으로 출력")
+    .action(async (root: string, options: JsonOption & { approvedBy?: string }) => {
+      writeEnvelope(await contentApproveCommand(root, options), options.json === true);
     });
 
   try {

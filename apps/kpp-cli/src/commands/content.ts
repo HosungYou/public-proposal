@@ -1,0 +1,11 @@
+import { resolve } from "node:path";
+import { approveContent } from "@kpp/audits";
+import { success, type CliEnvelope } from "../output.js";
+
+export async function contentApproveCommand(
+  rootInput: string,
+  options: { readonly approvedBy?: string },
+): Promise<CliEnvelope> {
+  const result = await approveContent(resolve(rootInput), { approvedBy: options.approvedBy });
+  return success("검증된 콘텐츠를 제출책임자가 승인했습니다.", result);
+}

@@ -11,6 +11,7 @@
     "typecheck": "tsc --noEmit -p tsconfig.json"
   },
   "dependencies": {
+    "@kpp/audits": "0.1.0",
     "@kpp/core": "0.1.0",
     "@kpp/schemas": "0.1.0",
     "commander": "15.0.0",

@@ -54,6 +54,13 @@ export interface ImportAuthoringResult {
   readonly blockCount: number;
 }
 
+export interface VerifiedAuthoringResponse {
+  readonly requestPath: string;
+  readonly responsePath: string;
+  readonly request: AuthoringRequest;
+  readonly response: AuthoringResponse;
+}
+
 interface AuthoringArtifacts {
   readonly requirementsPath: string;
   readonly evidenceLedgerPath: string;
@@ -100,6 +107,32 @@ export async function importAuthoring(
   const responsePath = join(root, "content", RESPONSE_FILE_NAME);
   await writeJsonAtomically(responsePath, response);
   return { responsePath, blockCount: response.blocks.length };
+}
+
+/**
+ * Re-validates the persisted authoring exchange against its currently locked
+ * inputs. Consumers that make approval decisions must use this rather than
+ * accepting a response file as independently trustworthy.
+ */
+export async function verifyImportedAuthoringResponse(
+  rootInput: string,
+): Promise<VerifiedAuthoringResponse> {
+  const root = resolve(rootInput);
+  const project = await verifyProjectState(root);
+  if (project.state !== "DESIGN_LOCKED") {
+    throw new KppError(
+      "KPP_STATE_INVALID_TRANSITION",
+      "콘텐츠 승인은 DESIGN_LOCKED 상태에서만 시작할 수 있습니다.",
+      { stage: project.state, expected: "DESIGN_LOCKED", actual: project.state },
+    );
+  }
+  const requestPath = join(root, "content", REQUEST_FILE_NAME);
+  const responsePath = join(root, "content", RESPONSE_FILE_NAME);
+  const request = await readAuthoringRequest(requestPath);
+  await verifyRequestAgainstLockedInputs(root, project.projectId, request);
+  const response = parseAuthoringResponse(await readJson(responsePath, "KPP_INPUT_AUTHORING_RESPONSE_MISSING"));
+  await validateAuthoringResponse(response, request);
+  return { requestPath, responsePath, request, response };
 }
 
 async function assertAuthoringProject(root: string) {

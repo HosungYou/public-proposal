@@ -17,6 +17,9 @@
       ],
       "@kpp/schemas": [
         "./packages/schemas/src/index.ts"
+      ],
+      "@kpp/audits": [
+        "./packages/audits/src/index.ts"
       ]
     },
     "isolatedModules": true,

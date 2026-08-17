@@ -41,8 +41,10 @@ export {
 export {
   exportAuthoring,
   importAuthoring,
+  verifyImportedAuthoringResponse,
   type AuthoringSourceInput,
   type ExportAuthoringInput,
   type ExportAuthoringResult,
   type ImportAuthoringResult,
+  type VerifiedAuthoringResponse,
 } from "./authoring-bundle.js";
