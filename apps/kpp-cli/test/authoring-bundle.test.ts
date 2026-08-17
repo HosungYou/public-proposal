@@ -86,6 +86,21 @@ describe("model-independent authoring bundle exchange", () => {
     }))).rejects.toMatchObject({
       code: "KPP_EVIDENCE_UNBOUND_CLAIM",
     });
+    await expect(importAuthoring(fixture.root, responseWith(fixture.validResponse, {
+      text: "본 연구는 근거에 따라 ９９９쪽을 확인한다. {{CLAIM-BLANK}}",
+    }))).rejects.toMatchObject({
+      code: "KPP_EVIDENCE_UNBOUND_CLAIM",
+    });
+    await expect(importAuthoring(fixture.root, responseWith(fixture.validResponse, {
+      text: "본 연구는 근거에 따라 구백구십구쪽을 확인한다. {{CLAIM-BLANK}}",
+    }))).rejects.toMatchObject({
+      code: "KPP_EVIDENCE_UNBOUND_CLAIM",
+    });
+    await expect(importAuthoring(fixture.root, responseWith(fixture.validResponse, {
+      text: "본 연구는 근거에 따라 삼명을 확인한다. {{CLAIM-BLANK}}",
+    }))).rejects.toMatchObject({
+      code: "KPP_EVIDENCE_UNBOUND_CLAIM",
+    });
   });
 
   it("rejects unknown response page, claim, and evidence IDs", async () => {
@@ -170,7 +185,7 @@ async function createFixture(temporaryDirectories: string[]) {
   const issuerProfilePath = join(fixtureDirectory, "issuer-profile.json");
   const terminologyPath = join(fixtureDirectory, "terminology.json");
   const rfpText = "제안서 본문은 표지 및 간지를 제외하고 50쪽 이내로 한다.\n";
-  const evidenceText = "공식 확인자료: 본문은 50쪽 이내로 작성한다.\n";
+  const evidenceText = "공식 확인자료: 본문은 50쪽 이내로 작성한다. 부록에는 무관한 999쪽 정보가 있다.\n";
   const issuerProfile = {
     schemaVersion: "1.0.0",
     issuerName: "한국환경산업기술원",

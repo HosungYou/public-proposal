@@ -457,8 +457,7 @@ async function validateNumericTokens(
       throw evidenceBoundaryError("unknown_evidence_id", evidenceId);
     }
     await assertEvidenceSource(binding.sourcePath, binding.sourceSha256);
-    const contents = await readFile(binding.sourcePath, "utf8");
-    for (const numericToken of numericTokens(`${binding.scope}\n${contents}`)) {
+    for (const numericToken of numericTokens(binding.scope)) {
       allowedNumericTokens.add(numericToken);
     }
   }
@@ -470,7 +469,55 @@ async function validateNumericTokens(
 }
 
 function numericTokens(value: string): readonly string[] {
-  return [...value.matchAll(/\d{1,3}(?:,\d{3})*(?:\.\d+)?/g)].map((match) => match[0]!);
+  const normalized = value.normalize("NFKC");
+  const arabicTokens = [...normalized.matchAll(/\d{1,3}(?:,\d{3})*(?:\.\d+)?/g)]
+    .map((match) => match[0]!);
+  const koreanTokens = [...normalized.matchAll(
+    /([영공일이삼사오육칠팔구십백천만억조]{1,})(?=\s*(?:쪽|페이지|일|년|명|개|원|회|%|퍼센트|pt|포인트))/g,
+  )]
+    .map((match) => parseKoreanNumber(match[1]!))
+    .filter((token): token is string => token !== null);
+  return [...arabicTokens, ...koreanTokens];
+}
+
+function parseKoreanNumber(value: string): string | null {
+  const digits: Readonly<Record<string, number>> = {
+    영: 0,
+    공: 0,
+    일: 1,
+    이: 2,
+    삼: 3,
+    사: 4,
+    오: 5,
+    육: 6,
+    칠: 7,
+    팔: 8,
+    구: 9,
+  };
+  const smallUnits: Readonly<Record<string, number>> = { 십: 10, 백: 100, 천: 1_000 };
+  const largeUnits: Readonly<Record<string, number>> = { 만: 10_000, 억: 100_000_000, 조: 1_000_000_000_000 };
+  let result = 0;
+  let section = 0;
+  let digit: number | null = null;
+  for (const character of value) {
+    if (character in digits) {
+      digit = digits[character]!;
+      continue;
+    }
+    if (character in smallUnits) {
+      section += (digit ?? 1) * smallUnits[character]!;
+      digit = null;
+      continue;
+    }
+    if (character in largeUnits) {
+      result += (section + (digit ?? 0)) * largeUnits[character]!;
+      section = 0;
+      digit = null;
+      continue;
+    }
+    return null;
+  }
+  return String(result + section + (digit ?? 0));
 }
 
 function parseAuthoringResponse(value: unknown): AuthoringResponse {
