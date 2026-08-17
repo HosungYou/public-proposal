@@ -63,7 +63,6 @@ describe("project state transitions", () => {
   it("does not advance with an empty passing receipt", async () => {
     const root = await createProjectRoot(temporaryDirectories);
 
-    await mkdir(join(root, "receipts"));
     await writeFile(
       receiptPath(root, "SOURCE_LOCKED"),
       `${JSON.stringify({
@@ -98,7 +97,6 @@ describe("project state transitions", () => {
     const root = await createProjectRoot(temporaryDirectories);
     const source = join(root, "sources", "rfp.txt");
 
-    await mkdir(join(root, "sources"));
     await writeFile(source, "original source");
     await writeStageReceipt(root, "SOURCE_LOCKED", { files: [source] });
     await advanceProject(root, "SOURCE_LOCKED");

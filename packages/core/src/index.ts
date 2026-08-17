@@ -2,6 +2,7 @@ export { KppError, type KppErrorDetails } from "./errors.js";
 export { sha256File } from "./hash.js";
 export {
   initializeProject,
+  PROJECT_DIRECTORIES,
   projectPath,
   readProject,
   PROJECT_FILE_NAME,

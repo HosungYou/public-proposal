@@ -11,7 +11,7 @@
     "node": ">=22 <27"
   },
   "scripts": {
-    "build": "node -e \"const fs=require('node:fs'),cp=require('node:child_process');const d='apps/kpp-cli/src';const has=fs.existsSync(d)&&fs.readdirSync(d,{recursive:true}).some(f=>f.endsWith('.ts'));if(has)cp.execFileSync('tsc',['-p','apps/kpp-cli/tsconfig.json'],{stdio:'inherit'});else console.log('No CLI sources yet; skipping TypeScript emit');\"",
+    "build": "npm run build --workspace @kpp/schemas && npm run build --workspace @kpp/core && npm run build --workspace @enaction-labs/kpp-cli",
     "test": "vitest run",
     "typecheck": "tsc --noEmit -p tsconfig.base.json"
   },

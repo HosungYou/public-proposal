@@ -7,6 +7,20 @@ import { KppError } from "./errors.js";
 
 export const PROJECT_FILE_NAME = "kpp.project.yaml";
 
+// `release/` is intentionally absent: only the release command may create the
+// final submission directory.
+export const PROJECT_DIRECTORIES = [
+  "sources",
+  "requirements",
+  "evidence",
+  "content",
+  "figures",
+  "build",
+  "rendered",
+  "audit",
+  "receipts",
+] as const;
+
 export interface ProjectInitialization {
   readonly projectId: string;
   readonly issuerPack?: string | null;
@@ -29,6 +43,9 @@ export async function initializeProject(
     approvalPolicy: "single_owner",
   }, projectPath(root));
 
+  await Promise.all(PROJECT_DIRECTORIES.map((directory) => mkdir(join(root, directory), {
+    recursive: true,
+  })));
   await persistProject(projectPath(root), project);
   return project;
 }

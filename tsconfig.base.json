@@ -11,6 +11,14 @@
     "forceConsistentCasingInFileNames": true,
     "skipLibCheck": true,
     "resolveJsonModule": true,
+    "paths": {
+      "@kpp/core": [
+        "./packages/core/src/index.ts"
+      ],
+      "@kpp/schemas": [
+        "./packages/schemas/src/index.ts"
+      ]
+    },
     "isolatedModules": true,
     "types": [
       "node"
