@@ -100,9 +100,19 @@ async function persistProject(path: string, project: ProjectRecord): Promise<voi
     }
     await rename(temporaryPath, path);
     renamed = true;
+    await syncDirectory(directory);
   } finally {
     if (created && !renamed) {
       await rm(temporaryPath, { force: true });
     }
+  }
+}
+
+async function syncDirectory(directory: string): Promise<void> {
+  const handle = await open(directory, "r");
+  try {
+    await handle.sync();
+  } finally {
+    await handle.close();
   }
 }

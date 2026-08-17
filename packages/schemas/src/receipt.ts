@@ -18,6 +18,14 @@ export const ReceiptSchema = z.object({
   files: z.array(ReceiptFileSchema),
   inputReceiptHashes: z.array(Sha256Schema),
   result: ReceiptResultSchema,
+}).superRefine((receipt, context) => {
+  if (receipt.result === "PASS" && receipt.files.length === 0) {
+    context.addIssue({
+      code: "custom",
+      message: "PASS receipts must bind at least one file",
+      path: ["files"],
+    });
+  }
 });
 
 export type ReceiptFile = z.infer<typeof ReceiptFileSchema>;

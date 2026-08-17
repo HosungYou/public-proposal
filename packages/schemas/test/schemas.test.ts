@@ -96,4 +96,18 @@ describe("canonical persisted schemas", () => {
       ReceiptSchema.parse({ ...receipt, files: [{ path: "sources/rfp.pdf", sha256: "bad" }] }),
     ).toThrow();
   });
+
+  it("rejects a passing receipt without a SHA-bound file", () => {
+    expect(() =>
+      ReceiptSchema.parse({
+        schemaVersion: "1.0.0",
+        stage: "SOURCE_LOCKED",
+        createdAt: "2026-08-17T00:00:00.000Z",
+        toolVersion: "0.1.0",
+        files: [],
+        inputReceiptHashes: [],
+        result: "PASS",
+      }),
+    ).toThrow();
+  });
 });

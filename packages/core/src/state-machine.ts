@@ -43,6 +43,14 @@ export async function advanceProject(
   target: ProjectState,
 ): Promise<ProjectRecord> {
   const project = await readProject(root);
+  if (project.state !== "INIT") {
+    try {
+      await verifyReceiptChain(root, project.state);
+    } catch (error) {
+      await invalidateAtEarliestAffectedStage(root, project, affectedStage(error));
+      throw error;
+    }
+  }
   assertAdjacentTransition(project.state, target);
 
   try {

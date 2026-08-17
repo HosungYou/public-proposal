@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -60,6 +60,29 @@ describe("project state transitions", () => {
     });
   });
 
+  it("does not advance with an empty passing receipt", async () => {
+    const root = await createProjectRoot(temporaryDirectories);
+
+    await mkdir(join(root, "receipts"));
+    await writeFile(
+      receiptPath(root, "SOURCE_LOCKED"),
+      `${JSON.stringify({
+        schemaVersion: "1.0.0",
+        stage: "SOURCE_LOCKED",
+        createdAt: "2026-08-17T00:00:00.000Z",
+        toolVersion: "0.1.0",
+        files: [],
+        inputReceiptHashes: [],
+        result: "PASS",
+      })}\n`,
+    );
+
+    await expect(advanceProject(root, "SOURCE_LOCKED")).rejects.toMatchObject({
+      code: "KPP_INPUT_RECEIPT_INVALID",
+    });
+    await expect(readProject(root)).resolves.toMatchObject({ state: "INIT" });
+  });
+
   it("requires the preceding receipt hash as a transition input", async () => {
     const root = await createProjectRoot(temporaryDirectories);
     await writeStageReceipt(root, "SOURCE_LOCKED");
@@ -93,6 +116,55 @@ describe("project state transitions", () => {
     });
     await expect(readProject(root)).resolves.toMatchObject({ state: "INIT" });
   });
+
+  it("invalidates a released project before rejecting a new transition", async () => {
+    const root = await createProjectRoot(temporaryDirectories);
+    const stageArtifacts = new Map<string, string>();
+    let predecessorHash: string | undefined;
+
+    for (const stage of allowedStagesAfterInit()) {
+      const artifact = await createStageArtifact(root, stage);
+      stageArtifacts.set(stage, artifact);
+      await writeStageReceipt(root, stage, {
+        files: [artifact],
+        inputReceiptHashes: predecessorHash === undefined ? [] : [predecessorHash],
+      });
+      await advanceProject(root, stage);
+      predecessorHash = await sha256File(receiptPath(root, stage));
+    }
+
+    await writeFile(stageArtifacts.get("HUMAN_APPROVED")!, "changed approval artifact");
+
+    await expect(advanceProject(root, "RELEASED")).rejects.toMatchObject({
+      code: "KPP_INPUT_RECEIPT_INVALID",
+    });
+    await expect(readProject(root)).resolves.toMatchObject({ state: "AUDITED" });
+  });
+
+  it("cleans up a project temporary file when the final rename fails", async () => {
+    const root = await mkdtemp(join(tmpdir(), "kpp-state-"));
+    temporaryDirectories.push(root);
+    await mkdir(join(root, "kpp.project.yaml"));
+
+    await expect(initializeProject(root, { projectId: "sample" })).rejects.toThrow();
+
+    expect((await readdir(root)).filter((entry) => entry.endsWith(".tmp"))).toEqual([]);
+  });
+
+  it("keeps project state readable after concurrent atomic initialization", async () => {
+    const root = await mkdtemp(join(tmpdir(), "kpp-state-"));
+    temporaryDirectories.push(root);
+
+    await Promise.all(
+      Array.from({ length: 16 }, () => initializeProject(root, { projectId: "sample" })),
+    );
+
+    await expect(readProject(root)).resolves.toMatchObject({
+      projectId: "sample",
+      state: "INIT",
+    });
+    expect((await readdir(root)).filter((entry) => entry.endsWith(".tmp"))).toEqual([]);
+  });
 });
 
 async function createProjectRoot(temporaryDirectories: string[]): Promise<string> {
@@ -111,13 +183,40 @@ async function writeStageReceipt(
     readonly result?: "PASS" | "BLOCKED";
   } = {},
 ): Promise<void> {
+  const files = options.files ?? [await createStageArtifact(root, stage)];
   await writeReceipt({
     stage,
-    files: options.files ?? [],
+    files,
     inputReceiptHashes: options.inputReceiptHashes,
     result: options.result,
     output: receiptPath(root, stage),
   });
+}
+
+async function createStageArtifact(
+  root: string,
+  stage: Parameters<typeof writeReceipt>[0]["stage"],
+): Promise<string> {
+  const directory = join(root, "artifacts");
+  const artifact = join(directory, `${stage.toLowerCase()}.txt`);
+  await mkdir(directory, { recursive: true });
+  await writeFile(artifact, `${stage} artifact`);
+  return artifact;
+}
+
+function allowedStagesAfterInit(): Parameters<typeof writeReceipt>[0]["stage"][] {
+  return [
+    "SOURCE_LOCKED",
+    "REQUIREMENTS_LOCKED",
+    "EVIDENCE_LOCKED",
+    "DESIGN_LOCKED",
+    "CONTENT_APPROVED",
+    "BUILT",
+    "RENDERED",
+    "AUDITED",
+    "HUMAN_APPROVED",
+    "RELEASED",
+  ];
 }
 
 function receiptPath(root: string, stage: Parameters<typeof writeReceipt>[0]["stage"]): string {
