@@ -11,7 +11,10 @@
     "forceConsistentCasingInFileNames": true,
     "skipLibCheck": true,
     "resolveJsonModule": true,
-    "isolatedModules": true
+    "isolatedModules": true,
+    "types": [
+      "node"
+    ]
   },
   "include": [
     "apps/**/*.ts",
