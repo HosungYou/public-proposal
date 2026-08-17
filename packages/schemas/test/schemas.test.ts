@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  EvidenceBindingSchema,
   EvidenceItemSchema,
   ProjectSchema,
   ProjectStateSchema,
@@ -61,6 +62,30 @@ describe("canonical persisted schemas", () => {
         evidenceIds: [],
       }).status,
     ).toBe("blocked");
+  });
+
+  it("requires complete local provenance and page binding for bounded evidence", () => {
+    expect(EvidenceBindingSchema.parse({
+      evidenceId: "EVID-001",
+      sourcePath: "/tmp/evidence.txt",
+      sourceSha256: "a".repeat(64),
+      scope: "입찰 자격 보유 여부",
+      claimIds: ["CLAIM-001"],
+      targetRequirementId: "REQ-001",
+      targetPageId: "PAGE-001",
+      targetPageRole: "qualification_evidence",
+    })).toMatchObject({ evidenceId: "EVID-001", targetPageId: "PAGE-001" });
+
+    expect(() => EvidenceBindingSchema.parse({
+      evidenceId: "EVID-001",
+      sourcePath: "/tmp/evidence.txt",
+      sourceSha256: "not-a-sha",
+      scope: "입찰 자격 보유 여부",
+      claimIds: [],
+      targetRequirementId: "REQ-001",
+      targetPageId: "PAGE-001",
+      targetPageRole: "qualification_evidence",
+    })).toThrow();
   });
 
   it("accepts a new local project", () => {

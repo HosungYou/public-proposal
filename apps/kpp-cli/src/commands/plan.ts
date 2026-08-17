@@ -1,16 +1,20 @@
-import { join, resolve } from "node:path";
+import { stat } from "node:fs/promises";
+import { dirname, join, resolve } from "node:path";
 import {
   advanceProject,
   KppError,
-  readProject,
   sha256File,
+  verifyProjectState,
   writeReceipt,
 } from "@kpp/core";
 import {
+  ConfirmedRequirementsSchema,
   EvidenceLedgerSchema,
   PagePlanSchema,
   RequirementsFileSchema,
   type ConfirmedRequirements,
+  type EvidenceBinding,
+  type PagePlan,
 } from "@kpp/schemas";
 import { success, type CliEnvelope } from "../output.js";
 import { readJsonFile, writeJsonAtomically } from "./ingest.js";
@@ -21,12 +25,16 @@ export async function planCommand(
 ): Promise<CliEnvelope> {
   const root = resolve(rootInput);
   const requirementsPath = resolve(requirementsInput);
-  const project = await readProject(root);
-  if (project.state !== "SOURCE_LOCKED") {
+  const project = await verifyProjectState(root);
+  if (project.state !== "SOURCE_LOCKED" && project.state !== "REQUIREMENTS_LOCKED") {
     throw new KppError(
       "KPP_STATE_INVALID_TRANSITION",
-      "계획은 SOURCE_LOCKED 상태에서만 만들 수 있습니다.",
-      { stage: project.state, expected: "SOURCE_LOCKED", actual: project.state },
+      "계획은 SOURCE_LOCKED 또는 REQUIREMENTS_LOCKED 상태에서만 만들 수 있습니다.",
+      {
+        stage: project.state,
+        expected: ["SOURCE_LOCKED", "REQUIREMENTS_LOCKED"],
+        actual: project.state,
+      },
     );
   }
 
@@ -45,7 +53,7 @@ export async function planCommand(
     );
   }
 
-  const requirements = normalizeRequirements(parsed.data);
+  const requirements = normalizeRequirements(parsed.data, dirname(requirementsPath));
   const persistedRequirementsPath = join(root, "requirements", "requirements.json");
   const pagePlanPath = join(root, "content", "page-plan.json");
   const evidenceLedgerPath = join(root, "evidence", "evidence-ledger.json");
@@ -77,22 +85,37 @@ export async function planCommand(
         evidenceIds: claim.evidenceIds,
       })),
     ),
+    bindings: requirements.evidenceBindings,
   });
 
-  await writeJsonAtomically(persistedRequirementsPath, requirements);
-  await writeJsonAtomically(pagePlanPath, pagePlan);
-  await writeReceipt({
-    stage: "REQUIREMENTS_LOCKED",
-    files: [persistedRequirementsPath, pagePlanPath],
-    inputReceiptHashes: [await sha256File(sourceReceiptPath)],
-    output: requirementsReceiptPath,
-  });
-  await advanceProject(root, "REQUIREMENTS_LOCKED");
+  await validateEvidenceBindings(requirements, pagePlan);
+
+  if (project.state === "SOURCE_LOCKED") {
+    await writeJsonAtomically(persistedRequirementsPath, requirements);
+    await writeJsonAtomically(pagePlanPath, pagePlan);
+    await writeReceipt({
+      stage: "REQUIREMENTS_LOCKED",
+      files: [persistedRequirementsPath, pagePlanPath],
+      inputReceiptHashes: [await sha256File(sourceReceiptPath)],
+      output: requirementsReceiptPath,
+    });
+    await advanceProject(root, "REQUIREMENTS_LOCKED");
+  } else {
+    await assertRecoveryArtifactsMatch(
+      persistedRequirementsPath,
+      pagePlanPath,
+      requirements,
+      pagePlan,
+    );
+  }
 
   await writeJsonAtomically(evidenceLedgerPath, ledger);
   await writeReceipt({
     stage: "EVIDENCE_LOCKED",
-    files: [evidenceLedgerPath],
+    files: [
+      evidenceLedgerPath,
+      ...new Set(requirements.evidenceBindings.map(({ sourcePath }) => sourcePath)),
+    ],
     inputReceiptHashes: [await sha256File(requirementsReceiptPath)],
     output: evidenceReceiptPath,
   });
@@ -106,22 +129,157 @@ export async function planCommand(
   });
 }
 
-function normalizeRequirements(input: ConfirmedRequirements): ConfirmedRequirements {
+function normalizeRequirements(
+  input: ConfirmedRequirements,
+  inputDirectory: string,
+): ConfirmedRequirements {
   return {
     ...input,
+    evidenceBindings: input.evidenceBindings
+      .map((binding) => ({
+        ...binding,
+        sourcePath: /^[a-z][a-z0-9+.-]*:/i.test(binding.sourcePath)
+          ? binding.sourcePath
+          : resolve(inputDirectory, binding.sourcePath),
+        claimIds: [...binding.claimIds],
+      })),
     requirements: input.requirements
       .map((requirement) => ({
         ...requirement,
-        claims: [...requirement.claims]
-          .map((claim) => ({ ...claim, evidenceIds: [...claim.evidenceIds].sort() }))
-          .sort((left, right) => compareIds(left.claimId, right.claimId)),
-        figureSpecs: [...requirement.figureSpecs]
-          .sort((left, right) => compareIds(left.figureId, right.figureId)),
-      }))
-      .sort((left, right) => compareIds(left.requirementId, right.requirementId)),
+        claims: requirement.claims
+          .map((claim) => ({ ...claim, evidenceIds: [...claim.evidenceIds] })),
+        figureSpecs: [...requirement.figureSpecs],
+      })),
   };
 }
 
-function compareIds(left: string, right: string): number {
-  return left < right ? -1 : left > right ? 1 : 0;
+async function validateEvidenceBindings(
+  requirements: ConfirmedRequirements,
+  pagePlan: PagePlan,
+): Promise<void> {
+  const bindingById = new Map(
+    requirements.evidenceBindings.map((binding) => [binding.evidenceId, binding]),
+  );
+  const pageByRequirement = new Map(
+    pagePlan.pages.map((page) => [page.requirementId, page]),
+  );
+  const claimTargets = new Map(
+    requirements.requirements.flatMap((requirement) => {
+      const page = pageByRequirement.get(requirement.requirementId)!;
+      return requirement.claims.map((claim) => [claim.claimId, { claim, requirement, page }] as const);
+    }),
+  );
+
+  for (const binding of requirements.evidenceBindings) {
+    if (/^[a-z][a-z0-9+.-]*:/i.test(binding.sourcePath)) {
+      throw unresolvedEvidence(binding, "unsupported_source_uri", "readable local file");
+    }
+    try {
+      const metadata = await stat(binding.sourcePath);
+      if (!metadata.isFile()) {
+        throw new Error("source is not a file");
+      }
+      const actualSha256 = await sha256File(binding.sourcePath);
+      if (actualSha256 !== binding.sourceSha256) {
+        throw unresolvedEvidence(binding, "source_sha256_mismatch", binding.sourceSha256, actualSha256);
+      }
+    } catch (error) {
+      if (error instanceof KppError) {
+        throw error;
+      }
+      throw unresolvedEvidence(
+        binding,
+        "source_unreadable",
+        "readable local file",
+        error instanceof Error ? error.message : error,
+      );
+    }
+
+    for (const claimId of binding.claimIds) {
+      const target = claimTargets.get(claimId);
+      if (target === undefined || !target.claim.evidenceIds.includes(binding.evidenceId)) {
+        throw unresolvedEvidence(binding, "binding_claim_mismatch", claimId);
+      }
+      if (
+        binding.targetRequirementId !== target.requirement.requirementId
+        || binding.targetPageId !== target.page.pageId
+        || binding.targetPageRole !== target.page.pageRole
+      ) {
+        throw unresolvedEvidence(binding, "binding_target_mismatch", {
+          targetRequirementId: target.requirement.requirementId,
+          targetPageId: target.page.pageId,
+          targetPageRole: target.page.pageRole,
+        }, {
+          targetRequirementId: binding.targetRequirementId,
+          targetPageId: binding.targetPageId,
+          targetPageRole: binding.targetPageRole,
+        });
+      }
+    }
+  }
+
+  for (const [claimId, target] of claimTargets) {
+    for (const evidenceId of target.claim.evidenceIds) {
+      const binding = bindingById.get(evidenceId);
+      if (binding === undefined || !binding.claimIds.includes(claimId)) {
+        throw new KppError(
+          "KPP_INPUT_EVIDENCE_UNRESOLVED",
+          "증거 ID를 실제 출처와 계획 페이지에 연결할 수 없습니다.",
+          { rule: "claim_binding_missing", expected: claimId, actual: evidenceId },
+        );
+      }
+    }
+  }
+}
+
+function unresolvedEvidence(
+  binding: EvidenceBinding,
+  rule: string,
+  expected: unknown,
+  actual: unknown = binding.sourcePath,
+): KppError {
+  return new KppError(
+    "KPP_INPUT_EVIDENCE_UNRESOLVED",
+    "증거 ID를 실제 출처와 계획 페이지에 연결할 수 없습니다.",
+    { path: binding.sourcePath, rule, expected, actual },
+  );
+}
+
+async function assertRecoveryArtifactsMatch(
+  persistedRequirementsPath: string,
+  pagePlanPath: string,
+  requirements: ConfirmedRequirements,
+  pagePlan: PagePlan,
+): Promise<void> {
+  let persistedRequirements: unknown;
+  let persistedPagePlan: unknown;
+  try {
+    persistedRequirements = ConfirmedRequirementsSchema.parse(
+      await readJsonFile(persistedRequirementsPath),
+    );
+    persistedPagePlan = PagePlanSchema.parse(await readJsonFile(pagePlanPath));
+  } catch (error) {
+    throw new KppError(
+      "KPP_INPUT_REQUIREMENTS_RECOVERY_MISMATCH",
+      "잠긴 요구사항 산출물이 재시도 입력과 일치하지 않습니다.",
+      {
+        rule: "locked_artifact_invalid",
+        actual: error instanceof Error ? error.message : error,
+      },
+    );
+  }
+  if (
+    JSON.stringify(persistedRequirements) !== JSON.stringify(requirements)
+    || JSON.stringify(persistedPagePlan) !== JSON.stringify(pagePlan)
+  ) {
+    throw new KppError(
+      "KPP_INPUT_REQUIREMENTS_RECOVERY_MISMATCH",
+      "잠긴 요구사항 산출물이 재시도 입력과 일치하지 않습니다.",
+      {
+        rule: "locked_input_changed",
+        expected: [persistedRequirementsPath, pagePlanPath],
+        actual: "retry input differs from locked artifacts",
+      },
+    );
+  }
 }

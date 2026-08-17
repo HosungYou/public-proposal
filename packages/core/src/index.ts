@@ -12,6 +12,7 @@ export {
   advanceProject,
   allowedNext,
   PROJECT_STATES,
+  verifyProjectState,
 } from "./state-machine.js";
 export {
   verifyReceipt,

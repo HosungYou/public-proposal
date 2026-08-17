@@ -57,7 +57,7 @@ export async function ingestCommand(rootInput: string, rfpInput: string): Promis
     });
   }
 
-  await copyAtomically(rfpPath, copiedPath);
+  await copyFileAtomically(rfpPath, copiedPath);
   const manifestPath = join(root, "sources", "manifest.json");
   const manifest = SourceManifestSchema.parse({
     schemaVersion: "1.0.0",
@@ -129,21 +129,57 @@ export async function writeJsonAtomically(path: string, value: unknown): Promise
   }
 }
 
-async function copyAtomically(source: string, destination: string): Promise<void> {
+interface AtomicCopyHandle {
+  sync(): Promise<void>;
+  close(): Promise<void>;
+}
+
+export interface AtomicCopyOperations {
+  mkdir(path: string, options: { recursive: true }): Promise<unknown>;
+  copyFile(source: string, destination: string): Promise<void>;
+  open(path: string, flags: string): Promise<AtomicCopyHandle>;
+  rename(source: string, destination: string): Promise<void>;
+  rm(path: string, options: { force: true }): Promise<void>;
+}
+
+const DEFAULT_ATOMIC_COPY_OPERATIONS: AtomicCopyOperations = {
+  mkdir: async (path, options) => mkdir(path, options),
+  copyFile: async (source, destination) => copyFile(source, destination),
+  open: async (path, flags) => open(path, flags),
+  rename: async (source, destination) => rename(source, destination),
+  rm: async (path, options) => rm(path, options),
+};
+
+export async function copyFileAtomically(
+  source: string,
+  destination: string,
+  operations: AtomicCopyOperations = DEFAULT_ATOMIC_COPY_OPERATIONS,
+): Promise<void> {
   const directory = dirname(destination);
-  await mkdir(directory, { recursive: true });
+  await operations.mkdir(directory, { recursive: true });
   const temporaryPath = join(directory, `.${basename(destination)}.${process.pid}.${randomUUID()}.tmp`);
   let copied = false;
   let renamed = false;
   try {
-    await copyFile(source, temporaryPath);
+    await operations.copyFile(source, temporaryPath);
     copied = true;
-    await rename(temporaryPath, destination);
+    const temporaryHandle = await operations.open(temporaryPath, "r");
+    try {
+      await temporaryHandle.sync();
+    } finally {
+      await temporaryHandle.close();
+    }
+    await operations.rename(temporaryPath, destination);
     renamed = true;
-    await syncDirectory(directory);
+    const directoryHandle = await operations.open(directory, "r");
+    try {
+      await directoryHandle.sync();
+    } finally {
+      await directoryHandle.close();
+    }
   } finally {
     if (copied && !renamed) {
-      await rm(temporaryPath, { force: true });
+      await operations.rm(temporaryPath, { force: true });
     }
   }
 }

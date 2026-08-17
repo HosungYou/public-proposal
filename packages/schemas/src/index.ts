@@ -1,7 +1,9 @@
 export {
+  EvidenceBindingSchema,
   EvidenceItemSchema,
   EvidenceLedgerSchema,
   EvidenceStatusSchema,
+  type EvidenceBinding,
   type EvidenceItem,
   type EvidenceLedger,
   type EvidenceStatus,

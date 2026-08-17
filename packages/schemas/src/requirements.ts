@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { EvidenceBindingSchema } from "./evidence.js";
 
 const IdentifierSchema = z.string().min(1);
 
@@ -37,6 +38,7 @@ export const PendingRequirementsSchema = RequirementsRecordSchema.extend({
 export const ConfirmedRequirementsSchema = RequirementsRecordSchema.extend({
   confirmationStatus: z.literal("confirmed"),
   confirmedBy: z.string().min(1),
+  evidenceBindings: z.array(EvidenceBindingSchema),
   requirements: z.array(RequirementSchema).min(1),
 });
 
@@ -50,6 +52,13 @@ export const RequirementsFileSchema = z.discriminatedUnion("confirmationStatus",
     "claimId",
     context,
   );
+  if (record.confirmationStatus === "confirmed") {
+    addDuplicateIssues(
+      record.evidenceBindings.map(({ evidenceId }) => evidenceId),
+      "evidenceId",
+      context,
+    );
+  }
 });
 
 function addDuplicateIssues(

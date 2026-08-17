@@ -63,6 +63,20 @@ export async function advanceProject(
   return persistProjectState(root, { ...project, state: target });
 }
 
+export async function verifyProjectState(root: string): Promise<ProjectRecord> {
+  const project = await readProject(root);
+  if (project.state === "INIT") {
+    return project;
+  }
+  try {
+    await verifyReceiptChain(root, project.state);
+    return project;
+  } catch (error) {
+    await invalidateAtEarliestAffectedStage(root, project, affectedStage(error));
+    throw error;
+  }
+}
+
 function assertAdjacentTransition(current: ProjectState, target: ProjectState): void {
   if (!ProjectStateSchema.safeParse(target).success || !allowedNext(current).includes(target)) {
     throw new KppError("KPP_STATE_INVALID_TRANSITION", "허용되지 않은 프로젝트 상태 전이입니다.", {
