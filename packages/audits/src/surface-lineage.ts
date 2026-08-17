@@ -203,6 +203,10 @@ async function hasValidPngStructure(path: string): Promise<boolean> {
   let chunkIndex = 0;
   let sawHeader = false;
   let sawImageData = false;
+  let closedImageData = false;
+  let compressedImageDataBytes = 0;
+  let sawPalette = false;
+  let sawTransparency = false;
   while (offset < png.length) {
     if (png.length - offset < 12) return false;
     const length = png.readUInt32BE(offset);
@@ -224,10 +228,25 @@ async function hasValidPngStructure(path: string): Promise<boolean> {
       sawHeader = true;
     } else if (name === "IHDR") {
       return false;
+    } else if (name === "PLTE") {
+      if (sawPalette || sawImageData || length === 0 || length % 3 !== 0 || length > 3 * 256) return false;
+      sawPalette = true;
+    } else if (name === "tRNS") {
+      if (sawTransparency || sawImageData) return false;
+      sawTransparency = true;
     } else if (name === "IDAT") {
+      if (closedImageData || !sawHeader) return false;
       sawImageData = true;
+      compressedImageDataBytes += length;
     } else if (name === "IEND") {
-      return length === 0 && sawHeader && sawImageData && chunkEnd === png.length;
+      return length === 0 && sawHeader && sawImageData && compressedImageDataBytes > 0 && chunkEnd === png.length;
+    } else if (sawImageData) {
+      closedImageData = true;
+    }
+
+    if (name !== "IHDR" && name !== "PLTE" && name !== "tRNS" && name !== "IDAT" && name !== "IEND"
+      && type[0] !== undefined && type[0] >= 0x41 && type[0] <= 0x5a) {
+      return false;
     }
 
     offset = chunkEnd;

@@ -122,6 +122,53 @@ describe("artifact-backed proposal audits", () => {
     expect(result.findings.map((finding) => finding.code)).toContain("KPP_RENDER_PAGE_IMAGES");
   });
 
+  test("blocks CRC-valid PNG chunks with PLTE after IDAT even when its manifest is rebound", async () => {
+    const fixture = await renderFixture();
+    const png = await readFile(fixture.pagePath);
+    const chunks = parsePngChunks(png);
+    const ihdr = chunks.find((chunk) => chunk.type === "IHDR");
+    const idat = chunks.filter((chunk) => chunk.type === "IDAT");
+    const iend = chunks.find((chunk) => chunk.type === "IEND");
+    if (ihdr === undefined || idat.length === 0 || iend === undefined) {
+      throw new Error("render fixture did not contain the expected PNG chunks");
+    }
+    const malformed = rebuildPng([
+      ihdr,
+      { type: "IDAT", data: Buffer.concat(idat.map((chunk) => chunk.data)) },
+      { type: "PLTE", data: Buffer.from([0x00, 0x00, 0x00]) },
+      iend,
+    ]);
+    await writeFile(fixture.pagePath, malformed);
+    await rebindRenderArtifact(fixture.manifestPath, "page", fixture.pagePath);
+
+    const result = await auditRenderArtifacts(fixture.manifestPath, { trustedPdftotextPath: fixture.extractorPath });
+
+    expect(result.status).toBe("BLOCKED");
+    expect(result.findings.map((finding) => finding.code)).toContain("KPP_RENDER_PAGE_IMAGES");
+  });
+
+  test("blocks a CRC-valid PNG with empty IDAT even when its manifest is rebound", async () => {
+    const fixture = await renderFixture();
+    const png = await readFile(fixture.pagePath);
+    const chunks = parsePngChunks(png);
+    const ihdr = chunks.find((chunk) => chunk.type === "IHDR");
+    const iend = chunks.find((chunk) => chunk.type === "IEND");
+    if (ihdr === undefined || iend === undefined) {
+      throw new Error("render fixture did not contain the expected PNG chunks");
+    }
+    await writeFile(fixture.pagePath, rebuildPng([
+      ihdr,
+      { type: "IDAT", data: Buffer.alloc(0) },
+      iend,
+    ]));
+    await rebindRenderArtifact(fixture.manifestPath, "page", fixture.pagePath);
+
+    const result = await auditRenderArtifacts(fixture.manifestPath, { trustedPdftotextPath: fixture.extractorPath });
+
+    expect(result.status).toBe("BLOCKED");
+    expect(result.findings.map((finding) => finding.code)).toContain("KPP_RENDER_PAGE_IMAGES");
+  });
+
   test("blocks a manifest page count that differs from fixed pdfinfo", async () => {
     const fixture = await renderFixture();
     const manifest = JSON.parse(await readFile(fixture.manifestPath, "utf8")) as {
@@ -512,4 +559,42 @@ async function renderedProjectFixture(bindings?: {
 
 function sha256(value: string): string {
   return createHash("sha256").update(value, "utf8").digest("hex");
+}
+
+const PNG_SIGNATURE = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+
+function parsePngChunks(png: Buffer): Array<{ type: string; data: Buffer }> {
+  const chunks: Array<{ type: string; data: Buffer }> = [];
+  let offset = PNG_SIGNATURE.length;
+  while (offset < png.length) {
+    const length = png.readUInt32BE(offset);
+    const type = png.toString("ascii", offset + 4, offset + 8);
+    const dataStart = offset + 8;
+    chunks.push({ type, data: png.subarray(dataStart, dataStart + length) });
+    offset = dataStart + length + 4;
+  }
+  return chunks;
+}
+
+function rebuildPng(chunks: readonly { type: string; data: Buffer }[]): Buffer {
+  return Buffer.concat([PNG_SIGNATURE, ...chunks.map(({ type, data }) => {
+    const typeBytes = Buffer.from(type, "ascii");
+    const chunk = Buffer.alloc(12 + data.length);
+    chunk.writeUInt32BE(data.length, 0);
+    typeBytes.copy(chunk, 4);
+    data.copy(chunk, 8);
+    chunk.writeUInt32BE(crc32(Buffer.concat([typeBytes, data])), 8 + data.length);
+    return chunk;
+  })]);
+}
+
+function crc32(bytes: Buffer): number {
+  let crc = 0xffff_ffff;
+  for (const byte of bytes) {
+    crc ^= byte;
+    for (let bit = 0; bit < 8; bit += 1) {
+      crc = (crc >>> 1) ^ ((crc & 1) === 1 ? 0xedb8_8320 : 0);
+    }
+  }
+  return (crc ^ 0xffff_ffff) >>> 0;
 }
