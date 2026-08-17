@@ -1,0 +1,25 @@
+{
+  "schemaVersion": "1.0.0",
+  "candidates": [
+    {
+      "candidateId": "CAND-PAGE-LIMIT-001",
+      "sourcePath": "__ISSUER_RFP_PATH__",
+      "sourceSha256": "48bbad3126f72ffe754f12a85d96021343437b552276fd74d28c5c1a3edfe615",
+      "sourceLocator": "section:1",
+      "extractedText": "본 제안서는 표지 및 간지를 제외하고 본문 50쪽 이내로 작성한다.",
+      "category": "page_limit",
+      "confidence": 0.99,
+      "status": "pending"
+    },
+    {
+      "candidateId": "CAND-METHOD-001",
+      "sourcePath": "__ISSUER_RFP_PATH__",
+      "sourceSha256": "48bbad3126f72ffe754f12a85d96021343437b552276fd74d28c5c1a3edfe615",
+      "sourceLocator": "section:2",
+      "extractedText": "수행계획에는 연구 절차, 역할 분담, 일정 및 검증 방법을 제시한다.",
+      "category": "required_form",
+      "confidence": 0.98,
+      "status": "pending"
+    }
+  ]
+}

@@ -1,16 +1,50 @@
 import { spawn } from "node:child_process";
-import { cp, mkdtemp, readFile, rm } from "node:fs/promises";
+import { cp, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { afterEach, beforeAll, describe, expect, it } from "vitest";
 
 let core: typeof import("@kpp/core");
-let audits: typeof import("@kpp/audits");
 
 interface ContentFixtureResult {
   readonly state: string;
   readonly blockers: readonly unknown[];
   readonly root: string;
+  readonly candidates: {
+    readonly candidates: readonly {
+      readonly candidateId: string;
+      readonly sourcePath: string;
+      readonly sourceSha256: string;
+      readonly sourceLocator: string;
+    }[];
+  };
+  readonly requirements: {
+    readonly requirements: readonly {
+      readonly requirementId: string;
+      readonly sourceCandidateIds?: readonly string[];
+    }[];
+  };
+  readonly complianceMatrix: {
+    readonly rows: readonly {
+      readonly candidateId: string;
+      readonly sourceLocator: string;
+      readonly sourceSha256: string;
+      readonly sourceAuthority: string;
+      readonly targetRequirementIds: readonly string[];
+      readonly targetPageIds: readonly string[];
+      readonly targetPageRoles: readonly string[];
+      readonly decidedBy: string;
+    }[];
+  };
+  readonly decisionLedger: {
+    readonly decisions: readonly {
+      readonly candidateId: string;
+      readonly sourceLocator: string;
+      readonly sourceSha256: string;
+      readonly sourceAuthority: string;
+      readonly decidedBy: string;
+    }[];
+  };
   readonly pagePlan: {
     readonly pages: readonly {
       readonly figureSpecs: readonly { readonly family: string; readonly renderer: string }[];
@@ -38,6 +72,8 @@ interface ContentFixtureResult {
   };
   readonly finalResponse: {
     readonly blocks: readonly {
+      readonly pageId: string;
+      readonly claimIds: readonly string[];
       readonly pendingBlankFieldIds: readonly string[];
       readonly text: string;
     }[];
@@ -50,7 +86,6 @@ describe("content-to-build integration fixture", () => {
   beforeAll(async () => {
     expect(await runProcess("npm", ["run", "build"])).toMatchObject({ code: 0, stderr: "" });
     core = await import("@kpp/core");
-    audits = await import("@kpp/audits");
   });
 
   afterEach(async () => {
@@ -64,6 +99,65 @@ describe("content-to-build integration fixture", () => {
 
     expect(result.state).toBe("CONTENT_APPROVED");
     expect(result.blockers).toEqual([]);
+    expect(result.candidates.candidates).toEqual([
+      expect.objectContaining({
+        candidateId: "CAND-PAGE-LIMIT-001",
+        sourcePath: join(result.root, "..", "fixture", "issuer-rfp.txt"),
+        sourceSha256: "48bbad3126f72ffe754f12a85d96021343437b552276fd74d28c5c1a3edfe615",
+        sourceLocator: "section:1",
+      }),
+      expect.objectContaining({
+        candidateId: "CAND-METHOD-001",
+        sourcePath: join(result.root, "..", "fixture", "issuer-rfp.txt"),
+        sourceSha256: "48bbad3126f72ffe754f12a85d96021343437b552276fd74d28c5c1a3edfe615",
+        sourceLocator: "section:2",
+      }),
+    ]);
+    expect(result.requirements.requirements).toEqual([
+      expect.objectContaining({
+        requirementId: "REQ-RESEARCH-METHOD",
+        sourceCandidateIds: ["CAND-PAGE-LIMIT-001", "CAND-METHOD-001"],
+      }),
+      expect.objectContaining({ requirementId: "REQ-OPTIONAL-INPUT" }),
+    ]);
+    expect(result.complianceMatrix.rows).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        candidateId: "CAND-PAGE-LIMIT-001",
+        sourceLocator: "section:1",
+        sourceSha256: "48bbad3126f72ffe754f12a85d96021343437b552276fd74d28c5c1a3edfe615",
+        sourceAuthority: "issuer",
+        targetRequirementIds: ["REQ-RESEARCH-METHOD"],
+        targetPageIds: ["PAGE-001"],
+        targetPageRoles: ["research_method"],
+        decidedBy: "synthetic-proposal-owner",
+      }),
+      expect.objectContaining({
+        candidateId: "CAND-METHOD-001",
+        sourceLocator: "section:2",
+        sourceSha256: "48bbad3126f72ffe754f12a85d96021343437b552276fd74d28c5c1a3edfe615",
+        sourceAuthority: "issuer",
+        targetRequirementIds: ["REQ-RESEARCH-METHOD"],
+        targetPageIds: ["PAGE-001"],
+        targetPageRoles: ["research_method"],
+        decidedBy: "synthetic-proposal-owner",
+      }),
+    ]));
+    expect(result.decisionLedger.decisions).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        candidateId: "CAND-PAGE-LIMIT-001",
+        sourceLocator: "section:1",
+        sourceSha256: "48bbad3126f72ffe754f12a85d96021343437b552276fd74d28c5c1a3edfe615",
+        sourceAuthority: "issuer",
+        decidedBy: "synthetic-proposal-owner",
+      }),
+      expect.objectContaining({
+        candidateId: "CAND-METHOD-001",
+        sourceLocator: "section:2",
+        sourceSha256: "48bbad3126f72ffe754f12a85d96021343437b552276fd74d28c5c1a3edfe615",
+        sourceAuthority: "issuer",
+        decidedBy: "synthetic-proposal-owner",
+      }),
+    ]));
     expect(result.evidenceLedger.claims).toEqual(expect.arrayContaining([
       expect.objectContaining({ claimId: "CLAIM-METHOD", status: "bounded" }),
       expect.objectContaining({ claimId: "CLAIM-OPTIONAL", status: "pending_blank" }),
@@ -75,10 +169,20 @@ describe("content-to-build integration fixture", () => {
         disposition: "removed_before_content_approval",
       }),
     ]);
-    expect(result.finalResponse.blocks).toEqual(expect.arrayContaining([
-      expect.objectContaining({ pendingBlankFieldIds: [] }),
-    ]));
-    expect(result.finalResponse.blocks.flatMap(({ text }) => text)).not.toContain("{{");
+    expect(result.finalResponse.blocks.map(({ pageId, claimIds, pendingBlankFieldIds }) => ({
+      pageId,
+      claimIds,
+      pendingBlankFieldIds,
+    }))).toEqual([
+      { pageId: "PAGE-001", claimIds: ["CLAIM-METHOD"], pendingBlankFieldIds: [] },
+      { pageId: "PAGE-002", claimIds: ["CLAIM-OPTIONAL"], pendingBlankFieldIds: [] },
+    ]);
+    for (const block of result.finalResponse.blocks) {
+      expect(block.pendingBlankFieldIds).toEqual([]);
+      expect(block.text).not.toContain("{{");
+      expect(block.text).not.toMatch(/\b(?:TBD|TO\s*BE\s*DECIDED)\b/iu);
+      expect(block.text).not.toMatch(/\[(?:작성|입력|추후)[^\]]*\]|추후\s*입력|입력\s*필요|미정/u);
+    }
 
     const figures = result.pagePlan.pages.flatMap(({ figureSpecs }) => figureSpecs);
     expect(figures).toEqual(expect.arrayContaining([
@@ -121,7 +225,11 @@ async function runContentFixture(
   await cp(fixtureSource, fixture, { recursive: true, force: false });
 
   const rfpPath = join(fixture, "issuer-rfp.txt");
-  const requirementsPath = join(fixture, "confirmed-requirements.json");
+  const candidatesTemplatePath = join(fixture, "candidates-template.json");
+  const decisionsTemplatePath = join(fixture, "requirement-decisions-template.json");
+  const candidatesPath = join(fixture, "candidates.json");
+  const decisionsPath = join(fixture, "requirement-decisions.json");
+  const evidencePath = join(fixture, "evidence", "method-evidence.txt");
   const issuerProfilePath = join(fixture, "issuer-profile.json");
   const terminologyPath = join(fixture, "terminology.json");
   const finalResponsePath = join(fixture, "content", "authoring-response-final.json");
@@ -130,6 +238,33 @@ async function runContentFixture(
 
   expect(await runCli(["init", root, "--project-id", "synthetic-research-proposal", "--json"])).toMatchObject({ code: 0, stderr: "" });
   expect(await runCli(["ingest", root, rfpPath, "--json"])).toMatchObject({ code: 0, stderr: "" });
+  const candidates = await materializeTemplate<ContentFixtureResult["candidates"]>(candidatesTemplatePath, candidatesPath, {
+    "__ISSUER_RFP_PATH__": rfpPath,
+  });
+  await materializeTemplate(decisionsTemplatePath, decisionsPath, {
+    "__METHOD_EVIDENCE_PATH__": evidencePath,
+  });
+  const issuerSourceSha256 = await core.sha256File(rfpPath);
+  expect(candidates.candidates).toHaveLength(2);
+  for (const candidate of candidates.candidates) {
+    expect(candidate.sourcePath).toBe(rfpPath);
+    expect(candidate.sourceSha256).toBe(issuerSourceSha256);
+  }
+  const requirementsLock = await runCli([
+    "requirements",
+    root,
+    "--candidates",
+    candidatesPath,
+    "--decisions",
+    decisionsPath,
+    "--json",
+  ]);
+  expect(requirementsLock).toMatchObject({ code: 0, stderr: "" });
+  expect(parseEnvelope(requirementsLock.stdout)).toMatchObject({
+    ok: true,
+    data: { state: "REQUIREMENTS_LOCKED" },
+  });
+  const requirementsPath = join(root, "requirements", "requirements.json");
   expect(await runCli(["plan", root, "--requirements", requirementsPath, "--json"])).toMatchObject({ code: 0, stderr: "" });
 
   const issuerProfile = JSON.parse(await readFile(issuerProfilePath, "utf8")) as unknown;
@@ -152,21 +287,49 @@ async function runContentFixture(
   });
   await core.advanceProject(root, "DESIGN_LOCKED");
 
-  const approval = await audits.approveContent(root, {
-    approvedBy: "synthetic-proposal-owner",
-    approvedAt: "2026-08-17T12:00:00.000Z",
-  });
+  const approval = await runCli([
+    "content-approve",
+    root,
+    "--approved-by",
+    "synthetic-proposal-owner",
+    "--json",
+  ]);
+  expect(approval).toMatchObject({ code: 0, stderr: "" });
+  const approvalEnvelope = parseEnvelope(approval.stdout);
+  expect(approvalEnvelope).toMatchObject({ ok: true, code: "KPP_OK", data: { state: "CONTENT_APPROVED" } });
+  const approvalData = approvalEnvelope.data as {
+    readonly state?: string;
+    readonly findings?: { readonly blockers?: readonly unknown[] };
+  };
 
   return {
-    state: approval.state,
-    blockers: approval.findings.blockers,
+    state: approvalData.state ?? "UNKNOWN",
+    blockers: approvalData.findings?.blockers ?? [],
     root,
+    candidates,
+    requirements: JSON.parse(await readFile(requirementsPath, "utf8")) as ContentFixtureResult["requirements"],
+    complianceMatrix: JSON.parse(await readFile(join(root, "requirements", "compliance-matrix.json"), "utf8")) as ContentFixtureResult["complianceMatrix"],
+    decisionLedger: JSON.parse(await readFile(join(root, "requirements", "decision-ledger.json"), "utf8")) as ContentFixtureResult["decisionLedger"],
     pagePlan: JSON.parse(await readFile(pagePlanPath, "utf8")) as ContentFixtureResult["pagePlan"],
     evidenceLedger: JSON.parse(await readFile(join(root, "evidence", "evidence-ledger.json"), "utf8")) as ContentFixtureResult["evidenceLedger"],
     designProfile: JSON.parse(await readFile(installedDesignProfilePath, "utf8")) as ContentFixtureResult["designProfile"],
     pendingBlankRegister: JSON.parse(await readFile(pendingBlankRegisterPath, "utf8")) as ContentFixtureResult["pendingBlankRegister"],
     finalResponse: finalResponse as ContentFixtureResult["finalResponse"],
   };
+}
+
+async function materializeTemplate<T>(
+  templatePath: string,
+  destinationPath: string,
+  replacements: Readonly<Record<string, string>>,
+): Promise<T> {
+  const source = await readFile(templatePath, "utf8");
+  const rendered = Object.entries(replacements).reduce(
+    (value, [placeholder, replacement]) => value.replaceAll(placeholder, replacement),
+    source,
+  );
+  await writeFile(destinationPath, rendered, "utf8");
+  return JSON.parse(rendered) as T;
 }
 
 interface CommandResult {
@@ -194,4 +357,8 @@ async function runProcess(command: string, args: readonly string[]): Promise<Com
     child.on("error", (error: Error) => resolve({ code: 1, stdout, stderr: error.message }));
     child.on("close", (code) => resolve({ code: code ?? 1, stdout, stderr }));
   });
+}
+
+function parseEnvelope(output: string): { readonly ok: boolean; readonly code: string; readonly data: unknown } {
+  return JSON.parse(output) as { readonly ok: boolean; readonly code: string; readonly data: unknown };
 }

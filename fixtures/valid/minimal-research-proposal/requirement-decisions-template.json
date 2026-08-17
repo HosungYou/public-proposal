@@ -1,0 +1,124 @@
+{
+  "schemaVersion": "1.0.0",
+  "confirmedBy": "synthetic-proposal-owner",
+  "requirements": {
+    "requirements": [
+      {
+        "requirementId": "REQ-RESEARCH-METHOD",
+        "title": "연구 수행방법 및 관리체계",
+        "critical": true,
+        "pageRole": "research_method",
+        "surfaceTemplateId": "r08-research-method-v1",
+        "claims": [
+          {
+            "claimId": "CLAIM-METHOD",
+            "critical": true,
+            "evidenceIds": [
+              "EVID-METHOD"
+            ]
+          }
+        ],
+        "figureSpecs": [
+          {
+            "figureId": "FIG-SCHEDULE-001",
+            "title": "수행일정 및 주요 검증시점",
+            "intent": "schedule",
+            "dataShape": "time_axis",
+            "decisionTask": "연구 일정과 검증시점을 확인한다.",
+            "claimIds": [
+              "CLAIM-METHOD"
+            ],
+            "evidenceIds": [
+              "EVID-METHOD"
+            ],
+            "family": "gantt",
+            "renderer": "svg-gantt"
+          },
+          {
+            "figureId": "FIG-ROLE-001",
+            "title": "수행 단계별 역할과 책임",
+            "intent": "responsibility",
+            "dataShape": "responsibility_matrix",
+            "decisionTask": "연구 주체별 책임과 협의 범위를 확인한다.",
+            "claimIds": [
+              "CLAIM-METHOD"
+            ],
+            "evidenceIds": [
+              "EVID-METHOD"
+            ],
+            "family": "raci",
+            "renderer": "word-native-raci-table"
+          }
+        ]
+      },
+      {
+        "requirementId": "REQ-OPTIONAL-INPUT",
+        "title": "선택 입력항목 관리",
+        "critical": false,
+        "pageRole": "supplementary_input",
+        "surfaceTemplateId": "r08-supplementary-input-v1",
+        "claims": [
+          {
+            "claimId": "CLAIM-OPTIONAL",
+            "critical": false,
+            "evidenceIds": []
+          }
+        ],
+        "figureSpecs": []
+      }
+    ],
+    "evidenceBindings": [
+      {
+        "evidenceId": "EVID-METHOD",
+        "sourcePath": "__METHOD_EVIDENCE_PATH__",
+        "sourceSha256": "bf6a0f6953db42938e74ce46c496e27aac0eea8da0b67226db9e22dc797a1d31",
+        "scope": "본문 50쪽 이내 기준과 자료 확인·현장 검토·분석·검증·인수 연구 절차",
+        "claimIds": [
+          "CLAIM-METHOD"
+        ],
+        "targetRequirementId": "REQ-RESEARCH-METHOD",
+        "targetPageId": "PAGE-001",
+        "targetPageRole": "research_method"
+      }
+    ]
+  },
+  "decisions": [
+    {
+      "candidateId": "CAND-PAGE-LIMIT-001",
+      "decision": "confirm",
+      "constraintKey": "body-page-limit",
+      "sourceLocator": "section:1",
+      "sourceSha256": "48bbad3126f72ffe754f12a85d96021343437b552276fd74d28c5c1a3edfe615",
+      "sourceAuthority": "issuer",
+      "decidedBy": "synthetic-proposal-owner",
+      "decidedAt": "2026-08-17T12:00:00.000Z",
+      "rationale": "발주처 원문 본문 분량 기준을 확인하고 연구수행 페이지에 연결한다."
+    },
+    {
+      "candidateId": "CAND-METHOD-001",
+      "decision": "confirm",
+      "constraintKey": "research-method-content",
+      "sourceLocator": "section:2",
+      "sourceSha256": "48bbad3126f72ffe754f12a85d96021343437b552276fd74d28c5c1a3edfe615",
+      "sourceAuthority": "issuer",
+      "decidedBy": "synthetic-proposal-owner",
+      "decidedAt": "2026-08-17T12:00:00.000Z",
+      "rationale": "발주처 원문의 수행계획 구성요소를 연구수행 페이지에 연결한다."
+    }
+  ],
+  "requirementBindings": [
+    {
+      "candidateId": "CAND-PAGE-LIMIT-001",
+      "targetRequirementIds": [
+        "REQ-RESEARCH-METHOD"
+      ]
+    },
+    {
+      "candidateId": "CAND-METHOD-001",
+      "targetRequirementIds": [
+        "REQ-RESEARCH-METHOD"
+      ]
+    }
+  ],
+  "resolutions": []
+}
