@@ -1,7 +1,8 @@
 import { afterEach, expect, test } from "vitest";
 import { auditProposal } from "@kpp/audits";
-import { cleanupFixtures, materializeR08Reference, mutateTableMargin, projectPath, rebindDocxHash, rebindFigureOutputHash, runGeometry } from "./fixture-harness.js";
-import { readFile, writeFile } from "node:fs/promises";
+import { cleanupFixtures, materializeR08Reference, mutateTableMargin, projectPath, readEmbeddedDocxMedia, rebindDocxHash, rebindFigureOutputHash, runGeometry } from "./fixture-harness.js";
+import { readFile, stat, writeFile } from "node:fs/promises";
+import { join } from "node:path";
 
 afterEach(cleanupFixtures);
 
@@ -12,11 +13,17 @@ async function audit(fixture: Awaited<ReturnType<typeof materializeR08Reference>
   });
 }
 
-test("R08 sanitized reference passes the public file-backed audit", async () => {
+test("R08 sanitized reference renders its fixture-backed visual surface", async () => {
   const fixture = await materializeR08Reference();
   expect((await audit(fixture, "pass")).status).toBe("PASS");
+
+  const source = await readFile(join(fixture.root, "fixture", "ooxml", "word", "media", "image1.png"));
+  expect(source.length).toBeGreaterThan(1_000_000);
+  expect((await readEmbeddedDocxMedia(fixture.docxPath)).equals(source)).toBe(true);
+
   const page = await readFile(fixture.pagePath);
-  expect(page.subarray(0, 8).toString("hex")).toBe("89504e470d0a1a0a");
+  expect(pngSize(page)).toEqual({ width: 1275, height: 1650 });
+  expect((await stat(fixture.pagePath)).size).toBeGreaterThan(500_000);
 });
 
 test("R08 mutations remain blocked by their structural audit boundaries", async () => {
@@ -43,3 +50,9 @@ test("R08 mutations remain blocked by their structural audit boundaries", async 
   await writeFile(binding.figure.manifestPath, `${JSON.stringify(manifest, null, 2)}\n`, "utf8");
   expect((await audit(binding, "binding")).findings.map((finding) => finding.code)).toContain("KPP_DESIGN_SURFACE_LINEAGE");
 }, 30_000);
+
+function pngSize(png: Buffer): { width: number; height: number } {
+  expect(png.subarray(0, 8).toString("hex")).toBe("89504e470d0a1a0a");
+  expect(png.subarray(12, 16).toString("ascii")).toBe("IHDR");
+  return { width: png.readUInt32BE(16), height: png.readUInt32BE(20) };
+}

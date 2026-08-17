@@ -27,4 +27,7 @@ test("C11 remains BLOCKED for stale lineage, generic Gantt boxes, and invalid DO
   expect(rebound.findings.map((finding) => finding.code)).toEqual(expect.arrayContaining([
     "KPP_DESIGN_SURFACE_LINEAGE", "KPP_DESIGN_GANTT_STRUCTURE",
   ]));
+  expect((await runGeometry(fixture.docxPath)).findings.map((finding) => finding.code)).toEqual(expect.arrayContaining([
+    "KPP_DOCX_TYPOGRAPHY", "KPP_DOCX_TABLE_GEOMETRY",
+  ]));
 });

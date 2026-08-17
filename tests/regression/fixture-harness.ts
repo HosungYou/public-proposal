@@ -9,7 +9,6 @@ const roots: string[] = [];
 const fixtureRoot = resolve("fixtures");
 const python = resolve("workers/docx-python/.venv/bin/python");
 const geometryWorker = resolve("workers/docx-python/src/kpp_docx/audit_geometry.py");
-const pixel = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=", "base64");
 
 export interface ProposalFixture {
   readonly root: string;
@@ -24,11 +23,11 @@ export interface ProposalFixture {
 }
 
 export async function materializeR08Reference(): Promise<ProposalFixture> {
-  return materialize("valid/r08-reference", "r08-reference", false);
+  return materialize("valid/r08-reference", "r08-reference");
 }
 
 export async function materializeC11KnownBad(): Promise<ProposalFixture> {
-  return materialize("known-bad/c11", "c11-known-bad", true);
+  return materialize("known-bad/c11", "c11-known-bad");
 }
 
 export async function cleanupFixtures(): Promise<void> {
@@ -63,28 +62,45 @@ export async function runGeometry(docxPath: string, profileSha256 = "1".repeat(6
   return JSON.parse(result.stdout) as { findings: Array<{ code: string }> };
 }
 
-async function materialize(relativeFixture: string, prefix: string, knownBad: boolean): Promise<ProposalFixture> {
+export async function readEmbeddedDocxMedia(docxPath: string): Promise<Buffer> {
+  const unpacked = await mkdtemp(join(tmpdir(), "kpp-r08-docx-media-"));
+  roots.push(unpacked);
+  await executeFile("/usr/bin/unzip", ["-q", docxPath, "word/media/image1.png", "-d", unpacked]);
+  return readFile(join(unpacked, "word", "media", "image1.png"));
+}
+
+interface KnownBadLineage {
+  readonly classification: "project_only";
+  readonly failureBoundary: readonly ("stale_surface_lineage" | "generic_box_schedule" | "invalid_docx_geometry")[];
+}
+
+async function materialize(relativeFixture: string, prefix: string): Promise<ProposalFixture> {
   const root = await mkdtemp(join(tmpdir(), `kpp-${prefix}-`));
   roots.push(root);
   const copied = join(root, "fixture");
   await cp(join(fixtureRoot, relativeFixture), copied, { recursive: true, force: false });
+  const lineage = await readKnownBadLineage(copied);
+  const hasBoundary = (boundary: KnownBadLineage["failureBoundary"][number]) => lineage?.failureBoundary.includes(boundary) ?? false;
   const docxPath = join(copied, "docx", "proposal.docx");
   await buildDocx(copied, docxPath);
   const profileSha256 = "1".repeat(64);
-  const figure = await buildFigure(copied, knownBad);
+  const figure = await buildFigure(copied, hasBoundary("generic_box_schedule"));
   const buildManifestPath = join(copied, "docx", "build.json");
-  const figureSource = join(copied, "docx", "figure.png");
-  await writeFile(figureSource, pixel);
+  const figureSource = join(copied, "ooxml", "word", "media", "image1.png");
   await writeJson(buildManifestPath, {
     schemaVersion: "1.0.0",
-    profile: { profileId: "R08", status: knownBad ? "stale" : "locked", sha256: profileSha256 },
-    styles: knownBad ? {} : {
+    profile: {
+      profileId: "R08",
+      status: lineage?.classification === "project_only" && hasBoundary("stale_surface_lineage") ? "stale" : "locked",
+      sha256: profileSha256,
+    },
+    styles: hasBoundary("invalid_docx_geometry") ? {} : {
       heading: { font: "Noto Sans CJK KR" },
       navigation: { font: "Noto Sans CJK KR" },
       body: { font: "Noto Serif CJK KR", ooxmlHalfPoints: 19, lineDxa: 365, alignment: "justified", characterSpacingTwips: 0 },
     },
-    tables: knownBad ? [] : [{ tableId: "T-R08", native: true }],
-    figures: knownBad ? [] : [{ figureId: "FIG-R08-GANTT", path: figureSource, sha256: await sha256File(figureSource), embedded: true }],
+    tables: hasBoundary("invalid_docx_geometry") ? [] : [{ tableId: "T-R08", native: true }],
+    figures: hasBoundary("invalid_docx_geometry") ? [] : [{ figureId: "FIG-R08-GANTT", path: figureSource, sha256: await sha256File(figureSource), embedded: true }],
     artifacts: { docx: { path: docxPath, sha256: await sha256File(docxPath) } },
   });
   const geometryReportPath = join(copied, "docx", "geometry.json");
@@ -98,13 +114,11 @@ async function materialize(relativeFixture: string, prefix: string, knownBad: bo
 async function buildDocx(copied: string, docxPath: string): Promise<void> {
   const source = join(copied, "ooxml");
   await mkdir(dirname(docxPath), { recursive: true });
-  await mkdir(join(source, "word", "media"), { recursive: true });
-  await writeFile(join(source, "word", "media", "image1.png"), pixel);
   await rm(docxPath, { force: true });
   await executeFile("/usr/bin/zip", ["-q", "-r", docxPath, "[Content_Types].xml", "_rels", "word"], { cwd: source });
 }
 
-async function buildFigure(copied: string, knownBad: boolean): Promise<ProposalFixture["figure"]> {
+async function buildFigure(copied: string, genericBoxes: boolean): Promise<ProposalFixture["figure"]> {
   const specPath = join(copied, "figures", "gantt-spec.json");
   const svgPath = join(copied, "figures", "gantt.svg");
   const manifestPath = join(copied, "figures", "gantt.manifest.json");
@@ -112,12 +126,32 @@ async function buildFigure(copied: string, knownBad: boolean): Promise<ProposalF
   const spec: GanttFigureSpec = { ...base, tokenProfileHash: R08_TOKEN_PROFILE_SHA256 };
   await writeJson(specPath, spec);
   const artifact = await renderFigureArtifact(spec);
-  await writeFile(svgPath, knownBad
+  await writeFile(svgPath, genericBoxes
     ? artifact.svg.replaceAll('data-kpp-role="duration-bar"', 'data-kpp-role="plain-box"')
       .replaceAll('data-kpp-role="milestone"', 'data-kpp-role="plain-box"')
     : artifact.svg, "utf8");
   await writeJson(manifestPath, artifact.manifest);
   return { specPath, svgPath, manifestPath };
+}
+
+async function readKnownBadLineage(copied: string): Promise<KnownBadLineage | undefined> {
+  const path = join(copied, "c11-lineage.json");
+  try {
+    const value: unknown = JSON.parse(await readFile(path, "utf8"));
+    if (value === null || typeof value !== "object" || Array.isArray(value)) throw new Error("C11 lineage must be an object");
+    const record = value as Record<string, unknown>;
+    if (record.classification !== "project_only" || !Array.isArray(record.failureBoundary)) {
+      throw new Error("C11 lineage must declare project_only classification and failureBoundary");
+    }
+    const boundaries = record.failureBoundary;
+    if (!boundaries.every((boundary) => boundary === "stale_surface_lineage" || boundary === "generic_box_schedule" || boundary === "invalid_docx_geometry")) {
+      throw new Error("C11 lineage has an unsupported failure boundary");
+    }
+    return { classification: "project_only", failureBoundary: boundaries };
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined;
+    throw error;
+  }
 }
 
 async function renderDocx(copied: string, docxPath: string): Promise<Pick<ProposalFixture, "renderManifestPath" | "pdfPath" | "pagePath" | "extractorPath">> {
