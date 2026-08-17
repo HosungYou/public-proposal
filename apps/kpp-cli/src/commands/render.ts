@@ -13,7 +13,7 @@ import {
   symlink,
   writeFile,
 } from "node:fs/promises";
-import { basename, extname, isAbsolute, join, relative, resolve, sep } from "node:path";
+import { basename, dirname, extname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { pathToFileURL } from "node:url";
 import {
   KppError,
@@ -128,8 +128,7 @@ export async function renderProject(
   await assertAbsent(currentPath, "KPP_RENDER_CURRENT_EXISTS");
 
   const executables = await resolveRenderExecutables(options.tools);
-  const generationsRoot = join(root, "rendered", "generations");
-  await mkdir(generationsRoot, { recursive: true });
+  const { renderedRoot, generationsRoot } = await prepareRenderPublicationRoots(root);
   const staging = await mkdtemp(join(generationsRoot, ".staging-"));
   let publishedGeneration: string | undefined;
   let currentPublished = false;
@@ -249,11 +248,19 @@ export async function renderProject(
     publishedGeneration = generationPath;
     await syncDirectory(generationsRoot);
 
-    currentTemporary = join(root, "rendered", `.current.${randomUUID()}.tmp`);
+    currentTemporary = join(renderedRoot, `.current.${randomUUID()}.tmp`);
     await symlink(join("generations", generationId), currentTemporary, "dir");
     await rename(currentTemporary, currentPath);
     currentPublished = true;
-    await syncDirectory(join(root, "rendered"));
+    const resolvedCurrent = await realpath(currentPath).catch(() => undefined);
+    if (resolvedCurrent !== generationPath || !isWithin(generationsRoot, resolvedCurrent)) {
+      throw new KppError(
+        "KPP_RENDER_PUBLICATION_ROOT",
+        "렌더링 current pointer가 project generation 밖을 가리킵니다.",
+        { path: currentPath, actual: resolvedCurrent, expected: generationPath, stage: "BUILT" },
+      );
+    }
+    await syncDirectory(renderedRoot);
 
     await assertPublishedArtifacts(manifestPath, pdfPath, pageImages, docxHash, pdfHash);
     await writeReceipt({
@@ -347,16 +354,82 @@ async function canonicalBuiltDocx(root: string, inputPath: string): Promise<stri
       stage: "BUILT",
     });
   }
-  const generationsRoot = await realpath(join(root, "build", "generations")).catch(() => undefined);
-  if (generationsRoot === undefined || !isWithin(generationsRoot, canonical)) {
+  const generation = dirname(canonical);
+  const generationsRoot = dirname(generation);
+  const bundleRoot = dirname(generationsRoot);
+  const workerGeneration = basename(canonical) === "document.docx" &&
+    basename(generationsRoot) === "generations" &&
+    /^\.kpp-build-[a-f0-9]{16}$/u.test(basename(bundleRoot)) &&
+    dirname(bundleRoot) !== bundleRoot &&
+    isWithin(root, canonical) &&
+    isWithin(generationsRoot, canonical);
+  if (!workerGeneration) {
     throw new KppError("KPP_RENDER_DOCX_NOT_CANONICAL", "DOCX가 immutable BUILT generation에 있지 않습니다.", {
       path: canonical,
-      expected: generationsRoot,
+      expected: "<project>/**/.kpp-build-*/generations/*/document.docx",
       stage: "BUILT",
     });
   }
+  const manifestPath = join(generation, "manifest.json");
+  const manifestMetadata = await lstat(manifestPath).catch(() => undefined);
+  if (manifestMetadata?.isSymbolicLink() === true) {
+    throw new KppError("KPP_RENDER_DOCX_NOT_CANONICAL", "BUILT manifest symlink는 허용되지 않습니다.", {
+      path: manifestPath,
+      stage: "BUILT",
+    });
+  }
+  const generationMembers = (await readdir(generation)).sort();
+  if (generationMembers.length !== 2 ||
+      generationMembers[0] !== "document.docx" ||
+      generationMembers[1] !== "manifest.json") {
+    throw new KppError("KPP_RENDER_DOCX_NOT_CANONICAL", "BUILT generation의 member 구성이 유효하지 않습니다.", {
+      path: generation,
+      actual: generationMembers,
+      expected: ["document.docx", "manifest.json"],
+      stage: "BUILT",
+    });
+  }
+  await assertNonemptyFile(manifestPath, "KPP_RENDER_DOCX_NOT_CANONICAL");
   await assertNonemptyFile(canonical, "KPP_RENDER_DOCX_MISSING");
   return canonical;
+}
+
+async function prepareRenderPublicationRoots(root: string): Promise<{
+  readonly renderedRoot: string;
+  readonly generationsRoot: string;
+}> {
+  const renderedRoot = join(root, "rendered");
+  const generationsRoot = join(renderedRoot, "generations");
+  await assertRealDirectoryOrMissing(renderedRoot);
+  await assertRealDirectoryOrMissing(generationsRoot);
+
+  await mkdir(renderedRoot, { recursive: true });
+  await mkdir(generationsRoot, { recursive: true });
+  const resolvedRendered = await realpath(renderedRoot);
+  const resolvedGenerations = await realpath(generationsRoot);
+  if (resolvedRendered !== renderedRoot ||
+      resolvedGenerations !== generationsRoot ||
+      !isWithin(root, resolvedGenerations) ||
+      dirname(resolvedGenerations) !== resolvedRendered) {
+    throw new KppError(
+      "KPP_RENDER_PUBLICATION_ROOT",
+      "렌더링 publication root가 project 밖을 가리킵니다.",
+      { path: renderedRoot, actual: resolvedGenerations, stage: "BUILT" },
+    );
+  }
+  return { renderedRoot: resolvedRendered, generationsRoot: resolvedGenerations };
+}
+
+async function assertRealDirectoryOrMissing(path: string): Promise<void> {
+  const metadata = await lstat(path).catch(() => undefined);
+  if (metadata !== undefined &&
+      (metadata.isSymbolicLink() || !metadata.isDirectory())) {
+    throw new KppError(
+      "KPP_RENDER_PUBLICATION_ROOT",
+      "렌더링 publication root는 symlink가 아닌 실제 디렉터리여야 합니다.",
+      { path, stage: "BUILT" },
+    );
+  }
 }
 
 async function findReceiptFile(

@@ -66,7 +66,7 @@ describe("proposal PDF rendering", () => {
       output: { pdf: { path: string; sha256: string }; pages: unknown[] };
     };
     expect(manifest.input.docx).toEqual({
-      path: fixture.docxPath,
+      path: await realpath(fixture.docxPath),
       sha256: await sha256File(fixture.docxPath),
     });
     expect(manifest.output.pdf).toMatchObject({
@@ -126,7 +126,7 @@ describe("proposal PDF rendering", () => {
 
   it("rejects a compatibility symlink instead of rendering it as the canonical DOCX", async () => {
     const fixture = await createBuiltProject(temporaryDirectories);
-    const compatibilityPath = join(fixture.root, "build", "proposal.docx");
+    const compatibilityPath = join(fixture.root, "proposal.docx");
     await symlink(fixture.docxPath, compatibilityPath);
 
     await expect(renderProject(fixture.root, { docxPath: compatibilityPath }))
@@ -136,6 +136,39 @@ describe("proposal PDF rendering", () => {
     await expect(access(join(fixture.root, "receipts", "render.json")))
       .rejects.toBeDefined();
   });
+
+  it.each(["rendered", "rendered/generations"])(
+    "rejects a pre-existing %s symlink without publishing outside the project",
+    async (symlinkTarget) => {
+      const fixture = await createBuiltProject(temporaryDirectories);
+      const outside = await mkdtemp(join(tmpdir(), "kpp-render-outside-"));
+      temporaryDirectories.push(outside);
+      const sentinel = join(outside, "sentinel.txt");
+      await writeFile(sentinel, "unchanged\n");
+
+      if (symlinkTarget === "rendered/generations") {
+        await rm(join(fixture.root, "rendered", "generations"), {
+          force: true,
+          recursive: true,
+        });
+        await symlink(outside, join(fixture.root, "rendered", "generations"));
+      } else {
+        await rm(join(fixture.root, "rendered"), { force: true, recursive: true });
+        await symlink(outside, join(fixture.root, "rendered"));
+      }
+
+      await expect(renderProject(fixture.root, { docxPath: fixture.docxPath }))
+        .rejects.toMatchObject({ code: "KPP_RENDER_PUBLICATION_ROOT" });
+
+      await expect(readFile(sentinel, "utf8")).resolves.toBe("unchanged\n");
+      expect(await readdir(outside)).toEqual(["sentinel.txt"]);
+      await expect(readProject(fixture.root)).resolves.toMatchObject({ state: "BUILT" });
+      await expect(access(join(fixture.root, "receipts", "render.json")))
+        .rejects.toBeDefined();
+      await expect(access(join(fixture.root, "rendered", "current")))
+        .rejects.toBeDefined();
+    },
+  );
 });
 
 async function createBuiltProject(temporaryDirectories: string[]): Promise<{
@@ -170,9 +203,10 @@ async function createBuiltProject(temporaryDirectories: string[]): Promise<{
     predecessorReceipt = receiptPath;
   }
 
-  const generation = join(root, "build", "generations", "fixture-generation");
+  const bundleRoot = join(root, ".kpp-build-0123456789abcdef");
+  const generation = join(bundleRoot, "generations", "fixture-generation");
   await mkdir(generation, { recursive: true });
-  const docxPath = join(generation, "기관 제안서; shell-disabled.docx");
+  const docxPath = join(generation, "document.docx");
   await copyFile(TEMPLATE, docxPath);
   const buildManifest = join(generation, "manifest.json");
   await writeFile(buildManifest, `${JSON.stringify({
@@ -181,6 +215,7 @@ async function createBuiltProject(temporaryDirectories: string[]): Promise<{
       docx: { path: docxPath, sha256: await sha256File(docxPath) },
     },
   }, null, 2)}\n`);
+  await symlink(join("generations", "fixture-generation"), join(bundleRoot, "current"));
   const buildReceipt = stageReceiptPath(root, "BUILT");
   await writeReceipt({
     stage: "BUILT",
@@ -191,7 +226,7 @@ async function createBuiltProject(temporaryDirectories: string[]): Promise<{
     output: buildReceipt,
   });
   await advanceProject(root, "BUILT");
-  return { root, docxPath: await realpath(docxPath) };
+  return { root, docxPath: join(bundleRoot, "current", "document.docx") };
 }
 
 async function readdirSafe(path: string): Promise<string[]> {
