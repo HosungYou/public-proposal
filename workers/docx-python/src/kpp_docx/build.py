@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
+import tempfile
 from pathlib import Path
 from typing import Literal
 
@@ -32,15 +34,72 @@ class StrictModel(BaseModel):
     model_config = ConfigDict(extra="forbid", populate_by_name=True)
 
 
+class KppBuildError(ValueError):
+    """Build failure carrying a stable machine-readable rule code."""
+
+    def __init__(self, code: str, message: str) -> None:
+        super().__init__(f"{code}: {message}")
+        self.code = code
+
+
 class TemplateRef(StrictModel):
     asset_id: str = Field(alias="assetId", min_length=1)
     path: str = Field(min_length=1)
     sha256: str = Field(pattern=SHA256_PATTERN)
 
 
+class PlannedFigureSpec(StrictModel):
+    figure_id: str = Field(alias="figureId", min_length=1)
+    requirement_id: str = Field(alias="requirementId", min_length=1)
+    page_id: str = Field(alias="pageId", min_length=1)
+    title: str = Field(min_length=1)
+    intent: Literal[
+        "schedule",
+        "responsibility",
+        "matrix",
+        "comparison",
+        "evidence_chain",
+        "research_framework",
+        "flow",
+    ]
+    data_shape: Literal[
+        "time_axis",
+        "responsibility_matrix",
+        "two_by_two",
+        "comparison_series",
+        "evidence_links",
+        "research_framework",
+        "process_flow",
+    ] = Field(alias="dataShape")
+    decision_task: str = Field(alias="decisionTask", min_length=1)
+    claim_ids: list[str] = Field(alias="claimIds", min_length=1)
+    evidence_ids: list[str] = Field(alias="evidenceIds", min_length=1)
+    family: Literal[
+        "gantt",
+        "raci",
+        "matrix",
+        "comparison_chart",
+        "evidence_chain",
+        "framework",
+        "flow",
+    ]
+    renderer: Literal[
+        "svg-gantt",
+        "word-native-raci-table",
+        "svg-2x2-matrix",
+        "svg-comparison-chart",
+        "svg-evidence-chain",
+        "svg-academic-framework",
+        "svg-flow",
+    ]
+
+
 class FigureSpec(StrictModel):
     figure_id: str = Field(alias="figureId", min_length=1)
+    requirement_id: str = Field(alias="requirementId", min_length=1)
     page_id: str = Field(alias="pageId", min_length=1)
+    claim_ids: list[str] = Field(alias="claimIds", min_length=1)
+    renderer: str = Field(min_length=1)
     path: str = Field(min_length=1)
     sha256: str = Field(pattern=SHA256_PATTERN)
     format: Literal["png", "jpeg", "jpg"]
@@ -60,7 +119,7 @@ class PagePlanItem(StrictModel):
     page_role: str = Field(alias="pageRole", min_length=1)
     surface_template_id: str = Field(alias="surfaceTemplateId", min_length=1)
     claim_ids: list[str] = Field(alias="claimIds")
-    figure_specs: list[dict[str, object]] = Field(alias="figureSpecs")
+    figure_specs: list[PlannedFigureSpec] = Field(alias="figureSpecs")
 
 
 class PagePlan(StrictModel):
@@ -121,6 +180,20 @@ class TypographyProfile(StrictModel):
     line_height: Literal[1.52] = Field(alias="lineHeight")
     alignment: Literal["justified"]
     character_spacing_pt: float = Field(alias="characterSpacingPt", ge=-2, le=2)
+    precision_policy: Literal["exact", "acknowledged_half_point_quantization"] = Field(
+        alias="precisionPolicy",
+        default="exact",
+    )
+
+    @model_validator(mode="after")
+    def validate_ooxml_precision(self) -> "TypographyProfile":
+        effective_point = round(self.body_point * 2) / 2
+        if effective_point != self.body_point and self.precision_policy == "exact":
+            raise KppBuildError(
+                "KPP_TYPOGRAPHY_PRECISION",
+                f"{self.body_point}pt cannot be represented in OOXML half-points",
+            )
+        return self
 
 
 class CellMargins(StrictModel):
@@ -184,6 +257,31 @@ class BuildRequest(StrictModel):
         if any(figure.page_id not in page_ids for figure in figures.values()):
             raise ValueError("figure pageId must reference a planned page")
 
+        planned_figures: dict[str, PlannedFigureSpec] = {}
+        for page in self.page_plan.pages:
+            for figure in page.figure_specs:
+                if figure.figure_id in planned_figures:
+                    raise ValueError("pagePlan figureId values must be unique")
+                if figure.page_id != page.page_id:
+                    raise ValueError("planned figure pageId must match its planned page")
+                if figure.requirement_id != page.requirement_id:
+                    raise ValueError("planned figure requirementId must match its planned page")
+                if not set(figure.claim_ids).issubset(set(page.claim_ids)):
+                    raise ValueError("planned figure claimIds must be declared by its planned page")
+                planned_figures[figure.figure_id] = figure
+        for figure_id, figure in figures.items():
+            planned = planned_figures.get(figure_id)
+            if planned is None:
+                raise ValueError("figure manifest entries must reference a planned figureSpec")
+            if (
+                figure.requirement_id != planned.requirement_id
+                or figure.page_id != planned.page_id
+                or figure.claim_ids != planned.claim_ids
+                or figure.evidence_ids != planned.evidence_ids
+                or figure.renderer != planned.renderer
+            ):
+                raise ValueError("figure manifest entries must match their planned figureSpec")
+
         evidence_ids = [binding.evidence_id for binding in self.evidence_ledger.bindings]
         if len(evidence_ids) != len(set(evidence_ids)):
             raise ValueError("evidence ledger evidenceId values must be unique")
@@ -241,6 +339,15 @@ class BuildRequest(StrictModel):
                     for evidence_id in paragraph.evidence_ids
                 ):
                     raise ValueError("paragraph evidenceIds must target its planned page")
+                if any(
+                    not set(paragraph.claim_ids).issubset(
+                        set(binding_by_id[evidence_id].claim_ids)
+                    )
+                    for evidence_id in paragraph.evidence_ids
+                ):
+                    raise ValueError(
+                        "paragraph evidenceIds must support every paragraph claimId"
+                    )
             for figure_id in block.figure_ids:
                 figure = figures[figure_id]
                 if figure.page_id != block.page_id:
@@ -291,7 +398,10 @@ def build_document(request: BuildRequest) -> BuildResult:
         figure_records.append(
             {
                 "figureId": figure.figure_id,
+                "requirementId": figure.requirement_id,
                 "pageId": figure.page_id,
+                "claimIds": figure.claim_ids,
+                "renderer": figure.renderer,
                 "path": str(figure_path),
                 "sha256": figure.sha256,
                 "format": figure.format,
@@ -303,6 +413,8 @@ def build_document(request: BuildRequest) -> BuildResult:
 
     docx_path = Path(request.output.docx_path).expanduser().resolve()
     manifest_path = Path(request.output.manifest_path).expanduser().resolve()
+    if docx_path == manifest_path:
+        raise ValueError("DOCX and manifest output paths must be distinct")
     docx_path.parent.mkdir(parents=True, exist_ok=True)
     manifest_path.parent.mkdir(parents=True, exist_ok=True)
 
@@ -381,63 +493,85 @@ def build_document(request: BuildRequest) -> BuildResult:
                 width=Twips(figure.width_dxa),
             )
 
-    document.save(docx_path)
-    docx_hash = _sha256_file(docx_path)
+    staged_docx: Path | None = None
+    staged_manifest: Path | None = None
+    try:
+        staged_docx = _sibling_temp_path(docx_path)
+        staged_manifest = _sibling_temp_path(manifest_path)
+        document.save(staged_docx)
+        _fsync_file(staged_docx)
+        docx_hash = _sha256_file(staged_docx)
 
-    manifest = {
-        "schemaVersion": SCHEMA_VERSION,
-        "builderVersion": BUILDER_VERSION,
-        "projectId": request.project_id,
-        "template": {
-            "assetId": request.template.asset_id,
-            "path": str(template_path),
-            "sha256": template_hash,
-        },
-        "profile": {
-            "profileId": request.surface_profile.profile_id,
-            "status": request.surface_profile.status,
-            "sha256": _sha256_json(request.surface_profile),
-        },
-        "inputs": {
-            "pagePlanSha256": _sha256_json(request.page_plan),
-            "evidenceLedgerSha256": _sha256_json(request.evidence_ledger),
-            "contentBlocksSha256": _sha256_json(request.content_blocks),
-            "figureManifestSha256": _sha256_json(request.figure_manifest),
-            "surfaceProfileSha256": _sha256_json(request.surface_profile),
-        },
-        "pages": [
-            {
-                "pageId": page.page_id,
-                "pageRole": page.page_role,
-                "surfaceTemplateId": page.surface_template_id,
-            }
-            for page in request.page_plan.pages
-        ],
-        "styles": {
-            "heading": {"font": typography.heading_font},
-            "navigation": {"font": typography.navigation_font},
-            "body": {
-                "font": typography.body_font,
-                "point": typography.body_point,
-                "ooxmlHalfPoints": typography.body_half_points,
-                "effectiveOoxmlPoint": typography.body_half_points / 2,
-                "lineHeight": typography.line_height,
-                "lineDxa": typography.body_line_dxa,
-                "alignment": "justified",
-                "characterSpacingPt": typography.character_spacing_pt,
-                "characterSpacingTwips": typography.character_spacing_twips,
+        effective_point = typography.body_half_points / 2
+        manifest = {
+            "schemaVersion": SCHEMA_VERSION,
+            "builderVersion": BUILDER_VERSION,
+            "projectId": request.project_id,
+            "template": {
+                "assetId": request.template.asset_id,
+                "path": str(template_path),
+                "sha256": template_hash,
             },
-        },
-        "tables": table_records,
-        "figures": figure_records,
-        "artifacts": {
-            "docx": {"path": str(docx_path), "sha256": docx_hash},
-        },
-    }
-    manifest_path.write_text(
-        json.dumps(manifest, ensure_ascii=False, sort_keys=True, indent=2) + "\n",
-        encoding="utf-8",
-    )
+            "profile": {
+                "profileId": request.surface_profile.profile_id,
+                "status": request.surface_profile.status,
+                "sha256": _sha256_json(request.surface_profile),
+            },
+            "inputs": {
+                "pagePlanSha256": _sha256_json(request.page_plan),
+                "evidenceLedgerSha256": _sha256_json(request.evidence_ledger),
+                "contentBlocksSha256": _sha256_json(request.content_blocks),
+                "figureManifestSha256": _sha256_json(request.figure_manifest),
+                "surfaceProfileSha256": _sha256_json(request.surface_profile),
+            },
+            "pages": [
+                {
+                    "pageId": page.page_id,
+                    "pageRole": page.page_role,
+                    "surfaceTemplateId": page.surface_template_id,
+                }
+                for page in request.page_plan.pages
+            ],
+            "styles": {
+                "heading": {"font": typography.heading_font},
+                "navigation": {"font": typography.navigation_font},
+                "body": {
+                    "font": typography.body_font,
+                    "requestedPoint": typography.body_point,
+                    "precisionPolicy": request.surface_profile.typography.precision_policy,
+                    "ooxmlHalfPoints": typography.body_half_points,
+                    "effectiveOoxmlPoint": effective_point,
+                    "quantizationDeltaPoint": round(
+                        effective_point - typography.body_point, 3
+                    ),
+                    "lineHeight": typography.line_height,
+                    "lineDxa": typography.body_line_dxa,
+                    "alignment": "justified",
+                    "characterSpacingPt": typography.character_spacing_pt,
+                    "characterSpacingTwips": typography.character_spacing_twips,
+                },
+            },
+            "tables": table_records,
+            "figures": figure_records,
+            "artifacts": {
+                "docx": {"path": str(docx_path), "sha256": docx_hash},
+            },
+        }
+        with staged_manifest.open("w", encoding="utf-8") as stream:
+            stream.write(
+                json.dumps(manifest, ensure_ascii=False, sort_keys=True, indent=2)
+                + "\n"
+            )
+            stream.flush()
+            os.fsync(stream.fileno())
+        _publish_artifact_pair(
+            ((staged_docx, docx_path), (staged_manifest, manifest_path))
+        )
+    finally:
+        if staged_docx is not None:
+            staged_docx.unlink(missing_ok=True)
+        if staged_manifest is not None:
+            staged_manifest.unlink(missing_ok=True)
     return BuildResult(docx=docx_path, manifest=manifest_path)
 
 
@@ -482,7 +616,10 @@ def _sha256_json(value: object) -> str:
     if isinstance(value, BaseModel):
         value = value.model_dump(by_alias=True)
     elif isinstance(value, list):
-        value = [item.model_dump(by_alias=True) if isinstance(item, BaseModel) else item for item in value]
+        value = [
+            item.model_dump(by_alias=True) if isinstance(item, BaseModel) else item
+            for item in value
+        ]
     encoded = json.dumps(
         value,
         ensure_ascii=False,
@@ -490,3 +627,68 @@ def _sha256_json(value: object) -> str:
         separators=(",", ":"),
     ).encode("utf-8")
     return hashlib.sha256(encoded).hexdigest()
+
+
+def _sibling_temp_path(target: Path) -> Path:
+    descriptor, raw_path = tempfile.mkstemp(
+        prefix=f".{target.name}.",
+        suffix=".tmp",
+        dir=target.parent,
+    )
+    os.close(descriptor)
+    return Path(raw_path)
+
+
+def _fsync_file(path: Path) -> None:
+    with path.open("rb") as stream:
+        os.fsync(stream.fileno())
+
+
+def _fsync_directories(paths: set[Path]) -> None:
+    for path in paths:
+        descriptor = os.open(path, os.O_RDONLY)
+        try:
+            os.fsync(descriptor)
+        finally:
+            os.close(descriptor)
+
+
+def _publish_artifact_pair(pairs: tuple[tuple[Path, Path], ...]) -> None:
+    """Publish staged siblings as one rollback-safe DOCX/manifest transaction."""
+
+    backups: list[tuple[Path, Path]] = []
+    published: list[Path] = []
+    parent_paths = {target.parent for _, target in pairs}
+    try:
+        for _, target in pairs:
+            if target.exists() and not target.is_file():
+                raise IsADirectoryError(f"output target is not a file: {target}")
+        for _, target in pairs:
+            if target.exists():
+                descriptor, raw_backup = tempfile.mkstemp(
+                    prefix=f".{target.name}.",
+                    suffix=".backup",
+                    dir=target.parent,
+                )
+                os.close(descriptor)
+                backup = Path(raw_backup)
+                backup.unlink()
+                os.replace(target, backup)
+                backups.append((target, backup))
+        for staged, target in pairs:
+            os.replace(staged, target)
+            published.append(target)
+        _fsync_directories(parent_paths)
+    except Exception:
+        for target in reversed(published):
+            target.unlink(missing_ok=True)
+        for target, backup in reversed(backups):
+            if backup.exists():
+                os.replace(backup, target)
+        _fsync_directories(parent_paths)
+        raise
+    finally:
+        for staged, _ in pairs:
+            staged.unlink(missing_ok=True)
+        for _, backup in backups:
+            backup.unlink(missing_ok=True)

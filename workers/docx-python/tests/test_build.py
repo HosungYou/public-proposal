@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import zipfile
 from base64 import b64decode
 from pathlib import Path
@@ -12,6 +13,7 @@ import pytest
 from docx import Document
 from pydantic import ValidationError
 
+import kpp_docx.build as build_module
 from kpp_docx.build import BuildRequest, build_document
 
 
@@ -124,6 +126,7 @@ def sample_request(tmp_path: Path) -> BuildRequest:
                     "lineHeight": 1.52,
                     "alignment": "justified",
                     "characterSpacingPt": -0.2,
+                    "precisionPolicy": "acknowledged_half_point_quantization",
                 },
                 "table": {
                     "widthDxa": 8400,
@@ -185,9 +188,11 @@ def test_manifest_binds_template_inputs_pages_and_output_hashes(tmp_path: Path) 
     ]
     assert manifest["styles"]["body"] == {
         "font": "Noto Serif CJK KR",
-        "point": 9.3,
+        "requestedPoint": 9.3,
+        "precisionPolicy": "acknowledged_half_point_quantization",
         "ooxmlHalfPoints": 19,
         "effectiveOoxmlPoint": 9.5,
+        "quantizationDeltaPoint": 0.2,
         "lineHeight": 1.52,
         "lineDxa": 365,
         "alignment": "justified",
@@ -232,6 +237,99 @@ def test_rejects_template_hash_drift_before_writing_outputs(tmp_path: Path) -> N
     assert not Path(request.output.manifest_path).exists()
 
 
+def test_rejects_unrepresentable_exact_body_point_with_stable_rule_code(
+    tmp_path: Path,
+) -> None:
+    payload = sample_request(tmp_path).model_dump(by_alias=True)
+    payload["surfaceProfile"]["typography"]["precisionPolicy"] = "exact"
+
+    with pytest.raises(ValidationError, match="KPP_TYPOGRAPHY_PRECISION"):
+        BuildRequest.model_validate(payload)
+
+
+def test_missing_precision_policy_defaults_to_exact_and_blocks_9_3pt(
+    tmp_path: Path,
+) -> None:
+    payload = sample_request(tmp_path).model_dump(by_alias=True)
+    del payload["surfaceProfile"]["typography"]["precisionPolicy"]
+
+    with pytest.raises(ValidationError, match="KPP_TYPOGRAPHY_PRECISION"):
+        BuildRequest.model_validate(payload)
+
+
+def test_manifest_publication_failure_rolls_back_docx_and_manifest(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    request = sample_request(tmp_path)
+    docx_path = Path(request.output.docx_path)
+    manifest_path = Path(request.output.manifest_path)
+    real_replace = os.replace
+
+    def fail_manifest_publish(
+        source: str | os.PathLike[str],
+        target: str | os.PathLike[str],
+    ) -> None:
+        if Path(target) == manifest_path:
+            raise OSError("forced manifest publication failure")
+        real_replace(source, target)
+
+    monkeypatch.setattr(build_module.os, "replace", fail_manifest_publish)
+
+    with pytest.raises(OSError, match="forced manifest publication failure"):
+        build_document(request)
+
+    assert not docx_path.exists()
+    assert not manifest_path.exists()
+    assert list(tmp_path.glob(".*.tmp")) == []
+    assert list(tmp_path.glob(".*.backup")) == []
+
+
+def test_manifest_directory_probe_leaves_no_partial_docx(tmp_path: Path) -> None:
+    request = sample_request(tmp_path)
+    docx_path = Path(request.output.docx_path)
+    manifest_path = Path(request.output.manifest_path)
+    manifest_path.mkdir()
+
+    with pytest.raises(IsADirectoryError, match="output target is not a file"):
+        build_document(request)
+
+    assert not docx_path.exists()
+    assert manifest_path.is_dir()
+    assert list(tmp_path.glob(".*.tmp")) == []
+
+
+def test_failed_republication_preserves_previous_artifact_pair(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    request = sample_request(tmp_path)
+    docx_path = Path(request.output.docx_path)
+    manifest_path = Path(request.output.manifest_path)
+    docx_path.write_bytes(b"previous docx")
+    manifest_path.write_text("previous manifest\n", encoding="utf-8")
+    real_replace = os.replace
+    manifest_publish_failed = False
+
+    def fail_manifest_publish(
+        source: str | os.PathLike[str],
+        target: str | os.PathLike[str],
+    ) -> None:
+        nonlocal manifest_publish_failed
+        if Path(target) == manifest_path and not manifest_publish_failed:
+            manifest_publish_failed = True
+            raise OSError("forced manifest publication failure")
+        real_replace(source, target)
+
+    monkeypatch.setattr(build_module.os, "replace", fail_manifest_publish)
+
+    with pytest.raises(OSError, match="forced manifest publication failure"):
+        build_document(request)
+
+    assert docx_path.read_bytes() == b"previous docx"
+    assert manifest_path.read_text(encoding="utf-8") == "previous manifest\n"
+
+
 def test_build_embeds_only_hash_bound_figure_on_its_planned_page(tmp_path: Path) -> None:
     # A deterministic 1x1 transparent PNG; the builder applies the locked Word width.
     figure = tmp_path / "figure.png"
@@ -245,7 +343,10 @@ def test_build_embeds_only_hash_bound_figure_on_its_planned_page(tmp_path: Path)
     payload["figureManifest"]["figures"] = [
         {
             "figureId": "FIG-01",
+            "requirementId": "REQ-01",
             "pageId": "P-01",
+            "claimIds": ["CLM-01"],
+            "renderer": "svg-flow",
             "path": str(figure),
             "sha256": _sha256(figure),
             "format": "png",
@@ -255,6 +356,21 @@ def test_build_embeds_only_hash_bound_figure_on_its_planned_page(tmp_path: Path)
         }
     ]
     payload["contentBlocks"][0]["figureIds"] = ["FIG-01"]
+    payload["pagePlan"]["pages"][0]["figureSpecs"] = [
+        {
+            "figureId": "FIG-01",
+            "requirementId": "REQ-01",
+            "pageId": "P-01",
+            "title": "연구 수행 구조",
+            "intent": "flow",
+            "dataShape": "process_flow",
+            "decisionTask": "연구 수행 구조를 확인한다.",
+            "claimIds": ["CLM-01"],
+            "evidenceIds": ["EV-01"],
+            "family": "flow",
+            "renderer": "svg-flow",
+        }
+    ]
 
     result = build_document(BuildRequest.model_validate(payload))
     document_xml = _xml(result.docx, "word/document.xml")
@@ -265,12 +381,15 @@ def test_build_embeds_only_hash_bound_figure_on_its_planned_page(tmp_path: Path)
     assert manifest["figures"] == [
         {
             "caption": "그림 1. 연구 수행 구조",
+            "claimIds": ["CLM-01"],
             "embedded": True,
             "evidenceIds": ["EV-01"],
             "figureId": "FIG-01",
             "format": "png",
             "pageId": "P-01",
             "path": str(figure.resolve()),
+            "renderer": "svg-flow",
+            "requirementId": "REQ-01",
             "sha256": _sha256(figure),
         }
     ]
@@ -319,6 +438,36 @@ def test_rejects_broken_evidence_page_cross_references(
         BuildRequest.model_validate(payload)
 
 
+def test_rejects_cross_claim_paragraph_evidence_pairing(tmp_path: Path) -> None:
+    payload = sample_request(tmp_path).model_dump(by_alias=True)
+    payload["pagePlan"]["pages"][0]["claimIds"].append("CLM-02")
+    payload["evidenceLedger"]["claims"].append(
+        {"claimId": "CLM-02", "status": "verified", "evidenceIds": ["EV-02"]}
+    )
+    payload["evidenceLedger"]["bindings"].append(
+        {
+            "evidenceId": "EV-02",
+            "sourcePath": "/locked/other-source.pdf",
+            "sourceSha256": "b" * 64,
+            "scope": "다른 주장에 대한 공식 근거",
+            "claimIds": ["CLM-02"],
+            "targetRequirementId": "REQ-01",
+            "targetPageId": "P-01",
+            "targetPageRole": "research_method",
+        }
+    )
+    payload["contentBlocks"][0]["paragraphs"][0].update(
+        claimIds=["CLM-01"],
+        evidenceIds=["EV-02"],
+    )
+
+    with pytest.raises(
+        ValidationError,
+        match="paragraph evidenceIds must support every paragraph claimId",
+    ):
+        BuildRequest.model_validate(payload)
+
+
 def test_rejects_figure_evidence_bound_to_another_page(tmp_path: Path) -> None:
     payload = sample_request(tmp_path).model_dump(by_alias=True)
     second_page = {
@@ -340,13 +489,31 @@ def test_rejects_figure_evidence_bound_to_another_page(tmp_path: Path) -> None:
     payload["figureManifest"]["figures"] = [
         {
             "figureId": "FIG-01",
+            "requirementId": "REQ-02",
             "pageId": "P-02",
+            "claimIds": ["CLM-01"],
+            "renderer": "svg-flow",
             "path": str(tmp_path / "not-read-during-validation.png"),
             "sha256": "b" * 64,
             "format": "png",
             "caption": "그림 1. 기대효과",
             "evidenceIds": ["EV-01"],
             "widthDxa": 3600,
+        }
+    ]
+    payload["pagePlan"]["pages"][1]["figureSpecs"] = [
+        {
+            "figureId": "FIG-01",
+            "requirementId": "REQ-02",
+            "pageId": "P-02",
+            "title": "기대효과",
+            "intent": "flow",
+            "dataShape": "process_flow",
+            "decisionTask": "기대효과를 확인한다.",
+            "claimIds": ["CLM-01"],
+            "evidenceIds": ["EV-01"],
+            "family": "flow",
+            "renderer": "svg-flow",
         }
     ]
 
