@@ -55,3 +55,11 @@ export {
   type TopologyStudyInput,
   type ValidatedVisualSourcePacket,
 } from "./visual-source-gate.js";
+export {
+  executeFile,
+  resolveVerifiedExecutable,
+  type ExecutableIdentity,
+  type ExecuteFileInput,
+  type ExecuteFileResult,
+  type ResolveExecutableInput,
+} from "./os-adapters.js";

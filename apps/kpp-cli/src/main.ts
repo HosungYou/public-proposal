@@ -9,6 +9,7 @@ import { importAuthoringCommand } from "./commands/import-authoring.js";
 import { initializeCommand } from "./commands/init.js";
 import { planCommand } from "./commands/plan.js";
 import { requirementsCommand } from "./commands/requirements.js";
+import { renderCommand } from "./commands/render.js";
 import { statusCommand } from "./commands/status.js";
 import { failure, writeEnvelope } from "./output.js";
 
@@ -104,6 +105,14 @@ export async function runCli(argv: readonly string[]): Promise<number> {
     .option("--json", "JSON 형식으로 출력")
     .action(async (root: string, options: JsonOption & { approvedBy?: string }) => {
       writeEnvelope(await contentApproveCommand(root, options), options.json === true);
+    });
+
+  program
+    .command("render <root>")
+    .requiredOption("--docx <path>", "canonical immutable DOCX 경로")
+    .option("--json", "JSON 형식으로 출력")
+    .action(async (root: string, options: JsonOption & { docx?: string }) => {
+      writeEnvelope(await renderCommand(root, options), options.json === true);
     });
 
   try {
