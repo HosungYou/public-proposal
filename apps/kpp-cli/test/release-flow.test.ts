@@ -1,0 +1,238 @@
+import { access, chmod, copyFile, mkdir, mkdtemp, readFile, readdir, rm, stat, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join, resolve } from "node:path";
+import { advanceProject, initializeProject, sha256File, writeReceipt } from "@kpp/core";
+import { afterEach, describe, expect, it } from "vitest";
+import { buildProject } from "../src/commands/build.js";
+import { auditProject } from "../src/commands/audit.js";
+import { approveProject } from "../src/commands/approve.js";
+import { releaseProject } from "../src/commands/release.js";
+import { renderProject } from "../src/commands/render.js";
+
+const TEMPLATE = resolve("workers/docx-python/assets/Korean Public Proposal A4 v1.docx");
+
+describe("verified proposal release flow", () => {
+  const roots: string[] = [];
+
+  afterEach(async () => {
+    await Promise.all(roots.splice(0).map(async (root) => {
+      await makeWritable(root);
+      await rm(root, { recursive: true, force: true });
+    }));
+  });
+
+  it("exposes governed build, audit, approval, and release entrypoints", async () => {
+    const root = await mkdtemp(join(tmpdir(), "kpp-release-contract-"));
+    roots.push(root);
+    expect(buildProject).toBeTypeOf("function");
+    expect(auditProject).toBeTypeOf("function");
+    expect(approveProject).toBeTypeOf("function");
+    expect(releaseProject).toBeTypeOf("function");
+    await expect(access(join(root, "release"))).rejects.toBeDefined();
+    await expect(readFile(join(root, "release.json"), "utf8")).rejects.toBeDefined();
+  });
+
+  it("builds a locked request, renders it, and blocks approval after a blocked technical audit", async () => {
+    const fixture = await createContentApprovedProject(roots);
+    const built = await buildProject(fixture.root, { requestPath: fixture.requestPath });
+    expect(built.state).toBe("BUILT");
+    expect((await stat(built.docxPath)).size).toBeGreaterThan(1_000);
+    const rendered = await renderProject(fixture.root, { docxPath: built.docxPath });
+    const blocked = await auditProject(fixture.root, {
+      docxPath: built.docxPath,
+      buildManifestPath: built.manifestPath,
+      renderManifestPath: rendered.manifestPath,
+      figures: [],
+    });
+    expect(blocked).toMatchObject({ state: "RENDERED", report: { status: "BLOCKED", humanBoundary: "TECHNICAL_GATE_ONLY" } });
+    await expect(approveProject(fixture.root, {
+      approvedBy: "제출책임자",
+      auditPath: blocked.auditPath,
+    })).rejects.toMatchObject({ code: "KPP_APPROVAL_STATE" });
+    await expect(access(join(fixture.root, "receipts", "approval.json"))).rejects.toBeDefined();
+    const releaseOutput = join(fixture.root, "blocked-release-output");
+    await expect(releaseProject(fixture.root, {
+      approvalPath: join(fixture.root, "receipts", "approval.json"),
+      outputParent: releaseOutput,
+    })).rejects.toMatchObject({ code: "KPP_RELEASE_STATE" });
+    await expect(access(releaseOutput)).rejects.toBeDefined();
+  }, 60_000);
+
+  it("rejects a BuildRequest body that is not the approved authoring response", async () => {
+    const fixture = await createContentApprovedProject(roots);
+    const request = JSON.parse(await readFile(fixture.requestPath, "utf8")) as { contentBlocks: { paragraphs: { text: string }[] }[] };
+    request.contentBlocks[0]!.paragraphs[0]!.text = "승인되지 않은 문장";
+    await writeFile(fixture.requestPath, `${JSON.stringify(request)}\n`);
+    await expect(buildProject(fixture.root, { requestPath: fixture.requestPath }))
+      .rejects.toMatchObject({ code: "KPP_BUILD_CONTENT_UNBOUND" });
+    await expect(access(join(fixture.root, "receipts", "build.json"))).rejects.toBeDefined();
+  });
+
+  it("rejects unapproved headings, table captions, or figure IDs before the worker publishes", async () => {
+    const fixture = await createContentApprovedProject(roots);
+    const request = JSON.parse(await readFile(fixture.requestPath, "utf8")) as {
+      contentBlocks: { heading: string; tables: { caption: string }[]; figureIds: string[] }[];
+    };
+    request.contentBlocks[0]!.heading = "2. 승인되지 않은 연구 수행방법";
+    request.contentBlocks[0]!.tables[0]!.caption = "표 2. 승인되지 않은 산출물";
+    request.contentBlocks[0]!.figureIds = ["FIG-UNAPPROVED"];
+    await writeFile(fixture.requestPath, `${JSON.stringify(request)}\n`);
+    await expect(buildProject(fixture.root, { requestPath: fixture.requestPath }))
+      .rejects.toMatchObject({ code: "KPP_BUILD_STRUCTURE_UNBOUND" });
+    await expect(access(join(fixture.root, "receipts", "build.json"))).rejects.toBeDefined();
+  });
+
+  it("releases only approval-bound allowlisted artifacts", async () => {
+    const fixture = await createAuditedProject(roots);
+    const approved = await approveProject(fixture.root, { approvedBy: "제출책임자", auditPath: fixture.auditPath });
+    const output = join(fixture.root, "release-output");
+    const released = await releaseProject(fixture.root, { approvalPath: approved.receiptPath, outputParent: output });
+    expect(released.state).toBe("RELEASED");
+    const manifest = JSON.parse(await readFile(released.manifestPath, "utf8")) as { humanBoundary: string; files: { releasePath: string }[] };
+    expect(manifest.humanBoundary).toBe("HUMAN_APPROVED");
+    expect(manifest.files.map((file) => file.releasePath)).toEqual(expect.arrayContaining([
+      "submission/document.docx",
+      "submission/proposal.pdf",
+      "submission/render-manifest.json",
+      "audit/audit.json",
+    ]));
+    const members = await listedFiles(released.releasePath);
+    expect(members).toContain("release.json");
+    expect(members.some((path) => path.includes("sources/") || path.includes("receipts/") || path.includes(".omo/"))).toBe(false);
+  });
+
+  it("rejects a changed PDF after human approval without publishing or changing project state", async () => {
+    const fixture = await createAuditedProject(roots);
+    const approved = await approveProject(fixture.root, { approvedBy: "제출책임자", auditPath: fixture.auditPath });
+    await writeFile(fixture.pdfPath, "%PDF-CHANGED\n");
+    const output = join(fixture.root, "release-output");
+    await expect(releaseProject(fixture.root, { approvalPath: approved.receiptPath, outputParent: output }))
+      .rejects.toMatchObject({ code: "KPP_RELEASE_APPROVAL_STALE" });
+    await expect(access(output)).rejects.toBeDefined();
+    const project = await readFile(join(fixture.root, "kpp.project.yaml"), "utf8");
+    expect(project).toContain("state: HUMAN_APPROVED");
+  });
+});
+
+async function createContentApprovedProject(roots: string[]): Promise<{ readonly root: string; readonly requestPath: string }> {
+  const root = await mkdtemp(join(tmpdir(), "kpp-release-build-"));
+  roots.push(root);
+  await initializeProject(root, { projectId: "release-build-fixture" });
+  const pagePlan = {
+    schemaVersion: "1.0.0",
+    pages: [{ pageId: "P-01", requirementId: "REQ-01", pageRole: "research_method", surfaceTemplateId: "r08-research-method-v1", claimIds: ["CLM-01"], figureSpecs: [] }],
+  };
+  const evidenceLedger = {
+    schemaVersion: "1.0.0",
+    claims: [{ claimId: "CLM-01", status: "verified", evidenceIds: ["EV-01"] }],
+    bindings: [{ evidenceId: "EV-01", sourcePath: join(root, "evidence", "source.txt"), sourceSha256: "a".repeat(64), scope: "합성 검증 근거", claimIds: ["CLM-01"], targetRequirementId: "REQ-01", targetPageId: "P-01", targetPageRole: "research_method" }],
+  };
+  const profile = lockedProfile();
+  await mkdir(join(root, "content"), { recursive: true });
+  await mkdir(join(root, "evidence"), { recursive: true });
+  await mkdir(join(root, "figures"), { recursive: true });
+  await writeFile(join(root, "content", "page-plan.json"), `${JSON.stringify(pagePlan)}\n`);
+  await writeFile(join(root, "evidence", "evidence-ledger.json"), `${JSON.stringify(evidenceLedger)}\n`);
+  await writeFile(join(root, "evidence", "source.txt"), "synthetic source\n");
+  await writeFile(join(root, "figures", "design-profile.json"), `${JSON.stringify(profile)}\n`);
+  const approvedText = "공식 근거와 현장 검증을 연결하여 연구 결과의 활용 가능성을 높인다.";
+  const tables = [{ tableId: "TBL-01", caption: "표 1. 연구 단계별 산출물", headers: ["단계", "산출물"], rows: [["착수", "연구설계서"]], columnWidthsDxa: [2400, 6000] }];
+  const responsePath = join(root, "content", "authoring-response.json");
+  const structurePath = join(root, "content", "build-structure.json");
+  const figureManifestPath = join(root, "figures", "build-figure-manifest.json");
+  const figureManifest = { schemaVersion: "1.0.0", figures: [] };
+  await writeFile(responsePath, `${JSON.stringify({ schemaVersion: "1.0.0", blocks: [{ pageId: "P-01", claimIds: ["CLM-01"], evidenceIds: ["EV-01"], status: "provisional", text: approvedText, evaluatorAnswer: "합성 평가자 답변", pendingBlankFieldIds: [] }] })}\n`);
+  await writeFile(structurePath, `${JSON.stringify({ schemaVersion: "1.0.0", blocks: [{ pageId: "P-01", heading: "1. 연구 수행방법", tables, figureIds: [] }] })}\n`);
+  await writeFile(figureManifestPath, `${JSON.stringify(figureManifest)}\n`);
+  await advanceToContentApproved(root, [responsePath, structurePath], [figureManifestPath]);
+  const request = {
+    schemaVersion: "1.0.0",
+    projectId: "release-build-fixture",
+    template: { assetId: "korean-public-proposal-a4-v1", path: TEMPLATE, sha256: await sha256File(TEMPLATE) },
+    pagePlan,
+    evidenceLedger,
+    contentBlocks: [{ pageId: "P-01", heading: "1. 연구 수행방법", paragraphs: [{ text: approvedText, claimIds: ["CLM-01"], evidenceIds: ["EV-01"] }], tables, figureIds: [] }],
+    figureManifest,
+    surfaceProfile: profile,
+    output: { docxPath: join(root, "build", "proposal.docx"), manifestPath: join(root, "build", "build-manifest.json") },
+  };
+  const requestPath = join(root, "build", "build-request.json");
+  await mkdir(join(root, "build"), { recursive: true });
+  await writeFile(requestPath, `${JSON.stringify(request)}\n`);
+  return { root, requestPath };
+}
+
+async function createAuditedProject(roots: string[]): Promise<{ readonly root: string; readonly auditPath: string; readonly pdfPath: string }> {
+  const root = await mkdtemp(join(tmpdir(), "kpp-release-audited-"));
+  roots.push(root);
+  await initializeProject(root, { projectId: "release-fixture" });
+  await advanceToContentApproved(root);
+  const generation = join(root, ".kpp-build-0123456789abcdef", "generations", "fixture");
+  await mkdir(generation, { recursive: true });
+  const docxPath = join(generation, "document.docx");
+  const buildManifestPath = join(generation, "manifest.json");
+  await copyFile(TEMPLATE, docxPath);
+  await writeFile(buildManifestPath, "{\"synthetic\":true}\n");
+  await writeStage(root, "BUILT", [docxPath, buildManifestPath]);
+  const rendered = join(root, "rendered", "generations", "fixture");
+  await mkdir(rendered, { recursive: true });
+  const pdfPath = join(rendered, "proposal.pdf");
+  const pagePath = join(rendered, "page-0001.png");
+  const renderManifestPath = join(rendered, "render.json");
+  await writeFile(pdfPath, "%PDF-1.4\nsynthetic\n");
+  await writeFile(pagePath, Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0, 0, 0, 0]));
+  await writeFile(renderManifestPath, "{\"synthetic\":true}\n");
+  await writeStage(root, "RENDERED", [docxPath, buildManifestPath, renderManifestPath, pdfPath, pagePath]);
+  const auditPath = join(root, "audit", "audit.json");
+  const geometryPath = join(root, "audit", "docx-geometry.json");
+  await mkdir(join(root, "audit"), { recursive: true });
+  await writeFile(auditPath, "{\"schemaVersion\":\"1\",\"status\":\"PASS\",\"findings\":[],\"artifacts\":[],\"humanBoundary\":\"TECHNICAL_GATE_ONLY\"}\n");
+  await writeFile(geometryPath, "{\"synthetic\":true}\n");
+  await writeStage(root, "AUDITED", [auditPath, geometryPath]);
+  return { root, auditPath, pdfPath };
+}
+
+async function advanceToContentApproved(
+  root: string,
+  contentApprovalFiles: string[] = [],
+  designLockFiles: string[] = [],
+): Promise<void> {
+  for (const stage of ["SOURCE_LOCKED", "REQUIREMENTS_LOCKED", "EVIDENCE_LOCKED", "DESIGN_LOCKED", "CONTENT_APPROVED"] as const) {
+    const artifact = join(root, "receipt-fixtures", `${stage}.txt`);
+    await mkdir(join(root, "receipt-fixtures"), { recursive: true });
+    await writeFile(artifact, `${stage}\n`);
+    await writeStage(root, stage, stage === "CONTENT_APPROVED"
+      ? [artifact, ...contentApprovalFiles]
+      : stage === "DESIGN_LOCKED"
+        ? [artifact, ...designLockFiles]
+        : [artifact]);
+  }
+}
+
+async function writeStage(root: string, stage: "SOURCE_LOCKED" | "REQUIREMENTS_LOCKED" | "EVIDENCE_LOCKED" | "DESIGN_LOCKED" | "CONTENT_APPROVED" | "BUILT" | "RENDERED" | "AUDITED", files: string[]): Promise<void> {
+  const filenames = { SOURCE_LOCKED: "source-lock.json", REQUIREMENTS_LOCKED: "requirements-lock.json", EVIDENCE_LOCKED: "evidence-lock.json", DESIGN_LOCKED: "design-lock.json", CONTENT_APPROVED: "content-approval.json", BUILT: "build.json", RENDERED: "render.json", AUDITED: "audit.json" } as const;
+  const ordered = ["SOURCE_LOCKED", "REQUIREMENTS_LOCKED", "EVIDENCE_LOCKED", "DESIGN_LOCKED", "CONTENT_APPROVED", "BUILT", "RENDERED", "AUDITED"] as const;
+  const index = ordered.indexOf(stage);
+  const predecessor = index > 0 ? join(root, "receipts", filenames[ordered[index - 1]!]) : undefined;
+  await writeReceipt({ stage, files, inputReceiptHashes: predecessor === undefined ? [] : [await sha256File(predecessor)], output: join(root, "receipts", filenames[stage]) });
+  await advanceProject(root, stage);
+}
+
+function lockedProfile() {
+  return { schemaVersion: "1.0.0", profileId: "synthetic-r08-locked", status: "locked", typography: { headingFont: "Noto Sans CJK KR", navigationFont: "Noto Sans CJK KR", bodyFont: "Noto Serif CJK KR", bodyPoint: 9.3, lineHeight: 1.52, alignment: "justified", characterSpacingPt: -0.2, precisionPolicy: "acknowledged_half_point_quantization" }, table: { widthDxa: 8400, cellMarginDxa: { top: 80, start: 100, bottom: 80, end: 100 }, borderSizeEighthPt: 4 } };
+}
+
+async function listedFiles(root: string, prefix = ""): Promise<string[]> {
+  const entries = await readdir(root, { withFileTypes: true });
+  return (await Promise.all(entries.map(async (entry) => entry.isDirectory() ? listedFiles(join(root, entry.name), join(prefix, entry.name)) : [join(prefix, entry.name)]))).flat().sort();
+}
+
+async function makeWritable(root: string): Promise<void> {
+  const entries = await readdir(root, { withFileTypes: true }).catch(() => []);
+  for (const entry of entries) {
+    const path = join(root, entry.name);
+    if (entry.isDirectory()) await makeWritable(path);
+    await chmod(path, entry.isDirectory() ? 0o700 : 0o600).catch(() => undefined);
+  }
+  await chmod(root, 0o700).catch(() => undefined);
+}

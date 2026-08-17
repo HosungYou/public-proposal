@@ -2,6 +2,9 @@
 
 import { Command } from "commander";
 import { contentApproveCommand } from "./commands/content.js";
+import { approveCommand } from "./commands/approve.js";
+import { auditCommand } from "./commands/audit.js";
+import { buildCommand } from "./commands/build.js";
 import { doctorCommand } from "./commands/doctor.js";
 import { exportAuthoringCommand } from "./commands/export-authoring.js";
 import { ingestCommand } from "./commands/ingest.js";
@@ -10,6 +13,7 @@ import { initializeCommand } from "./commands/init.js";
 import { planCommand } from "./commands/plan.js";
 import { requirementsCommand } from "./commands/requirements.js";
 import { renderCommand } from "./commands/render.js";
+import { releaseCommand } from "./commands/release.js";
 import { statusCommand } from "./commands/status.js";
 import { failure, writeEnvelope } from "./output.js";
 
@@ -115,6 +119,44 @@ export async function runCli(argv: readonly string[]): Promise<number> {
       writeEnvelope(await renderCommand(root, options), options.json === true);
     });
 
+  program
+    .command("build <root>")
+    .requiredOption("--request <path>", "잠긴 BuildRequest JSON")
+    .option("--python <path>", "관리된 DOCX Python 경로")
+    .option("--json", "JSON 형식으로 출력")
+    .action(async (root: string, options: JsonOption & { request: string; python?: string }) => {
+      writeEnvelope(await buildCommand(root, options), options.json === true);
+    });
+
+  program
+    .command("audit <root>")
+    .requiredOption("--docx <path>", "canonical immutable DOCX 경로")
+    .requiredOption("--build-manifest <path>", "canonical build manifest 경로")
+    .requiredOption("--render-manifest <path>", "canonical render manifest 경로")
+    .option("--figure <spec:svg:manifest>", "semantic figure artifact binding", collectOption, [])
+    .option("--json", "JSON 형식으로 출력")
+    .action(async (root: string, options: JsonOption & { docx: string; buildManifest: string; renderManifest: string; figure?: string[] }) => {
+      writeEnvelope(await auditCommand(root, options), options.json === true);
+    });
+
+  program
+    .command("approve <root>")
+    .requiredOption("--approved-by <name>", "제출책임자 이름")
+    .requiredOption("--audit <audit.json>", "현재 PASS audit JSON")
+    .option("--json", "JSON 형식으로 출력")
+    .action(async (root: string, options: JsonOption & { approvedBy: string; audit: string }) => {
+      writeEnvelope(await approveCommand(root, options), options.json === true);
+    });
+
+  program
+    .command("release <root>")
+    .requiredOption("--approval <approval.json>", "현재 human approval receipt")
+    .requiredOption("--output <release-parent>", "immutable release 상위 경로")
+    .option("--json", "JSON 형식으로 출력")
+    .action(async (root: string, options: JsonOption & { approval: string; output: string }) => {
+      writeEnvelope(await releaseCommand(root, options), options.json === true);
+    });
+
   try {
     await program.parseAsync(["node", "kpp", ...argv]);
     return 0;
@@ -122,6 +164,10 @@ export async function runCli(argv: readonly string[]): Promise<number> {
     writeEnvelope(failure(error), argv.includes("--json"));
     return 1;
   }
+}
+
+function collectOption(value: string, previous: string[]): string[] {
+  return [...previous, value];
 }
 
 void runCli(process.argv.slice(2)).then((code) => {
