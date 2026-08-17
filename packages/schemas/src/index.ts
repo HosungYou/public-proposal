@@ -9,6 +9,20 @@ export {
   type EvidenceStatus,
 } from "./evidence.js";
 export {
+  RequirementCandidateSchema,
+  RequirementCandidatesFileSchema,
+  RfpCandidateCategorySchema,
+  RfpCandidateSchema,
+  RfpCandidatesFileSchema,
+  RfpCandidateStatusSchema,
+  type RequirementCandidate,
+  type RequirementCandidatesFile,
+  type RfpCandidate,
+  type RfpCandidateCategory,
+  type RfpCandidatesFile,
+  type RfpCandidateStatus,
+} from "./rfp-candidate.js";
+export {
   ConfirmedRequirementsSchema,
   FigureSpecSchema,
   PendingRequirementsSchema,
