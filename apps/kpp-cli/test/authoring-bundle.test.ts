@@ -101,6 +101,13 @@ describe("model-independent authoring bundle exchange", () => {
     }))).rejects.toMatchObject({
       code: "KPP_EVIDENCE_UNBOUND_CLAIM",
     });
+    for (const unboundNativeNumeral of ["한 명", "두 개", "세 회", "네 가지", "다섯 년", "열 쪽"]) {
+      await expect(importAuthoring(fixture.root, responseWith(fixture.validResponse, {
+        text: `본 연구는 근거에 따라 ${unboundNativeNumeral}을 확인한다. {{CLAIM-BLANK}}`,
+      }))).rejects.toMatchObject({
+        code: "KPP_EVIDENCE_UNBOUND_CLAIM",
+      });
+    }
   });
 
   it("rejects unknown response page, claim, and evidence IDs", async () => {

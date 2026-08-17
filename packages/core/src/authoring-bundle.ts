@@ -477,7 +477,27 @@ function numericTokens(value: string): readonly string[] {
   )]
     .map((match) => parseKoreanNumber(match[1]!))
     .filter((token): token is string => token !== null);
-  return [...arabicTokens, ...koreanTokens];
+  const nativeTokens = [...normalized.matchAll(
+    /(한|두|세|네|다섯|여섯|일곱|여덟|아홉|열)\s*(?=(?:명|개|회|가지|년|쪽|페이지|원|일|%|퍼센트|pt|포인트))/g,
+  )]
+    .map((match) => nativeKoreanNumber(match[1]!));
+  return [...arabicTokens, ...koreanTokens, ...nativeTokens];
+}
+
+function nativeKoreanNumber(value: string): string {
+  const values: Readonly<Record<string, string>> = {
+    한: "1",
+    두: "2",
+    세: "3",
+    네: "4",
+    다섯: "5",
+    여섯: "6",
+    일곱: "7",
+    여덟: "8",
+    아홉: "9",
+    열: "10",
+  };
+  return values[value]!;
 }
 
 function parseKoreanNumber(value: string): string | null {
