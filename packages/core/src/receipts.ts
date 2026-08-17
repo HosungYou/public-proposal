@@ -1,5 +1,6 @@
-import { mkdir, open, readFile, rename } from "node:fs/promises";
-import { dirname } from "node:path";
+import { randomUUID } from "node:crypto";
+import { mkdir, open, readFile, rename, rm } from "node:fs/promises";
+import { basename, dirname, join } from "node:path";
 import {
   ReceiptSchema,
   type ProjectState,
@@ -109,16 +110,42 @@ function parseReceipt(value: unknown, path: string): Receipt {
 }
 
 async function writeAtomically(path: string, contents: string): Promise<void> {
-  await mkdir(dirname(path), { recursive: true });
-  const temporaryPath = `${path}.tmp`;
-  const handle = await open(temporaryPath, "w", 0o600);
+  const directory = dirname(path);
+  await mkdir(directory, { recursive: true });
+  const temporaryPath = join(
+    directory,
+    `.${basename(path)}.${process.pid}.${randomUUID()}.tmp`,
+  );
+  let created = false;
+  let renamed = false;
+
   try {
-    await handle.writeFile(contents, "utf8");
+    const handle = await open(temporaryPath, "wx", 0o600);
+    created = true;
+    try {
+      await handle.writeFile(contents, "utf8");
+      await handle.sync();
+    } finally {
+      await handle.close();
+    }
+
+    await rename(temporaryPath, path);
+    renamed = true;
+    await syncDirectory(directory);
+  } finally {
+    if (created && !renamed) {
+      await rm(temporaryPath, { force: true });
+    }
+  }
+}
+
+async function syncDirectory(directory: string): Promise<void> {
+  const handle = await open(directory, "r");
+  try {
     await handle.sync();
   } finally {
     await handle.close();
   }
-  await rename(temporaryPath, path);
 }
 
 function compareFileRecords(

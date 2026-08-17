@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -78,5 +78,44 @@ describe("receipts", () => {
     expect(receipt.schemaVersion).toBe("1.0.0");
     expect(receipt.toolVersion).toBe("0.1.0");
     expect(JSON.parse(await readFile(receiptPath, "utf8"))).toEqual(receipt);
+  });
+
+  it("allows concurrent writes to the same receipt path", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "kpp-receipt-"));
+    temporaryDirectories.push(directory);
+    const input = join(directory, "source.txt");
+    const receiptPath = join(directory, "receipts", "source-lock.json");
+
+    await writeFile(input, "alpha");
+
+    const receipts = await Promise.all(
+      Array.from({ length: 16 }, () => writeReceipt({
+        stage: "SOURCE_LOCKED",
+        files: [input],
+        output: receiptPath,
+      })),
+    );
+
+    expect(receipts).toHaveLength(16);
+    expect((await verifyReceipt(receiptPath)).valid).toBe(true);
+  });
+
+  it("removes its temporary file when the final rename fails", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "kpp-receipt-"));
+    temporaryDirectories.push(directory);
+    const input = join(directory, "source.txt");
+    const outputDirectory = join(directory, "receipt-target");
+
+    await writeFile(input, "alpha");
+    // Reserve the output path as a directory so the final rename fails.
+    await mkdir(outputDirectory);
+
+    await expect(writeReceipt({
+      stage: "SOURCE_LOCKED",
+      files: [input],
+      output: outputDirectory,
+    })).rejects.toThrow();
+
+    expect((await readdir(directory)).filter((entry) => entry.endsWith(".tmp"))).toEqual([]);
   });
 });
