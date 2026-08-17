@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { FigureSpecSchema } from "./requirements.js";
+import { SemanticFigureSpecSchema } from "./figure-spec.js";
 
 const IdentifierSchema = z.string().min(1);
 
@@ -9,7 +9,7 @@ export const PagePlanItemSchema = z.object({
   pageRole: IdentifierSchema,
   surfaceTemplateId: IdentifierSchema,
   claimIds: z.array(IdentifierSchema),
-  figureSpecs: z.array(FigureSpecSchema),
+  figureSpecs: z.array(SemanticFigureSpecSchema),
   sourceCandidateIds: z.array(IdentifierSchema).min(1).optional(),
 });
 

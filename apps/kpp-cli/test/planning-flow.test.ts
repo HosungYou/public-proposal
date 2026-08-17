@@ -98,8 +98,32 @@ describe("KPP planning flow", () => {
           surfaceTemplateId: "narrative-v1",
           claimIds: ["CLAIM-002", "CLAIM-000"],
           figureSpecs: [
-            { figureId: "FIG-002", type: "flow", title: "수행 절차" },
-            { figureId: "FIG-001", type: "gantt", title: "수행 일정" },
+            {
+              figureId: "FIG-002",
+              requirementId: "REQ-002",
+              pageId: "PAGE-001",
+              title: "수행 절차",
+              intent: "flow",
+              dataShape: "process_flow",
+              decisionTask: "수행 절차를 검토한다.",
+              claimIds: ["CLAIM-002"],
+              evidenceIds: ["EVID-002"],
+              family: "flow",
+              renderer: "svg-flow",
+            },
+            {
+              figureId: "FIG-001",
+              requirementId: "REQ-002",
+              pageId: "PAGE-001",
+              title: "수행 일정",
+              intent: "schedule",
+              dataShape: "time_axis",
+              decisionTask: "수행 일정을 검토한다.",
+              claimIds: ["CLAIM-002"],
+              evidenceIds: ["EVID-002"],
+              family: "gantt",
+              renderer: "svg-gantt",
+            },
           ],
         },
         {
@@ -117,11 +141,11 @@ describe("KPP planning flow", () => {
       await readFile(join(fixture.root, "evidence", "evidence-ledger.json"), "utf8"),
     ) as { claims: Array<{ claimId: string; status: string }>; bindings: unknown[] };
     expect(ledger.claims).toEqual([
-      { claimId: "CLAIM-002", status: "pending_blank", evidenceIds: [] },
+      { claimId: "CLAIM-002", status: "bounded", evidenceIds: ["EVID-002"] },
       { claimId: "CLAIM-000", status: "pending_blank", evidenceIds: [] },
       { claimId: "CLAIM-001", status: "blocked", evidenceIds: [] },
     ]);
-    expect(ledger.bindings).toEqual([]);
+    expect(ledger.bindings).toHaveLength(1);
 
     await expect(readFile(join(fixture.root, "receipts", "source-lock.json"), "utf8"))
       .resolves.toContain('"stage": "SOURCE_LOCKED"');
@@ -162,6 +186,45 @@ describe("KPP planning flow", () => {
       .rejects.toMatchObject({ code: "ENOENT" });
   });
 
+  it("blocks generic-card and unbound semantic figures before requirements lock", async () => {
+    const fixture = await createFixture(temporaryDirectories);
+    const raw = JSON.parse(await readFile(fixture.confirmedRequirementsPath, "utf8")) as {
+      requirements: Array<{ figureSpecs: Array<Record<string, unknown>> }>;
+    };
+    raw.requirements[0]!.figureSpecs[0] = {
+      ...raw.requirements[0]!.figureSpecs[0],
+      family: "generic_cards",
+    };
+    await writeFile(fixture.confirmedRequirementsPath, `${JSON.stringify(raw, null, 2)}\n`);
+
+    await run(["init", fixture.root, "--json"]);
+    await run(["ingest", fixture.root, fixture.rfpPath, "--json"]);
+    const genericResult = await run([
+      "plan", fixture.root, "--requirements", fixture.confirmedRequirementsPath, "--json",
+    ]);
+    expect(parseEnvelope(genericResult.stdout)).toMatchObject({
+      ok: false,
+      code: "KPP_INPUT_REQUIREMENTS_INVALID",
+    });
+
+    raw.requirements[0]!.figureSpecs[0] = {
+      ...raw.requirements[0]!.figureSpecs[0],
+      family: "flow",
+      renderer: "svg-flow",
+      evidenceIds: ["EV-404"],
+    };
+    await writeFile(fixture.confirmedRequirementsPath, `${JSON.stringify(raw, null, 2)}\n`);
+    const unboundResult = await run([
+      "plan", fixture.root, "--requirements", fixture.confirmedRequirementsPath, "--json",
+    ]);
+    expect(parseEnvelope(unboundResult.stdout)).toMatchObject({
+      ok: false,
+      code: "KPP_EVIDENCE_FIGURE_UNBOUND",
+    });
+    expect(parseEnvelope((await run(["status", fixture.root, "--json"])).stdout).data)
+      .toMatchObject({ state: "SOURCE_LOCKED" });
+  });
+
   it("rejects planning after the locked source copy is mutated", async () => {
     const fixture = await createFixture(temporaryDirectories);
     await run(["init", fixture.root, "--json"]);
@@ -192,6 +255,10 @@ describe("KPP planning flow", () => {
     await writeFile(evidencePath, "bounded evidence\n");
     const confirmed = await readConfirmedRequirements(fixture.confirmedRequirementsPath);
     confirmed.requirements[0]!.claims[0]!.evidenceIds = ["EVID-001"];
+    confirmed.requirements[0]!.figureSpecs = confirmed.requirements[0]!.figureSpecs.map((figure) => ({
+      ...figure,
+      evidenceIds: ["EVID-001"],
+    }));
     confirmed.evidenceBindings = [{
       evidenceId: "EVID-001",
       sourcePath: evidencePath,
@@ -351,7 +418,17 @@ interface ConfirmedRequirementsFixture {
     pageRole: string;
     surfaceTemplateId: string;
     claims: Array<{ claimId: string; critical: boolean; evidenceIds: string[] }>;
-    figureSpecs: Array<{ figureId: string; type: string; title: string }>;
+    figureSpecs: Array<{
+      figureId: string;
+      title: string;
+      intent: string;
+      dataShape: string;
+      decisionTask: string;
+      claimIds: string[];
+      evidenceIds: string[];
+      family: string;
+      renderer: string;
+    }>;
   }>;
 }
 
@@ -365,13 +442,25 @@ async function createFixture(temporaryDirectories: string[]): Promise<{
   const root = await mkdtemp(join(tmpdir(), "kpp-planning-project-"));
   temporaryDirectories.push(fixtureDirectory, root);
   const rfpPath = join(fixtureDirectory, "rfp.txt");
+  const methodEvidencePath = join(fixtureDirectory, "method-evidence.txt");
   const confirmedRequirementsPath = join(fixtureDirectory, "confirmed-requirements.json");
   await writeFile(rfpPath, "official RFP\n");
+  await writeFile(methodEvidencePath, "method evidence\n");
+  const methodEvidenceSha256 = await sha256File(methodEvidencePath);
   await writeFile(confirmedRequirementsPath, `${JSON.stringify({
     schemaVersion: "1.0.0",
     confirmationStatus: "confirmed",
     confirmedBy: "proposal-owner",
-    evidenceBindings: [],
+    evidenceBindings: [{
+      evidenceId: "EVID-002",
+      sourcePath: methodEvidencePath,
+      sourceSha256: methodEvidenceSha256,
+      scope: "사업 수행 방법의 확인 근거",
+      claimIds: ["CLAIM-002"],
+      targetRequirementId: "REQ-002",
+      targetPageId: "PAGE-001",
+      targetPageRole: "approach_overview",
+    }],
     requirements: [
       {
         requirementId: "REQ-002",
@@ -380,12 +469,32 @@ async function createFixture(temporaryDirectories: string[]): Promise<{
         pageRole: "approach_overview",
         surfaceTemplateId: "narrative-v1",
         claims: [
-          { claimId: "CLAIM-002", critical: false, evidenceIds: [] },
+          { claimId: "CLAIM-002", critical: false, evidenceIds: ["EVID-002"] },
           { claimId: "CLAIM-000", critical: false, evidenceIds: [] },
         ],
         figureSpecs: [
-          { figureId: "FIG-002", type: "flow", title: "수행 절차" },
-          { figureId: "FIG-001", type: "gantt", title: "수행 일정" },
+          {
+            figureId: "FIG-002",
+            title: "수행 절차",
+            intent: "flow",
+            dataShape: "process_flow",
+            decisionTask: "수행 절차를 검토한다.",
+            claimIds: ["CLAIM-002"],
+            evidenceIds: ["EVID-002"],
+            family: "flow",
+            renderer: "svg-flow",
+          },
+          {
+            figureId: "FIG-001",
+            title: "수행 일정",
+            intent: "schedule",
+            dataShape: "time_axis",
+            decisionTask: "수행 일정을 검토한다.",
+            claimIds: ["CLAIM-002"],
+            evidenceIds: ["EVID-002"],
+            family: "gantt",
+            renderer: "svg-gantt",
+          },
         ],
       },
       {
@@ -421,7 +530,11 @@ async function persistRequirementsLockedIntermediate(fixture: {
       pageRole: requirement.pageRole,
       surfaceTemplateId: requirement.surfaceTemplateId,
       claimIds: requirement.claims.map(({ claimId }) => claimId),
-      figureSpecs: requirement.figureSpecs,
+      figureSpecs: requirement.figureSpecs.map((figure) => ({
+        ...figure,
+        requirementId: requirement.requirementId,
+        pageId: `PAGE-${String(index + 1).padStart(3, "0")}`,
+      })),
     })),
   };
   const persistedRequirementsPath = join(fixture.root, "requirements", "requirements.json");

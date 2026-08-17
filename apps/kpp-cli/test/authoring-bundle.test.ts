@@ -228,7 +228,17 @@ async function createFixture(temporaryDirectories: string[]) {
         { claimId: "CLAIM-001", critical: false, evidenceIds: ["EV-001"] },
         { claimId: "CLAIM-BLANK", critical: false, evidenceIds: [] },
       ],
-      figureSpecs: [{ figureId: "FIG-001", type: "gantt", title: "수행 일정" }],
+      figureSpecs: [{
+        figureId: "FIG-001",
+        title: "수행 일정",
+        intent: "schedule",
+        dataShape: "time_axis",
+        decisionTask: "수행 일정을 검토한다.",
+        claimIds: ["CLAIM-001"],
+        evidenceIds: ["EV-001"],
+        family: "gantt",
+        renderer: "svg-gantt",
+      }],
     }],
     evidenceBindings: [{
       evidenceId: "EV-001",

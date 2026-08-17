@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { EvidenceStatusSchema } from "./evidence.js";
-import { FigureSpecSchema } from "./requirements.js";
+import { SemanticFigureSpecSchema } from "./figure-spec.js";
 
 const IdentifierSchema = z.string().min(1);
 const Sha256Schema = z.string().regex(/^[a-f0-9]{64}$/);
@@ -77,7 +77,7 @@ export const AuthoringContentBlockSchema = z.object({
   }).strict(),
   requiredEvaluatorAnswer: z.string().min(1),
   permittedPendingBlankFields: z.array(IdentifierSchema),
-  figureSpecs: z.array(FigureSpecSchema),
+  figureSpecs: z.array(SemanticFigureSpecSchema),
 }).strict();
 
 export const AuthoringRequestSchema = z.object({

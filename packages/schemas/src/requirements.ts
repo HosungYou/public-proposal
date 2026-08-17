@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { EvidenceBindingSchema } from "./evidence.js";
+import { RequirementFigureSpecSchema } from "./figure-spec.js";
 
 const IdentifierSchema = z.string().min(1);
 
@@ -9,11 +10,7 @@ export const RequirementClaimSchema = z.object({
   evidenceIds: z.array(IdentifierSchema),
 });
 
-export const FigureSpecSchema = z.object({
-  figureId: IdentifierSchema,
-  type: IdentifierSchema,
-  title: IdentifierSchema,
-});
+export const FigureSpecSchema = RequirementFigureSpecSchema;
 
 export const RequirementSchema = z.object({
   requirementId: IdentifierSchema,

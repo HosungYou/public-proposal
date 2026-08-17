@@ -85,11 +85,13 @@ export function planFigure(input: unknown): SemanticFigureSpec {
 
   return SemanticFigureSpecSchema.parse({
     figureId: request.figureId,
+    requirementId: request.requirementId,
     pageId: request.pageId,
     title: request.title,
     intent: request.intent,
     dataShape: request.dataShape,
     decisionTask: request.decisionTask,
+    claimIds: uniqueInOrder(request.claimIds),
     evidenceIds: uniqueInOrder(request.evidenceIds),
     family,
     renderer: RENDERER_BY_FAMILY[family],

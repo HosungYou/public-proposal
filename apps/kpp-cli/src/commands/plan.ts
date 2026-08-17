@@ -3,6 +3,7 @@ import { dirname, join, resolve } from "node:path";
 import {
   advanceProject,
   KppError,
+  planFigure,
   sha256File,
   verifyProjectState,
   writeReceipt,
@@ -63,17 +64,25 @@ export async function planCommand(
 
   const pagePlan = PagePlanSchema.parse({
     schemaVersion: "1.0.0",
-    pages: requirements.requirements.map((requirement, index) => ({
-      pageId: `PAGE-${String(index + 1).padStart(3, "0")}`,
-      requirementId: requirement.requirementId,
-      pageRole: requirement.pageRole,
-      surfaceTemplateId: requirement.surfaceTemplateId,
-      claimIds: requirement.claims.map(({ claimId }) => claimId),
-      figureSpecs: requirement.figureSpecs,
-      ...(requirement.sourceCandidateIds === undefined
-        ? {}
-        : { sourceCandidateIds: requirement.sourceCandidateIds }),
-    })),
+    pages: requirements.requirements.map((requirement, index) => {
+      const pageId = `PAGE-${String(index + 1).padStart(3, "0")}`;
+      return {
+        pageId,
+        requirementId: requirement.requirementId,
+        pageRole: requirement.pageRole,
+        surfaceTemplateId: requirement.surfaceTemplateId,
+        claimIds: requirement.claims.map(({ claimId }) => claimId),
+        figureSpecs: requirement.figureSpecs.map((figure) => planFigure({
+          ...figure,
+          requirementId: requirement.requirementId,
+          pageId,
+          requestedFamily: figure.family,
+        })),
+        ...(requirement.sourceCandidateIds === undefined
+          ? {}
+          : { sourceCandidateIds: requirement.sourceCandidateIds }),
+      };
+    }),
   });
   const ledger = EvidenceLedgerSchema.parse({
     schemaVersion: "1.0.0",
@@ -233,6 +242,41 @@ async function validateEvidenceBindings(
       }
     }
   }
+
+  for (const page of pagePlan.pages) {
+    const requirement = requirements.requirements.find(({ requirementId }) =>
+      requirementId === page.requirementId)!;
+    const requirementClaimIds = new Set(requirement.claims.map(({ claimId }) => claimId));
+    for (const figure of page.figureSpecs) {
+      if (figure.requirementId !== requirement.requirementId || figure.pageId !== page.pageId) {
+        throw unresolvedFigureEvidence(figure.figureId, "figure_page_requirement_mismatch", {
+          requirementId: requirement.requirementId,
+          pageId: page.pageId,
+        });
+      }
+      for (const claimId of figure.claimIds) {
+        if (!requirementClaimIds.has(claimId)) {
+          throw unresolvedFigureEvidence(figure.figureId, "figure_claim_unknown", claimId);
+        }
+      }
+      for (const evidenceId of figure.evidenceIds) {
+        const binding = bindingById.get(evidenceId);
+        if (binding === undefined
+          || binding.targetRequirementId !== requirement.requirementId
+          || binding.targetPageId !== page.pageId
+          || !binding.claimIds.some((claimId) => figure.claimIds.includes(claimId))) {
+          throw unresolvedFigureEvidence(figure.figureId, "figure_evidence_binding_missing", {
+            evidenceId,
+            expected: {
+              requirementId: requirement.requirementId,
+              pageId: page.pageId,
+              claimIds: figure.claimIds,
+            },
+          });
+        }
+      }
+    }
+  }
 }
 
 function unresolvedEvidence(
@@ -245,6 +289,18 @@ function unresolvedEvidence(
     "KPP_INPUT_EVIDENCE_UNRESOLVED",
     "증거 ID를 실제 출처와 계획 페이지에 연결할 수 없습니다.",
     { path: binding.sourcePath, rule, expected, actual },
+  );
+}
+
+function unresolvedFigureEvidence(
+  figureId: string,
+  rule: string,
+  actual: unknown,
+): KppError {
+  return new KppError(
+    "KPP_EVIDENCE_FIGURE_UNBOUND",
+    "도식은 잠긴 주장·증거·페이지에 연결되어야 합니다.",
+    { path: figureId, rule, actual },
   );
 }
 

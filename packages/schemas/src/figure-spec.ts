@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { EvidenceBindingSchema } from "./evidence.js";
 
 const IdentifierSchema = z.string().trim().min(1);
 const Sha256Schema = z.string().regex(/^[a-f0-9]{64}$/);
@@ -50,27 +51,39 @@ export const DeterministicFigureRendererSchema = z.enum([
 
 export const SemanticFigureRequestSchema = z.object({
   figureId: IdentifierSchema,
+  requirementId: IdentifierSchema,
   pageId: IdentifierSchema,
   title: IdentifierSchema,
   intent: FigureIntentSchema,
   dataShape: FigureDataShapeSchema,
   decisionTask: IdentifierSchema,
+  claimIds: z.array(IdentifierSchema).min(1),
   evidenceIds: z.array(IdentifierSchema),
   hasTimeAxis: z.boolean().optional().default(false),
   requestedFamily: RequestedFigureFamilySchema.optional(),
 });
 
-export const SemanticFigureSpecSchema = z.object({
+const SemanticFigureSpecFieldsSchema = z.object({
   figureId: IdentifierSchema,
+  requirementId: IdentifierSchema,
   pageId: IdentifierSchema,
   title: IdentifierSchema,
   intent: FigureIntentSchema,
   dataShape: FigureDataShapeSchema,
   decisionTask: IdentifierSchema,
+  claimIds: z.array(IdentifierSchema).min(1),
   evidenceIds: z.array(IdentifierSchema).min(1),
   family: SemanticFigureFamilySchema,
   renderer: DeterministicFigureRendererSchema,
 });
+
+export const SemanticFigureSpecSchema = SemanticFigureSpecFieldsSchema.superRefine(
+  validateSemanticFigureMapping,
+);
+
+export const RequirementFigureSpecSchema = SemanticFigureSpecFieldsSchema
+  .omit({ requirementId: true, pageId: true })
+  .superRefine(validateSemanticFigureMapping);
 
 export const VisualRightsStatusSchema = z.enum([
   "issuer_provided",
@@ -79,26 +92,40 @@ export const VisualRightsStatusSchema = z.enum([
   "owned",
 ]);
 
+export const VisualReferenceClassificationSchema = z.enum([
+  "issuer_reference",
+  "official_template",
+  "report_reference",
+]);
+
 export const VisualReferencePageSchema = z.object({
   path: z.string().min(1),
   sha256: Sha256Schema,
   language: z.literal("ko"),
   rightsStatus: VisualRightsStatusSchema,
+  classification: VisualReferenceClassificationSchema,
+  sourceId: IdentifierSchema,
+  pageLocator: IdentifierSchema,
   inspectedAt: z.string().datetime({ offset: true }),
-});
+}).strict();
 
 export const VisualSourcePacketSchema = z.object({
   schemaVersion: z.string().min(1),
   referencePages: z.array(VisualReferencePageSchema).min(3),
 }).superRefine((packet, context) => {
-  if (!packet.referencePages.some(({ rightsStatus }) => rightsStatus === "issuer_provided")) {
+  if (!packet.referencePages.some((page) =>
+    page.rightsStatus === "issuer_provided" && page.classification === "issuer_reference")) {
     context.addIssue({
       code: "custom",
       message: "at least one issuer-provided Korean reference page is required",
       path: ["referencePages"],
     });
   }
-  if (packet.referencePages.filter(({ rightsStatus }) => rightsStatus !== "issuer_provided").length < 2) {
+  const publicReferences = packet.referencePages.filter((page) =>
+    (page.classification === "official_template" || page.classification === "report_reference")
+    && (page.rightsStatus === "issuer_provided" || page.rightsStatus === "public_reference"),
+  );
+  if (publicReferences.length < 2) {
     context.addIssue({
       code: "custom",
       message: "two additional Korean public-document reference pages are required",
@@ -122,6 +149,8 @@ export const TopologyStudyRequestSchema = z.object({
   sourcePacketSha256: Sha256Schema,
   referencePages: z.array(VisualReferencePageSchema).min(3),
   researchLogic: LockedResearchLogicSchema,
+  evidenceIds: z.array(IdentifierSchema).min(1),
+  evidenceBindings: z.array(EvidenceBindingSchema).min(1),
   status: z.literal("composition_candidate"),
   directFinalUse: z.literal(false),
   finalEvidenceAllowed: z.literal(false),
@@ -133,10 +162,70 @@ export type FigureDataShape = z.infer<typeof FigureDataShapeSchema>;
 export type FigureIntent = z.infer<typeof FigureIntentSchema>;
 export type LockedResearchLogic = z.infer<typeof LockedResearchLogicSchema>;
 export type RequestedFigureFamily = z.infer<typeof RequestedFigureFamilySchema>;
+export type RequirementFigureSpec = z.infer<typeof RequirementFigureSpecSchema>;
 export type SemanticFigureFamily = z.infer<typeof SemanticFigureFamilySchema>;
 export type SemanticFigureRequest = z.infer<typeof SemanticFigureRequestSchema>;
 export type SemanticFigureSpec = z.infer<typeof SemanticFigureSpecSchema>;
 export type TopologyStudyRequest = z.infer<typeof TopologyStudyRequestSchema>;
 export type VisualReferencePage = z.infer<typeof VisualReferencePageSchema>;
+export type VisualReferenceClassification = z.infer<typeof VisualReferenceClassificationSchema>;
 export type VisualRightsStatus = z.infer<typeof VisualRightsStatusSchema>;
 export type VisualSourcePacket = z.infer<typeof VisualSourcePacketSchema>;
+
+function validateSemanticFigureMapping(
+  figure: {
+    readonly intent: z.infer<typeof FigureIntentSchema>;
+    readonly dataShape: z.infer<typeof FigureDataShapeSchema>;
+    readonly family: z.infer<typeof SemanticFigureFamilySchema>;
+    readonly renderer: z.infer<typeof DeterministicFigureRendererSchema>;
+  },
+  context: z.RefinementCtx,
+): void {
+  const expectedIntentFamily = FAMILY_BY_INTENT[figure.intent];
+  const expectedShapeFamily = FAMILY_BY_DATA_SHAPE[figure.dataShape];
+  const expectedRenderer = RENDERER_BY_FAMILY[expectedIntentFamily];
+  if (expectedIntentFamily !== expectedShapeFamily || figure.family !== expectedIntentFamily) {
+    context.addIssue({
+      code: "custom",
+      message: "semantic figure intent, data shape, and family must agree",
+      path: ["family"],
+    });
+  }
+  if (figure.renderer !== expectedRenderer) {
+    context.addIssue({
+      code: "custom",
+      message: "semantic figure family and deterministic renderer must agree",
+      path: ["renderer"],
+    });
+  }
+}
+
+const FAMILY_BY_INTENT: Readonly<Record<z.infer<typeof FigureIntentSchema>, z.infer<typeof SemanticFigureFamilySchema>>> = {
+  schedule: "gantt",
+  responsibility: "raci",
+  matrix: "matrix",
+  comparison: "comparison_chart",
+  evidence_chain: "evidence_chain",
+  research_framework: "framework",
+  flow: "flow",
+};
+
+const FAMILY_BY_DATA_SHAPE: Readonly<Record<z.infer<typeof FigureDataShapeSchema>, z.infer<typeof SemanticFigureFamilySchema>>> = {
+  time_axis: "gantt",
+  responsibility_matrix: "raci",
+  two_by_two: "matrix",
+  comparison_series: "comparison_chart",
+  evidence_links: "evidence_chain",
+  research_framework: "framework",
+  process_flow: "flow",
+};
+
+const RENDERER_BY_FAMILY: Readonly<Record<z.infer<typeof SemanticFigureFamilySchema>, z.infer<typeof DeterministicFigureRendererSchema>>> = {
+  gantt: "svg-gantt",
+  raci: "word-native-raci-table",
+  matrix: "svg-2x2-matrix",
+  comparison_chart: "svg-comparison-chart",
+  evidence_chain: "svg-evidence-chain",
+  framework: "svg-academic-framework",
+  flow: "svg-flow",
+};

@@ -77,6 +77,7 @@ describe("semantic figure planner", () => {
       })),
       visualSourcePacket: source.packet,
       researchLogic: source.researchLogic,
+      evidenceLedger: source.evidenceLedger,
       directFinalUse: false,
     })).resolves.toMatchObject({
       status: "composition_candidate",
@@ -84,6 +85,12 @@ describe("semantic figure planner", () => {
       finalEvidenceAllowed: false,
       sourcePacketSha256: packet.packetSha256,
       renderer: "svg-academic-framework",
+      evidenceIds: ["EV-001"],
+      evidenceBindings: [expect.objectContaining({
+        evidenceId: "EV-001",
+        targetRequirementId: "REQ-001",
+        targetPageId: "page-01",
+      })],
     });
   });
 
@@ -114,6 +121,7 @@ describe("semantic figure planner", () => {
       figure,
       visualSourcePacket: source.packet,
       researchLogic: source.researchLogic,
+      evidenceLedger: source.evidenceLedger,
       directFinalUse: true,
     })).rejects.toMatchObject({ code: "KPP_DESIGN_TOPOLOGY_FINAL_USE" });
 
@@ -121,8 +129,40 @@ describe("semantic figure planner", () => {
       figure: { ...figure, evidenceIds: [] },
       visualSourcePacket: source.packet,
       researchLogic: source.researchLogic,
+      evidenceLedger: source.evidenceLedger,
       directFinalUse: false,
     })).rejects.toMatchObject({ code: "KPP_INPUT_FIGURE_INVALID" });
+
+    await expect(createTopologyStudyRequest({
+      figure: {
+        ...figure,
+        intent: "schedule",
+        dataShape: "time_axis",
+      },
+      visualSourcePacket: source.packet,
+      researchLogic: source.researchLogic,
+      evidenceLedger: source.evidenceLedger,
+      directFinalUse: false,
+    })).rejects.toMatchObject({ code: "KPP_INPUT_FIGURE_INVALID" });
+
+    await expect(createTopologyStudyRequest({
+      figure,
+      visualSourcePacket: source.packet,
+      researchLogic: source.researchLogic,
+      evidenceLedger: {
+        ...source.evidenceLedger,
+        bindings: [],
+      },
+      directFinalUse: false,
+    })).rejects.toMatchObject({ code: "KPP_EVIDENCE_FIGURE_UNBOUND" });
+
+    await expect(createTopologyStudyRequest({
+      figure: { ...figure, evidenceIds: ["EV-404"] },
+      visualSourcePacket: source.packet,
+      researchLogic: source.researchLogic,
+      evidenceLedger: source.evidenceLedger,
+      directFinalUse: false,
+    })).rejects.toMatchObject({ code: "KPP_EVIDENCE_FIGURE_UNBOUND" });
 
     await expect(validateVisualSourcePacket({
       ...source.packet,
@@ -131,6 +171,26 @@ describe("semantic figure planner", () => {
         sha256: "0".repeat(64),
       }, source.packet.referencePages[1]!, source.packet.referencePages[2]!],
     })).rejects.toMatchObject({ code: "KPP_INPUT_VISUAL_SOURCE_UNVERIFIED" });
+
+    const renamedTextPath = join(source.root, "not-an-image.png");
+    await writeFile(renamedTextPath, "not a PNG file");
+    await expect(validateVisualSourcePacket({
+      ...source.packet,
+      referencePages: [{
+        ...source.packet.referencePages[0]!,
+        path: renamedTextPath,
+        sha256: await sha256File(renamedTextPath),
+      }, source.packet.referencePages[1]!, source.packet.referencePages[2]!],
+    })).rejects.toMatchObject({ code: "KPP_INPUT_VISUAL_SOURCE_UNVERIFIED" });
+
+    await expect(validateVisualSourcePacket({
+      ...source.packet,
+      referencePages: [
+        source.packet.referencePages[0]!,
+        { ...source.packet.referencePages[1]!, rightsStatus: "owned" },
+        { ...source.packet.referencePages[2]!, rightsStatus: "licensed" },
+      ],
+    })).rejects.toMatchObject({ code: "KPP_INPUT_VISUAL_SOURCE_INVALID" });
   });
 });
 
@@ -146,12 +206,14 @@ function expectPlanError(action: () => unknown, code: string): void {
 function baseRequest(overrides: Record<string, unknown> = {}) {
   return {
     figureId: "fig-01",
+    requirementId: "REQ-001",
     pageId: "page-01",
     title: "연구 수행 구조",
     intent: "flow",
     dataShape: "process_flow",
     decisionTask: "평가자가 수행 방법을 검토한다.",
-    evidenceIds: ["EV-01"],
+    evidenceIds: ["EV-001"],
+    claimIds: ["CLAIM-001"],
     ...overrides,
   };
 }
@@ -163,17 +225,20 @@ async function createVisualSourceFixture(temporaryDirectories: string[]) {
   const secondPage = join(root, "public-report-page-02.png");
   const thirdPage = join(root, "public-report-page-03.png");
   const researchLogicPath = join(root, "research-logic.yaml");
+  const evidencePath = join(root, "research-evidence.txt");
   await Promise.all([
-    writeFile(firstPage, "issuer reference page"),
-    writeFile(secondPage, "public report page"),
-    writeFile(thirdPage, "second public report page"),
+    writeFile(firstPage, minimalPng()),
+    writeFile(secondPage, minimalPng()),
+    writeFile(thirdPage, minimalPng()),
     writeFile(researchLogicPath, "status: locked\nlogic: evidence-to-decision\n"),
+    writeFile(evidencePath, "confirmed research evidence\n"),
   ]);
-  const [firstSha, secondSha, thirdSha, logicSha] = await Promise.all([
+  const [firstSha, secondSha, thirdSha, logicSha, evidenceSha] = await Promise.all([
     sha256File(firstPage),
     sha256File(secondPage),
     sha256File(thirdPage),
     sha256File(researchLogicPath),
+    sha256File(evidencePath),
   ]);
   const packet = {
     schemaVersion: "1.0.0",
@@ -183,6 +248,9 @@ async function createVisualSourceFixture(temporaryDirectories: string[]) {
         sha256: firstSha,
         language: "ko",
         rightsStatus: "issuer_provided",
+        classification: "issuer_reference",
+        sourceId: "KEITI-RFP-2026",
+        pageLocator: "page:1",
         inspectedAt: "2026-08-17T00:00:00.000Z",
       },
       {
@@ -190,6 +258,9 @@ async function createVisualSourceFixture(temporaryDirectories: string[]) {
         sha256: secondSha,
         language: "ko",
         rightsStatus: "public_reference",
+        classification: "report_reference",
+        sourceId: "REPORT-2025-A",
+        pageLocator: "page:12",
         inspectedAt: "2026-08-17T00:00:00.000Z",
       },
       {
@@ -197,6 +268,9 @@ async function createVisualSourceFixture(temporaryDirectories: string[]) {
         sha256: thirdSha,
         language: "ko",
         rightsStatus: "public_reference",
+        classification: "official_template",
+        sourceId: "TEMPLATE-2025-B",
+        pageLocator: "page:3",
         inspectedAt: "2026-08-17T00:00:00.000Z",
       },
     ],
@@ -207,5 +281,30 @@ async function createVisualSourceFixture(temporaryDirectories: string[]) {
     path: researchLogicPath,
     sha256: logicSha,
   } as const;
-  return { packet, researchLogic };
+  const evidenceLedger = {
+    schemaVersion: "1.0.0",
+    claims: [{
+      claimId: "CLAIM-001",
+      status: "verified",
+      evidenceIds: ["EV-001"],
+    }],
+    bindings: [{
+      evidenceId: "EV-001",
+      sourcePath: evidencePath,
+      sourceSha256: evidenceSha,
+      scope: "연구 프레임워크의 근거",
+      claimIds: ["CLAIM-001"],
+      targetRequirementId: "REQ-001",
+      targetPageId: "page-01",
+      targetPageRole: "research_framework",
+    }],
+  } as const;
+  return { root, packet, researchLogic, evidenceLedger };
+}
+
+function minimalPng(): Buffer {
+  return Buffer.from(
+    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVQIHWP4z8DwHwAFgAI/ScLkYQAAAABJRU5ErkJggg==",
+    "base64",
+  );
 }
