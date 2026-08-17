@@ -10,6 +10,7 @@
     }
   },
   "dependencies": {
-    "@kpp/schemas": "0.1.0"
+    "@kpp/schemas": "0.1.0",
+    "yaml": "2.9.0"
   }
 }
