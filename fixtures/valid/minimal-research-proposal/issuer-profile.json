@@ -1,0 +1,11 @@
+{
+  "schemaVersion": "1.0.0",
+  "issuerName": "합성 공공연구기관",
+  "issuerPack": "synthetic-research-service-v1",
+  "rules": [
+    {
+      "ruleId": "RULE-PAGE-LIMIT",
+      "label": "본문 50쪽 이내"
+    }
+  ]
+}

@@ -1,0 +1,38 @@
+{
+  "schemaVersion": "1.0.0",
+  "profileId": "synthetic-korean-public-research-v1",
+  "status": "locked",
+  "documentRole": "research_service_proposal",
+  "typography": {
+    "bodyFontRole": "Noto Serif CJK KR",
+    "headingFontRole": "Noto Sans CJK KR",
+    "bodyPoint": 9.3,
+    "lineSpacing": 1.52,
+    "alignment": "justified"
+  },
+  "figurePolicy": {
+    "gantt": {
+      "renderer": "svg-gantt",
+      "requiredStructure": [
+        "time_axis",
+        "work_package_rows",
+        "duration_bars",
+        "milestones"
+      ]
+    },
+    "raci": {
+      "renderer": "word-native-raci-table",
+      "requiredColumns": [
+        "role",
+        "responsible",
+        "accountable",
+        "consulted",
+        "informed"
+      ]
+    }
+  },
+  "imageGeneration": {
+    "directFinalUse": false,
+    "evidenceBearingFiguresAllowed": false
+  }
+}

@@ -1,0 +1,13 @@
+{
+  "schemaVersion": "1.0.0",
+  "purpose": "비핵심 입력 보류 항목의 승인 전 처리 기록",
+  "entries": [
+    {
+      "claimId": "CLAIM-OPTIONAL",
+      "status": "pending_blank",
+      "critical": false,
+      "disposition": "removed_before_content_approval",
+      "reason": "제출 필수 항목이 아니며 최종 작성 응답에는 자리표시자를 남기지 않는다."
+    }
+  ]
+}

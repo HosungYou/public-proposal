@@ -1,0 +1,29 @@
+{
+  "schemaVersion": "1.0.0",
+  "blocks": [
+    {
+      "pageId": "PAGE-001",
+      "claimIds": [
+        "CLAIM-METHOD"
+      ],
+      "evidenceIds": [
+        "EVID-METHOD"
+      ],
+      "status": "provisional",
+      "text": "본 연구는 공식 확인자료의 50쪽 이내 기준을 적용하여 검증 가능한 수행 절차를 마련한다.",
+      "evaluatorAnswer": "평가자는 기준을 뒷받침하는 근거와 수행 절차를 함께 확인할 수 있다.",
+      "pendingBlankFieldIds": []
+    },
+    {
+      "pageId": "PAGE-002",
+      "claimIds": [
+        "CLAIM-OPTIONAL"
+      ],
+      "evidenceIds": [],
+      "status": "provisional",
+      "text": "향후 확인이 필요한 선택 입력항목은 최종 제출 범위에서 제외한다.",
+      "evaluatorAnswer": "평가자는 제출 필수 항목과 선택 입력항목의 구분을 확인할 수 있다.",
+      "pendingBlankFieldIds": []
+    }
+  ]
+}

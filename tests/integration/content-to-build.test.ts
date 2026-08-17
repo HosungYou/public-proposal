@@ -1,0 +1,197 @@
+import { spawn } from "node:child_process";
+import { cp, mkdtemp, readFile, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join, resolve } from "node:path";
+import { afterEach, beforeAll, describe, expect, it } from "vitest";
+
+let core: typeof import("@kpp/core");
+let audits: typeof import("@kpp/audits");
+
+interface ContentFixtureResult {
+  readonly state: string;
+  readonly blockers: readonly unknown[];
+  readonly root: string;
+  readonly pagePlan: {
+    readonly pages: readonly {
+      readonly figureSpecs: readonly { readonly family: string; readonly renderer: string }[];
+    }[];
+  };
+  readonly evidenceLedger: {
+    readonly claims: readonly { readonly claimId: string; readonly status: string }[];
+  };
+  readonly designProfile: {
+    readonly figurePolicy: {
+      readonly gantt: { readonly requiredStructure: readonly string[] };
+      readonly raci: { readonly renderer: string };
+    };
+    readonly imageGeneration: {
+      readonly directFinalUse: boolean;
+      readonly evidenceBearingFiguresAllowed: boolean;
+    };
+  };
+  readonly pendingBlankRegister: {
+    readonly entries: readonly {
+      readonly claimId: string;
+      readonly status: string;
+      readonly disposition: string;
+    }[];
+  };
+  readonly finalResponse: {
+    readonly blocks: readonly {
+      readonly pendingBlankFieldIds: readonly string[];
+      readonly text: string;
+    }[];
+  };
+}
+
+describe("content-to-build integration fixture", () => {
+  const temporaryDirectories: string[] = [];
+
+  beforeAll(async () => {
+    expect(await runProcess("npm", ["run", "build"])).toMatchObject({ code: 0, stderr: "" });
+    core = await import("@kpp/core");
+    audits = await import("@kpp/audits");
+  });
+
+  afterEach(async () => {
+    await Promise.all(temporaryDirectories.splice(0).map((directory) =>
+      rm(directory, { force: true, recursive: true }),
+    ));
+  });
+
+  it("advances a sourced research proposal to CONTENT_APPROVED", async () => {
+    const result = await runContentFixture("fixtures/valid/minimal-research-proposal", temporaryDirectories);
+
+    expect(result.state).toBe("CONTENT_APPROVED");
+    expect(result.blockers).toEqual([]);
+    expect(result.evidenceLedger.claims).toEqual(expect.arrayContaining([
+      expect.objectContaining({ claimId: "CLAIM-METHOD", status: "bounded" }),
+      expect.objectContaining({ claimId: "CLAIM-OPTIONAL", status: "pending_blank" }),
+    ]));
+    expect(result.pendingBlankRegister.entries).toEqual([
+      expect.objectContaining({
+        claimId: "CLAIM-OPTIONAL",
+        status: "pending_blank",
+        disposition: "removed_before_content_approval",
+      }),
+    ]);
+    expect(result.finalResponse.blocks).toEqual(expect.arrayContaining([
+      expect.objectContaining({ pendingBlankFieldIds: [] }),
+    ]));
+    expect(result.finalResponse.blocks.flatMap(({ text }) => text)).not.toContain("{{");
+
+    const figures = result.pagePlan.pages.flatMap(({ figureSpecs }) => figureSpecs);
+    expect(figures).toEqual(expect.arrayContaining([
+      expect.objectContaining({ family: "gantt", renderer: "svg-gantt" }),
+      expect.objectContaining({ family: "raci", renderer: "word-native-raci-table" }),
+    ]));
+    expect(result.designProfile.figurePolicy.gantt.requiredStructure).toEqual([
+      "time_axis",
+      "work_package_rows",
+      "duration_bars",
+      "milestones",
+    ]);
+    expect(result.designProfile.figurePolicy.raci.renderer).toBe("word-native-raci-table");
+    expect(result.designProfile.imageGeneration).toEqual({
+      directFinalUse: false,
+      evidenceBearingFiguresAllowed: false,
+    });
+
+    for (const receiptName of [
+      "source-lock.json",
+      "requirements-lock.json",
+      "evidence-lock.json",
+      "design-lock.json",
+      "content-approval.json",
+    ]) {
+      expect((await core.verifyReceipt(join(result.root, "receipts", receiptName))).valid).toBe(true);
+    }
+  });
+});
+
+async function runContentFixture(
+  fixtureInput: string,
+  temporaryDirectories: string[],
+): Promise<ContentFixtureResult> {
+  const fixtureSource = resolve(fixtureInput);
+  const temporaryDirectory = await mkdtemp(join(tmpdir(), "kpp-content-to-build-"));
+  temporaryDirectories.push(temporaryDirectory);
+  const fixture = join(temporaryDirectory, "fixture");
+  const root = join(temporaryDirectory, "proposal-project");
+  await cp(fixtureSource, fixture, { recursive: true, force: false });
+
+  const rfpPath = join(fixture, "issuer-rfp.txt");
+  const requirementsPath = join(fixture, "confirmed-requirements.json");
+  const issuerProfilePath = join(fixture, "issuer-profile.json");
+  const terminologyPath = join(fixture, "terminology.json");
+  const finalResponsePath = join(fixture, "content", "authoring-response-final.json");
+  const designProfilePath = join(fixture, "figures", "design-profile.json");
+  const pendingBlankRegisterPath = join(fixture, "content", "pending-blank-register.json");
+
+  expect(await runCli(["init", root, "--project-id", "synthetic-research-proposal", "--json"])).toMatchObject({ code: 0, stderr: "" });
+  expect(await runCli(["ingest", root, rfpPath, "--json"])).toMatchObject({ code: 0, stderr: "" });
+  expect(await runCli(["plan", root, "--requirements", requirementsPath, "--json"])).toMatchObject({ code: 0, stderr: "" });
+
+  const issuerProfile = JSON.parse(await readFile(issuerProfilePath, "utf8")) as unknown;
+  const terminology = JSON.parse(await readFile(terminologyPath, "utf8")) as unknown;
+  await core.exportAuthoring(root, {
+    issuerProfile: { path: issuerProfilePath, value: issuerProfile },
+    terminology: { path: terminologyPath, value: terminology },
+  });
+  const finalResponse = JSON.parse(await readFile(finalResponsePath, "utf8")) as unknown;
+  await core.importAuthoring(root, finalResponse);
+
+  const installedDesignProfilePath = join(root, "figures", "design-profile.json");
+  await cp(designProfilePath, installedDesignProfilePath, { force: false });
+  const pagePlanPath = join(root, "content", "page-plan.json");
+  await core.writeReceipt({
+    stage: "DESIGN_LOCKED",
+    files: [installedDesignProfilePath, pagePlanPath],
+    inputReceiptHashes: [await core.sha256File(join(root, "receipts", "evidence-lock.json"))],
+    output: join(root, "receipts", "design-lock.json"),
+  });
+  await core.advanceProject(root, "DESIGN_LOCKED");
+
+  const approval = await audits.approveContent(root, {
+    approvedBy: "synthetic-proposal-owner",
+    approvedAt: "2026-08-17T12:00:00.000Z",
+  });
+
+  return {
+    state: approval.state,
+    blockers: approval.findings.blockers,
+    root,
+    pagePlan: JSON.parse(await readFile(pagePlanPath, "utf8")) as ContentFixtureResult["pagePlan"],
+    evidenceLedger: JSON.parse(await readFile(join(root, "evidence", "evidence-ledger.json"), "utf8")) as ContentFixtureResult["evidenceLedger"],
+    designProfile: JSON.parse(await readFile(installedDesignProfilePath, "utf8")) as ContentFixtureResult["designProfile"],
+    pendingBlankRegister: JSON.parse(await readFile(pendingBlankRegisterPath, "utf8")) as ContentFixtureResult["pendingBlankRegister"],
+    finalResponse: finalResponse as ContentFixtureResult["finalResponse"],
+  };
+}
+
+interface CommandResult {
+  readonly code: number;
+  readonly stdout: string;
+  readonly stderr: string;
+}
+
+async function runCli(args: readonly string[]): Promise<CommandResult> {
+  return runProcess(process.execPath, ["--import", "tsx", "apps/kpp-cli/src/main.ts", ...args]);
+}
+
+async function runProcess(command: string, args: readonly string[]): Promise<CommandResult> {
+  return new Promise((resolve) => {
+    const child = spawn(command, args, {
+      cwd: process.cwd(),
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    let stdout = "";
+    let stderr = "";
+    child.stdout.setEncoding("utf8");
+    child.stderr.setEncoding("utf8");
+    child.stdout.on("data", (chunk: string) => { stdout += chunk; });
+    child.stderr.on("data", (chunk: string) => { stderr += chunk; });
+    child.on("error", (error: Error) => resolve({ code: 1, stdout, stderr: error.message }));
+    child.on("close", (code) => resolve({ code: code ?? 1, stdout, stderr }));
+  });
+}
