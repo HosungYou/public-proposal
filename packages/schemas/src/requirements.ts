@@ -23,6 +23,7 @@ export const RequirementSchema = z.object({
   surfaceTemplateId: IdentifierSchema,
   claims: z.array(RequirementClaimSchema),
   figureSpecs: z.array(FigureSpecSchema),
+  sourceCandidateIds: z.array(IdentifierSchema).min(1).optional(),
 });
 
 const RequirementsRecordSchema = z.object({

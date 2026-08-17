@@ -3,6 +3,8 @@ import { mkdir, open, readFile, rename, rm, stat } from "node:fs/promises";
 import { basename, dirname, join, resolve } from "node:path";
 import {
   ConfirmedRequirementsSchema,
+  type ConfirmedRequirements,
+  type RequirementBinding,
   RequirementDecisionFileSchema,
   RfpCandidatesFileSchema,
   type RequirementDecision,
@@ -47,6 +49,9 @@ interface ComplianceMatrixRow {
   readonly sourceAuthority: RequirementDecision["sourceAuthority"];
   readonly decision: RequirementDecision["decision"];
   readonly decisionStatus: "confirmed" | "superseded" | "rejected" | "conflict" | "no_rule";
+  readonly targetRequirementIds: readonly string[];
+  readonly targetPageIds: readonly string[];
+  readonly targetPageRoles: readonly string[];
   readonly decidedBy: string;
   readonly decidedAt: string;
   readonly rationale: string;
@@ -95,10 +100,22 @@ export async function lockRequirements(
     schemaVersion: decisions.schemaVersion,
     confirmationStatus: "confirmed",
     confirmedBy: decisions.confirmedBy,
-    requirements: decisions.requirements.requirements,
+    requirements: decisions.requirements.requirements.map(({ sourceCandidateIds: _ignored, ...requirement }) => requirement),
     evidenceBindings: decisions.requirements.evidenceBindings,
   });
-  const complianceMatrix = buildComplianceMatrix(candidates.candidates, decisionsByCandidateId, conflicts);
+  const bindingsByCandidateId = validateRequirementBindings(
+    decisions.requirementBindings,
+    decisionsByCandidateId,
+    requirements,
+  );
+  const requirementsWithCandidateIds = applyCandidateBindings(requirements, bindingsByCandidateId);
+  const complianceMatrix = buildComplianceMatrix(
+    candidates.candidates,
+    decisionsByCandidateId,
+    conflicts,
+    bindingsByCandidateId,
+    requirementsWithCandidateIds,
+  );
 
   const requirementsPath = join(root, "requirements", "requirements.json");
   const conflictsPath = join(root, "requirements", "conflicts.json");
@@ -106,7 +123,7 @@ export async function lockRequirements(
   const decisionLedgerPath = join(root, "requirements", "decision-ledger.json");
   const receiptPath = join(root, "receipts", "requirements-lock.json");
 
-  await writeJsonAtomically(requirementsPath, requirements);
+  await writeJsonAtomically(requirementsPath, requirementsWithCandidateIds);
   await writeJsonAtomically(conflictsPath, {
     schemaVersion: SCHEMA_VERSION,
     conflicts,
@@ -407,14 +424,109 @@ function resolveConflicts(
   return conflicts.sort((left, right) => left.constraintKey.localeCompare(right.constraintKey));
 }
 
+function validateRequirementBindings(
+  bindings: readonly RequirementBinding[],
+  decisionsByCandidateId: ReadonlyMap<string, RequirementDecision>,
+  requirements: ConfirmedRequirements,
+): ReadonlyMap<string, readonly string[]> {
+  const requirementIds = new Set(requirements.requirements.map(({ requirementId }) => requirementId));
+  const targetRequirementIdsByCandidateId = new Map<string, readonly string[]>();
+  for (const binding of bindings) {
+    if (targetRequirementIdsByCandidateId.has(binding.candidateId)) {
+      throw new KppError(
+        "KPP_INPUT_REQUIREMENT_MAPPING_DUPLICATE",
+        "하나의 후보에는 하나의 요구사항 연결만 선언할 수 있습니다.",
+        { rule: "binding_candidate_duplicate", actual: binding.candidateId },
+      );
+    }
+    const duplicatedTargetIds = binding.targetRequirementIds
+      .filter((requirementId, index, ids) => ids.indexOf(requirementId) !== index);
+    if (duplicatedTargetIds.length > 0) {
+      throw new KppError(
+        "KPP_INPUT_REQUIREMENT_MAPPING_DUPLICATE",
+        "하나의 후보 연결에 같은 요구사항을 중복할 수 없습니다.",
+        { rule: "binding_requirement_duplicate", actual: [...new Set(duplicatedTargetIds)] },
+      );
+    }
+    const decision = decisionsByCandidateId.get(binding.candidateId);
+    if (decision === undefined) {
+      throw new KppError(
+        "KPP_INPUT_REQUIREMENT_MAPPING_UNKNOWN",
+        "요구사항 연결이 존재하지 않는 후보를 가리킵니다.",
+        { rule: "binding_candidate_unknown", actual: binding.candidateId },
+      );
+    }
+    if (decision.decision !== "confirm") {
+      throw new KppError(
+        "KPP_INPUT_REQUIREMENT_MAPPING_INVALID",
+        "확정되지 않은 후보에는 요구사항 연결을 만들 수 없습니다.",
+        { rule: "binding_candidate_not_confirmed", actual: binding.candidateId },
+      );
+    }
+    const unknownRequirementIds = binding.targetRequirementIds
+      .filter((requirementId) => !requirementIds.has(requirementId));
+    if (unknownRequirementIds.length > 0) {
+      throw new KppError(
+        "KPP_INPUT_REQUIREMENT_MAPPING_UNKNOWN",
+        "요구사항 연결 대상이 잠금 입력에 없습니다.",
+        {
+          rule: "binding_requirement_unknown",
+          actual: unknownRequirementIds,
+          expected: [...requirementIds],
+        },
+      );
+    }
+    targetRequirementIdsByCandidateId.set(binding.candidateId, binding.targetRequirementIds);
+  }
+
+  const missingConfirmedCandidateIds = [...decisionsByCandidateId.values()]
+    .filter(({ decision }) => decision === "confirm")
+    .map(({ candidateId }) => candidateId)
+    .filter((candidateId) => !targetRequirementIdsByCandidateId.has(candidateId));
+  if (missingConfirmedCandidateIds.length > 0) {
+    throw new KppError(
+      "KPP_INPUT_REQUIREMENT_MAPPING_MISSING",
+      "확정된 제출조건은 하나 이상의 실제 요구사항과 페이지 역할에 연결되어야 합니다.",
+      { rule: "confirmed_candidate_mapping_missing", actual: missingConfirmedCandidateIds },
+    );
+  }
+  return targetRequirementIdsByCandidateId;
+}
+
+function applyCandidateBindings(
+  requirements: ConfirmedRequirements,
+  bindingsByCandidateId: ReadonlyMap<string, readonly string[]>,
+): ConfirmedRequirements {
+  return {
+    ...requirements,
+    requirements: requirements.requirements.map((requirement) => {
+      const sourceCandidateIds = [...bindingsByCandidateId]
+        .filter(([, targetRequirementIds]) => targetRequirementIds.includes(requirement.requirementId))
+        .map(([candidateId]) => candidateId);
+      return sourceCandidateIds.length === 0
+        ? requirement
+        : { ...requirement, sourceCandidateIds };
+    }),
+  };
+}
+
 function buildComplianceMatrix(
   candidates: readonly RfpCandidate[],
   decisionsByCandidateId: ReadonlyMap<string, RequirementDecision>,
   conflicts: readonly ConflictRecord[],
+  bindingsByCandidateId: ReadonlyMap<string, readonly string[]>,
+  requirements: ConfirmedRequirements,
 ): readonly ComplianceMatrixRow[] {
   const selectedByConstraintKey = new Map(
     conflicts.map((conflict) => [conflict.constraintKey, conflict.selectedCandidateId]),
   );
+  const pageByRequirementId = new Map(requirements.requirements.map((requirement, index) => [
+    requirement.requirementId,
+    {
+      pageId: `PAGE-${String(index + 1).padStart(3, "0")}`,
+      pageRole: requirement.pageRole,
+    },
+  ]));
   return candidates.map((candidate) => {
     const decision = decisionsByCandidateId.get(candidate.candidateId)!;
     const selectedCandidateId = selectedByConstraintKey.get(decision.constraintKey);
@@ -425,6 +537,8 @@ function buildComplianceMatrix(
       : decision.decision === "reject"
         ? "rejected"
         : decision.decision;
+    const targetRequirementIds = bindingsByCandidateId.get(candidate.candidateId) ?? [];
+    const targets = targetRequirementIds.map((requirementId) => pageByRequirementId.get(requirementId)!);
     return {
       candidateId: candidate.candidateId,
       category: candidate.category,
@@ -434,6 +548,9 @@ function buildComplianceMatrix(
       sourceAuthority: decision.sourceAuthority,
       decision: decision.decision,
       decisionStatus,
+      targetRequirementIds,
+      targetPageIds: targets.map(({ pageId }) => pageId),
+      targetPageRoles: targets.map(({ pageRole }) => pageRole),
       decidedBy: decision.decidedBy,
       decidedAt: decision.decidedAt,
       rationale: decision.rationale,

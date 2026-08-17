@@ -73,7 +73,10 @@ describe("requirement confirmation and conflict ledger", () => {
     expect(requirements).toMatchObject({
       confirmationStatus: "confirmed",
       confirmedBy: "proposal-owner",
-      requirements: [expect.objectContaining({ requirementId: "REQ-001" })],
+      requirements: [expect.objectContaining({
+        requirementId: "REQ-001",
+        sourceCandidateIds: ["CAND-ISSUER", "CAND-COHORT"],
+      })],
     });
 
     const matrix = JSON.parse(await readFile(
@@ -87,12 +90,16 @@ describe("requirement confirmation and conflict ledger", () => {
         sourceLocator: "page:17",
         sourceAuthority: "issuer",
         decidedBy: "proposal-owner",
+        targetRequirementIds: ["REQ-001"],
+        targetPageIds: ["PAGE-001"],
       }),
       expect.objectContaining({
         candidateId: "CAND-COHORT",
         decision: "confirm",
         sourceAuthority: "cohort",
         decisionStatus: "superseded",
+        targetRequirementIds: ["REQ-001"],
+        targetPageIds: ["PAGE-001"],
       }),
     ]));
 
@@ -113,6 +120,101 @@ describe("requirement confirmation and conflict ledger", () => {
       .resolves.toContain('"decidedAt"');
     await expect(readFile(join(fixture.root, "receipts", "requirements-lock.json"), "utf8"))
       .resolves.toContain('"stage": "REQUIREMENTS_LOCKED"');
+  });
+
+  it("blocks a confirmed submission constraint that has no downstream requirement binding", async () => {
+    const fixture = await createFixture(temporaryDirectories);
+    await initializeAndIngest(fixture);
+    const { requirementBindings: _ignored, ...missingMapping } = fixture.issuerPrecedenceDecisions;
+
+    await expect(lockRequirements(fixture.root, {
+      candidates: fixture.candidates,
+      decisions: missingMapping,
+    })).rejects.toMatchObject({
+      code: "KPP_INPUT_REQUIREMENT_MAPPING_MISSING",
+    });
+  });
+
+  it("blocks a confirmed submission constraint mapped to an unknown requirement", async () => {
+    const fixture = await createFixture(temporaryDirectories);
+    await initializeAndIngest(fixture);
+    const unknownMapping = {
+      ...fixture.issuerPrecedenceDecisions,
+      requirementBindings: fixture.issuerPrecedenceDecisions.requirementBindings.map((binding) => ({
+        ...binding,
+        targetRequirementIds: ["REQ-UNKNOWN"],
+      })),
+    };
+
+    await expect(lockRequirements(fixture.root, {
+      candidates: fixture.candidates,
+      decisions: unknownMapping,
+    })).rejects.toMatchObject({
+      code: "KPP_INPUT_REQUIREMENT_MAPPING_UNKNOWN",
+    });
+  });
+
+  it("blocks duplicate candidate requirement bindings with a stable mapping error", async () => {
+    const fixture = await createFixture(temporaryDirectories);
+    await initializeAndIngest(fixture);
+    const duplicateBinding = {
+      ...fixture.issuerPrecedenceDecisions,
+      requirementBindings: [
+        ...fixture.issuerPrecedenceDecisions.requirementBindings,
+        fixture.issuerPrecedenceDecisions.requirementBindings[0]!,
+      ],
+    };
+
+    await expect(lockRequirements(fixture.root, {
+      candidates: fixture.candidates,
+      decisions: duplicateBinding,
+    })).rejects.toMatchObject({
+      code: "KPP_INPUT_REQUIREMENT_MAPPING_DUPLICATE",
+    });
+  });
+
+  it("locks an explicit no-rule decision without manufacturing a requirement mapping", async () => {
+    const fixture = await createFixture(temporaryDirectories);
+    await initializeAndIngest(fixture);
+
+    await expect(lockRequirements(fixture.root, {
+      candidates: fixture.candidates,
+      decisions: fixture.noRuleDecisions,
+    })).resolves.toMatchObject({ state: "REQUIREMENTS_LOCKED" });
+    const matrix = JSON.parse(await readFile(
+      join(fixture.root, "requirements", "compliance-matrix.json"),
+      "utf8",
+    )) as { rows: Array<Record<string, unknown>> };
+    expect(matrix.rows).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        candidateId: "CAND-ISSUER",
+        decision: "no_rule",
+        decisionStatus: "no_rule",
+        targetRequirementIds: [],
+        targetPageIds: [],
+      }),
+    ]));
+  });
+
+  it("locks a human-resolved issuer conflict only when its selected candidate is mapped", async () => {
+    const fixture = await createFixture(temporaryDirectories);
+    await initializeAndIngest(fixture);
+
+    await expect(lockRequirements(fixture.root, {
+      candidates: fixture.candidates,
+      decisions: fixture.humanResolvedConflictDecisions,
+    })).resolves.toMatchObject({ state: "REQUIREMENTS_LOCKED" });
+    const conflicts = JSON.parse(await readFile(
+      join(fixture.root, "requirements", "conflicts.json"),
+      "utf8",
+    )) as { conflicts: Array<Record<string, unknown>> };
+    expect(conflicts.conflicts).toEqual([
+      expect.objectContaining({
+        status: "resolved",
+        resolution: "human_decision",
+        selectedCandidateId: "CAND-ISSUER",
+      }),
+    ]);
   });
 
   it("hands a locked requirements artifact to planning without relocking or replacing it", async () => {
@@ -136,6 +238,15 @@ describe("requirement confirmation and conflict ledger", () => {
       ok: true,
       data: { state: "EVIDENCE_LOCKED" },
     });
+    const pagePlan = JSON.parse(await readFile(
+      join(fixture.root, "content", "page-plan.json"),
+      "utf8",
+    )) as { pages: Array<Record<string, unknown>> };
+    expect(pagePlan.pages).toContainEqual(expect.objectContaining({
+      pageId: "PAGE-001",
+      requirementId: "REQ-001",
+      sourceCandidateIds: ["CAND-ISSUER", "CAND-COHORT"],
+    }));
   });
 
   it("canonicalizes relative candidate source paths before binding them into the receipt", async () => {
@@ -293,6 +404,10 @@ async function createFixture(temporaryDirectories: string[]) {
     decidedAt: "2026-08-17T03:00:00.000Z",
     rationale: "제출 규칙 확인",
   });
+  const requirementBinding = (candidateId: string) => ({
+    candidateId,
+    targetRequirementIds: ["REQ-001"],
+  });
   return {
     fixtureDirectory,
     root,
@@ -308,6 +423,10 @@ async function createFixture(temporaryDirectories: string[]) {
         decision(candidates.candidates[1]!, "issuer"),
         { ...decision(candidates.candidates[2]!, "cohort"), decision: "reject" as const },
       ],
+      requirementBindings: [
+        requirementBinding("CAND-ISSUER"),
+        requirementBinding("CAND-ISSUER-CONFLICT"),
+      ],
       resolutions: [],
     },
     issuerPrecedenceDecisions: {
@@ -319,7 +438,44 @@ async function createFixture(temporaryDirectories: string[]) {
         { ...decision(candidates.candidates[1]!, "issuer"), decision: "reject" as const },
         decision(candidates.candidates[2]!, "cohort"),
       ],
+      requirementBindings: [
+        requirementBinding("CAND-ISSUER"),
+        requirementBinding("CAND-COHORT"),
+      ],
       resolutions: [],
+    },
+    noRuleDecisions: {
+      schemaVersion: "1.0.0",
+      confirmedBy: "proposal-owner",
+      requirements,
+      decisions: [
+        { ...decision(candidates.candidates[0]!, "issuer"), decision: "no_rule" as const },
+        { ...decision(candidates.candidates[1]!, "issuer"), decision: "reject" as const },
+        { ...decision(candidates.candidates[2]!, "cohort"), decision: "reject" as const },
+      ],
+      requirementBindings: [],
+      resolutions: [],
+    },
+    humanResolvedConflictDecisions: {
+      schemaVersion: "1.0.0",
+      confirmedBy: "proposal-owner",
+      requirements,
+      decisions: [
+        decision(candidates.candidates[0]!, "issuer"),
+        decision(candidates.candidates[1]!, "issuer"),
+        { ...decision(candidates.candidates[2]!, "cohort"), decision: "reject" as const },
+      ],
+      requirementBindings: [
+        requirementBinding("CAND-ISSUER"),
+        requirementBinding("CAND-ISSUER-CONFLICT"),
+      ],
+      resolutions: [{
+        constraintKey: "body-page-limit",
+        selectedCandidateId: "CAND-ISSUER",
+        resolvedBy: "proposal-owner",
+        resolvedAt: "2026-08-17T04:00:00.000Z",
+        rationale: "발주처 기준선으로 50쪽을 확정",
+      }],
     },
   };
 }

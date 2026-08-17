@@ -40,11 +40,17 @@ export const RequirementDecisionRequirementsSchema = z.object({
   evidenceBindings: z.array(EvidenceBindingSchema),
 });
 
+export const RequirementBindingSchema = z.object({
+  candidateId: IdentifierSchema,
+  targetRequirementIds: z.array(IdentifierSchema).min(1),
+});
+
 export const RequirementDecisionFileSchema = z.object({
   schemaVersion: z.string().min(1),
   confirmedBy: IdentifierSchema,
   requirements: RequirementDecisionRequirementsSchema,
   decisions: z.array(RequirementDecisionSchema),
+  requirementBindings: z.array(RequirementBindingSchema).default([]),
   resolutions: z.array(RequirementConflictResolutionSchema),
 }).superRefine((record, context) => {
   addDuplicateIssues(record.decisions.map(({ candidateId }) => candidateId), "candidateId", "decisions", context);
@@ -68,6 +74,7 @@ function addDuplicateIssues(
 }
 
 export type RequirementDecision = z.infer<typeof RequirementDecisionSchema>;
+export type RequirementBinding = z.infer<typeof RequirementBindingSchema>;
 export type RequirementDecisionFile = z.infer<typeof RequirementDecisionFileSchema>;
 export type RequirementDecisionOutcome = z.infer<typeof RequirementDecisionOutcomeSchema>;
 export type RequirementConflictResolution = z.infer<typeof RequirementConflictResolutionSchema>;

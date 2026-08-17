@@ -70,6 +70,9 @@ export async function planCommand(
       surfaceTemplateId: requirement.surfaceTemplateId,
       claimIds: requirement.claims.map(({ claimId }) => claimId),
       figureSpecs: requirement.figureSpecs,
+      ...(requirement.sourceCandidateIds === undefined
+        ? {}
+        : { sourceCandidateIds: requirement.sourceCandidateIds }),
     })),
   });
   const ledger = EvidenceLedgerSchema.parse({

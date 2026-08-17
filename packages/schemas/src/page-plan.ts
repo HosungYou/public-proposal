@@ -10,6 +10,7 @@ export const PagePlanItemSchema = z.object({
   surfaceTemplateId: IdentifierSchema,
   claimIds: z.array(IdentifierSchema),
   figureSpecs: z.array(FigureSpecSchema),
+  sourceCandidateIds: z.array(IdentifierSchema).min(1).optional(),
 });
 
 export const PagePlanSchema = z.object({

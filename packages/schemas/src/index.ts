@@ -37,12 +37,14 @@ export {
 } from "./requirements.js";
 export {
   RequirementConflictResolutionSchema,
+  RequirementBindingSchema,
   RequirementDecisionFileSchema,
   RequirementDecisionOutcomeSchema,
   RequirementDecisionRequirementsSchema,
   RequirementDecisionSchema,
   RequirementSourceAuthoritySchema,
   type RequirementConflictResolution,
+  type RequirementBinding,
   type RequirementDecision,
   type RequirementDecisionFile,
   type RequirementDecisionOutcome,
