@@ -1,0 +1,62 @@
+{
+  "schema_version": "kpp-surface-tokens-1.0",
+  "authority": "R08_approved_project_profile",
+  "status": "approved_project_profile",
+  "proposal_evidence": false,
+  "precedence": ["issuer_rule", "approved_project_profile", "surface_tokens", "tool_default"],
+  "page": {
+    "size_mm": [210, 297], "orientation": "portrait",
+    "content_inset_mm": {"top": 14, "right": 18, "bottom": 14, "left": 18},
+    "header_height_mm": 9, "footer_baseline_mm": 7, "grid_mm": 4,
+    "ordinary_page_occupancy_pct": {"review_below": 60, "target_min": 65, "target_max": 82, "review_above": 88}
+  },
+  "typography": {
+    "heading": {"family": "Noto Sans CJK KR", "weights": [400, 700]},
+    "body": {"family": "Noto Serif CJK KR", "weights": [400, 600], "size_pt": 9.3},
+    "title": {"size_pt": 20.5, "line_height": 1.12, "tracking_em": -0.045, "weight": 700},
+    "section": {"size_pt": 12.0, "line_height": 1.22, "tracking_em": -0.025, "weight": 700},
+    "subsection": {"size_pt": 9.2, "line_height": 1.25, "tracking_em": -0.015, "weight": 700},
+    "table": {"family": "Noto Sans CJK KR", "size_pt": 7.9, "line_height": 1.32},
+    "caption": {"family": "Noto Sans CJK KR", "size_pt": 8.0, "line_height": 1.2, "weight": 700},
+    "source": {"family": "Noto Sans CJK KR", "size_pt": 7.2, "line_height": 1.35},
+    "minimum_final_label_pt": 8.0,
+    "fallbacks": {"heading": ["Noto Sans KR", "맑은 고딕"], "body": ["Noto Serif KR", "본명조", "바탕"]}
+  },
+  "paragraphs": {
+    "body": {"alignment": "justify", "line_height": 1.52, "tracking_em": -0.004, "space_after_mm": 1.13, "first_line_indent_mm": 0, "keep_korean_words": true, "widow_orphan_control": true},
+    "thesis": {"size_pt": 9.4, "line_height": 1.42, "space_before_mm": 2.0, "space_after_mm": 1.8, "weight": 600},
+    "section": {"space_before_mm": 3.2, "space_after_mm": 2.5, "keep_with_next": true},
+    "subsection": {"space_before_mm": 2.5, "space_after_mm": 1.8, "keep_with_next": true}
+  },
+  "palette": {
+    "paper": "#FCFCFA", "ink": "#1D232B", "navy": "#082F63", "navy_secondary": "#234D7B",
+    "muted": "#626D79", "hairline": "#C9CFD6", "line_dark": "#7D8894", "surface": "#F4F6F8",
+    "surface_strong": "#E8EEF5", "warning": "#B96B13", "blocked": "#7B3434"
+  },
+  "strokes_pt": {"title_rule": 2.0, "box_outer": 0.8, "table_outer": 0.8, "table_major": 0.65, "table_inner": 0.38, "connector_primary": 1.1, "connector_secondary": 0.55},
+  "boxes": {"corner_radius_mm": 0, "padding_mm": {"x": 3.0, "y": 2.5}, "minimum_height_mm": 15, "shadow": "none", "gradient": "prohibited_by_default", "fill_rule": "white_or_neutral_surface", "label_band_width_mm": 26},
+  "tables": {
+    "layout": "fixed", "body_pt": 7.9, "line_height": 1.32,
+    "cell_padding_mm": {"horizontal": 2.0, "vertical": 2.0}, "compact_cell_padding_mm": {"horizontal": 1.6, "vertical": 1.4},
+    "header_fill_token": "palette.surface_strong", "header_alignment": "center", "prose_alignment": "left", "numeric_alignment": "right_or_center",
+    "repeat_header": true, "allow_zebra_striping": false, "allow_fixed_row_height": false, "status_requires_text": true
+  },
+  "charts": {
+    "value_axis_zero_baseline": true, "minimum_label_pt": 8.0, "direct_label_preferred": true, "legend_max_items": 5, "gridline_pt": 0.38,
+    "series_primary_token": "palette.navy", "series_secondary_token": "palette.hairline", "color_only_encoding": false,
+    "required_fields": ["figure_no", "question_title", "unit", "basis_date", "source", "interpretation_boundary"], "deterministic_outputs": ["svg", "png_300dpi"]
+  },
+  "figures": {"connector_style": "orthogonal_or_straight", "arrowhead_mm": 1.6, "node_corner_radius_mm": 0, "minimum_node_label_pt": 8.0, "required_semantics": ["direction", "owner_or_state", "evidence_or_acceptance", "reading_order"], "decorative_icons": false},
+  "page_roles": [
+    {"id": "chapter_opener", "dominant_surface": "argument_flow", "required": ["direct_answer", "linked_evaluation", "judgment_band"]},
+    {"id": "analysis_evidence", "dominant_surface": "chart_plus_interpretation_table", "required": ["unit", "basis_date", "source", "interpretation_boundary"]},
+    {"id": "literature_baseline", "dominant_surface": "synthesis_table_plus_evidence_funnel", "required": ["selection_rule", "transfer_boundary"]},
+    {"id": "research_method", "dominant_surface": "work_package_flow_plus_method_table", "required": ["inputs", "method", "deliverable", "acceptance"]},
+    {"id": "candidate_decision", "dominant_surface": "candidate_frame_plus_gate", "required": ["candidate", "evidence_state", "human_decision"]},
+    {"id": "roadmap_management", "dominant_surface": "gantt_plus_raci_plus_risk", "required": ["milestones", "owners", "review_gate"]},
+    {"id": "evaluation_crosswalk", "dominant_surface": "score_to_answer_crosswalk", "required": ["criterion", "score", "answer", "page", "claim_id", "proof_id", "status"]},
+    {"id": "evidence_ledger", "dominant_surface": "claim_proof_deliverable_ledger", "required": ["claim_id", "proof_id", "deliverable", "acceptance", "owner", "status"]}
+  ],
+  "profiles": {"editorial_research_proposal": "default_for_ordinary_pages_when_issuer_silent", "official_annex": "preserve_issuer_form_exactly", "blind_evaluation": "remove_identity_and_logos_from_qualitative_body"},
+  "export": {"docx": "rebuild_text_and_tables_as_word_native", "pdf": "searchable_fonts_embedded_no_unintended_rasterization", "figma": "consume_via_figma-variable-map.json_without_write_back"}
+}

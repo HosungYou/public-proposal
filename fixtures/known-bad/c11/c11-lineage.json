@@ -1,0 +1,8 @@
+{
+  "schemaVersion": "1",
+  "fixtureId": "C11-REJECTED-SANITIZED",
+  "classification": "project_only",
+  "promotionStatus": "rejected",
+  "submissionAllowed": false,
+  "failureBoundary": ["stale_surface_lineage", "generic_box_schedule", "invalid_docx_geometry"]
+}

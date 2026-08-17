@@ -1,0 +1,15 @@
+{
+  "figureId": "FIG-R08-GANTT",
+  "title": "검증 일정",
+  "caption": "그림 1. 검증 일정과 마일스톤",
+  "evidenceIds": ["EV-R08-METHOD"],
+  "claimIds": ["CL-R08-METHOD"],
+  "inputKind": "semantic",
+  "family": "gantt",
+  "data": {
+    "kind": "time_axis",
+    "periods": ["D1", "D50", "D100"],
+    "workPackages": [{"id": "WP1", "label": "검증", "owner": "책임자", "start": 0, "end": 1, "evidenceIds": ["EV-R08-METHOD"]}],
+    "milestones": [{"id": "M1", "label": "검토", "period": 1, "owner": "책임자", "evidenceIds": ["EV-R08-METHOD"], "acceptance": "승인"}]
+  }
+}
