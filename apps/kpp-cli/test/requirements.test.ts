@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { join, relative } from "node:path";
 import { afterEach, beforeAll, describe, expect, it } from "vitest";
 
-let lockRequirements: typeof import("@kpp/core").lockRequirements;
+let lockRequirements: typeof import("@longtable/kpp-core").lockRequirements;
 
 interface CliEnvelope {
   readonly ok: boolean;
@@ -25,7 +25,7 @@ describe("requirement confirmation and conflict ledger", () => {
 
   beforeAll(async () => {
     expect(await runProcess("npm", ["run", "build"])).toMatchObject({ code: 0, stderr: "" });
-    ({ lockRequirements } = await import("@kpp/core"));
+    ({ lockRequirements } = await import("@longtable/kpp-core"));
   });
 
   afterEach(async () => {

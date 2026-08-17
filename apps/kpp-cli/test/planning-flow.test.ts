@@ -3,7 +3,7 @@ import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
 import { afterEach, beforeAll, describe, expect, it } from "vitest";
-import { advanceProject, sha256File, writeReceipt } from "@kpp/core";
+import { advanceProject, sha256File, writeReceipt } from "@longtable/kpp-core";
 
 interface CliEnvelope {
   readonly ok: boolean;

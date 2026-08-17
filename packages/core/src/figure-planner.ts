@@ -4,7 +4,7 @@ import {
   type DeterministicFigureRenderer,
   type SemanticFigureFamily,
   type SemanticFigureSpec,
-} from "@kpp/schemas";
+} from "@longtable/kpp-schemas";
 import { KppError } from "./errors.js";
 
 const FAMILY_BY_INTENT: Readonly<Record<string, SemanticFigureFamily>> = {

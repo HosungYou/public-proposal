@@ -6,9 +6,9 @@ import {
   sha256File,
   verifyImportedAuthoringResponse,
   writeReceipt,
-} from "@kpp/core";
-import { type AuthoringRequest, type AuthoringResponse } from "@kpp/schemas";
-import { KppError } from "@kpp/core";
+} from "@longtable/kpp-core";
+import { type AuthoringRequest, type AuthoringResponse } from "@longtable/kpp-schemas";
+import { KppError } from "@longtable/kpp-core";
 import { lintAuthoringResponse, type KoreanProseLintResult } from "./korean-prose.js";
 
 const SCHEMA_VERSION = "1.0.0";

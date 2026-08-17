@@ -8,7 +8,7 @@ import {
   verifyProjectState,
   verifyReceipt,
   writeReceipt,
-} from "@kpp/core";
+} from "@longtable/kpp-core";
 import { success, type CliEnvelope } from "../output.js";
 
 export interface ApproveProjectOptions {

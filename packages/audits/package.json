@@ -1,8 +1,15 @@
 {
-  "name": "@kpp/audits",
+  "name": "@longtable/kpp-audits",
   "version": "0.1.0",
-  "private": true,
+  "description": "Technical audit gates for Korean public proposal artifacts.",
   "type": "module",
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "publishConfig": {
+    "access": "public"
+  },
   "exports": {
     ".": {
       "types": "./dist/index.d.ts",
@@ -14,8 +21,8 @@
     "typecheck": "tsc --noEmit -p tsconfig.json"
   },
   "dependencies": {
-    "@kpp/core": "0.1.0",
-    "@kpp/renderers": "0.1.0",
-    "@kpp/schemas": "0.1.0"
+    "@longtable/kpp-core": "0.1.0",
+    "@longtable/kpp-renderers": "0.1.0",
+    "@longtable/kpp-schemas": "0.1.0"
   }
 }

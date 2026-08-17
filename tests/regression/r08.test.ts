@@ -1,5 +1,5 @@
 import { afterEach, expect, test } from "vitest";
-import { auditProposal } from "@kpp/audits";
+import { auditProposal } from "@longtable/kpp-audits";
 import { cleanupFixtures, materializeR08Reference, mutateTableMargin, projectPath, readEmbeddedDocxMedia, rebindDocxHash, rebindFigureOutputHash, runGeometry } from "./fixture-harness.js";
 import { readFile, stat, writeFile } from "node:fs/promises";
 import { join } from "node:path";

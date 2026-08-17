@@ -5,9 +5,9 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeAll, describe, expect, it } from "vitest";
 
-let exportAuthoring: (typeof import("@kpp/core"))["exportAuthoring"];
-let importAuthoring: (typeof import("@kpp/core"))["importAuthoring"];
-let readProject: (typeof import("@kpp/core"))["readProject"];
+let exportAuthoring: (typeof import("@longtable/kpp-core"))["exportAuthoring"];
+let importAuthoring: (typeof import("@longtable/kpp-core"))["importAuthoring"];
+let readProject: (typeof import("@longtable/kpp-core"))["readProject"];
 
 interface CommandResult {
   readonly code: number;
@@ -20,7 +20,7 @@ describe("model-independent authoring bundle exchange", () => {
 
   beforeAll(async () => {
     expect(await runProcess("npm", ["run", "build"])).toMatchObject({ code: 0, stderr: "" });
-    ({ exportAuthoring, importAuthoring, readProject } = await import("@kpp/core"));
+    ({ exportAuthoring, importAuthoring, readProject } = await import("@longtable/kpp-core"));
   });
 
   afterEach(async () => {

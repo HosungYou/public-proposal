@@ -1,8 +1,15 @@
 {
-  "name": "@enaction-labs/kpp-cli",
+  "name": "@longtable/kpp-cli",
   "version": "0.1.0",
-  "private": true,
+  "description": "KPP CLI for evidence-bound Korean public proposal generation.",
   "type": "module",
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "publishConfig": {
+    "access": "public"
+  },
   "bin": {
     "kpp": "dist/main.js"
   },
@@ -11,9 +18,9 @@
     "typecheck": "tsc --noEmit -p tsconfig.json"
   },
   "dependencies": {
-    "@kpp/audits": "0.1.0",
-    "@kpp/core": "0.1.0",
-    "@kpp/schemas": "0.1.0",
+    "@longtable/kpp-audits": "0.1.0",
+    "@longtable/kpp-core": "0.1.0",
+    "@longtable/kpp-schemas": "0.1.0",
     "commander": "15.0.0",
     "yaml": "2.9.0"
   }

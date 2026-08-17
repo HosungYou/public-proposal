@@ -29,7 +29,7 @@ execFileSync("npm", ["install", "--ignore-scripts", "--no-audit", "--no-fund", j
 });
 execFileSync(
   process.execPath,
-  ["--input-type=module", "--eval", "const m=await import('@kpp/renderers'); if(typeof m.renderFigureArtifact!=='function') process.exit(2);"],
+  ["--input-type=module", "--eval", "const m=await import('@longtable/kpp-renderers'); if(typeof m.renderFigureArtifact!=='function') process.exit(2);"],
   { cwd: tempRoot, encoding: "utf8" },
 );
 process.stdout.write(`${JSON.stringify({ importable: true, cleanBoundary: true, files: filePaths })}\n`);

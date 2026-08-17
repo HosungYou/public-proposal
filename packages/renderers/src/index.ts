@@ -15,7 +15,7 @@ export const FIGURE_RENDERER_VERSION = "0.1.0" as const;
 export interface FigureManifest {
   readonly schemaVersion: "1";
   readonly renderer: {
-    readonly name: "@kpp/renderers";
+    readonly name: "@longtable/kpp-renderers";
     readonly version: typeof FIGURE_RENDERER_VERSION;
   };
   readonly figure: {
@@ -76,7 +76,7 @@ export async function renderFigureArtifact(figure: FigureSpec): Promise<FigureAr
   const svg = await renderFigure(figure);
   const manifest: FigureManifest = {
     schemaVersion: "1",
-    renderer: { name: "@kpp/renderers", version: FIGURE_RENDERER_VERSION },
+    renderer: { name: "@longtable/kpp-renderers", version: FIGURE_RENDERER_VERSION },
     figure: { id: figure.figureId, family: figure.family },
     tokenProfile: { id: R08_TOKEN_PROFILE, sha256: R08_TOKEN_PROFILE_SHA256 },
     input: {
@@ -102,7 +102,7 @@ export function verifyFigureArtifact(artifact: FigureArtifact, figure: FigureSpe
     || artifact.manifest.input.kind !== "semantic") {
     throw new Error("Figure manifest lineage schema mismatch");
   }
-  if (artifact.manifest.renderer.name !== "@kpp/renderers"
+  if (artifact.manifest.renderer.name !== "@longtable/kpp-renderers"
     || artifact.manifest.renderer.version !== FIGURE_RENDERER_VERSION) {
     throw new Error("Figure manifest renderer identity does not match this renderer");
   }

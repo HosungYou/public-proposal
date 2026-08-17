@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { afterEach, beforeAll, describe, expect, it } from "vitest";
 
-let core: typeof import("@kpp/core");
+let core: typeof import("@longtable/kpp-core");
 
 interface ContentFixtureResult {
   readonly state: string;
@@ -85,7 +85,7 @@ describe("content-to-build integration fixture", () => {
 
   beforeAll(async () => {
     expect(await runProcess("npm", ["run", "build"])).toMatchObject({ code: 0, stderr: "" });
-    core = await import("@kpp/core");
+    core = await import("@longtable/kpp-core");
   });
 
   afterEach(async () => {

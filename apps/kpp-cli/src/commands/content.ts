@@ -1,5 +1,5 @@
 import { resolve } from "node:path";
-import { approveContent } from "@kpp/audits";
+import { approveContent } from "@longtable/kpp-audits";
 import { success, type CliEnvelope } from "../output.js";
 
 export async function contentApproveCommand(

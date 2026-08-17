@@ -1,5 +1,5 @@
 import { resolve } from "node:path";
-import { readProject } from "@kpp/core";
+import { readProject } from "@longtable/kpp-core";
 import { success, type CliEnvelope } from "../output.js";
 
 export async function statusCommand(rootInput: string): Promise<CliEnvelope> {

@@ -1,6 +1,6 @@
 import { access } from "node:fs/promises";
 import { basename, resolve } from "node:path";
-import { initializeProject, KppError, projectPath } from "@kpp/core";
+import { initializeProject, KppError, projectPath } from "@longtable/kpp-core";
 import { success, type CliEnvelope } from "../output.js";
 
 export interface InitOptions {

@@ -26,7 +26,7 @@ import {
   verifyReceipt,
   writeReceipt,
   type ExecutableIdentity,
-} from "@kpp/core";
+} from "@longtable/kpp-core";
 import { success, type CliEnvelope } from "../output.js";
 
 const RENDER_SCHEMA_VERSION = "1.0.0";

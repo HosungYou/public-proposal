@@ -7,7 +7,7 @@ import {
   sha256File,
   verifyProjectState,
   writeReceipt,
-} from "@kpp/core";
+} from "@longtable/kpp-core";
 import {
   ConfirmedRequirementsSchema,
   EvidenceLedgerSchema,
@@ -16,7 +16,7 @@ import {
   type ConfirmedRequirements,
   type EvidenceBinding,
   type PagePlan,
-} from "@kpp/schemas";
+} from "@longtable/kpp-schemas";
 import { success, type CliEnvelope } from "../output.js";
 import { readJsonFile, writeJsonAtomically } from "./ingest.js";
 

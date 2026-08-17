@@ -12,16 +12,16 @@
     "skipLibCheck": true,
     "resolveJsonModule": true,
     "paths": {
-      "@kpp/core": [
+      "@longtable/kpp-core": [
         "./packages/core/src/index.ts"
       ],
-      "@kpp/schemas": [
+      "@longtable/kpp-schemas": [
         "./packages/schemas/src/index.ts"
       ],
-      "@kpp/audits": [
+      "@longtable/kpp-audits": [
         "./packages/audits/src/index.ts"
       ],
-      "@kpp/renderers": [
+      "@longtable/kpp-renderers": [
         "./packages/renderers/src/index.ts"
       ]
     },

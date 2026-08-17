@@ -1,5 +1,5 @@
 import { join } from "node:path";
-import { ProjectStateSchema, type ProjectRecord, type ProjectState } from "@kpp/schemas";
+import { ProjectStateSchema, type ProjectRecord, type ProjectState } from "@longtable/kpp-schemas";
 import { KppError } from "./errors.js";
 import { sha256File } from "./hash.js";
 import { persistProjectState, readProject } from "./project-store.js";

@@ -12,7 +12,7 @@ import {
   type SemanticFigureSpec,
   type TopologyStudyRequest,
   type VisualSourcePacket,
-} from "@kpp/schemas";
+} from "@longtable/kpp-schemas";
 import { KppError } from "./errors.js";
 import { planFigure } from "./figure-planner.js";
 import { sha256File } from "./hash.js";

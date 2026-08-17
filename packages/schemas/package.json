@@ -1,8 +1,15 @@
 {
-  "name": "@kpp/schemas",
+  "name": "@longtable/kpp-schemas",
   "version": "0.1.0",
-  "private": true,
+  "description": "Schemas and contracts for the Korean Public Proposal compiler.",
   "type": "module",
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "publishConfig": {
+    "access": "public"
+  },
   "exports": {
     ".": {
       "types": "./dist/index.d.ts",

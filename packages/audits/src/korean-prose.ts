@@ -1,4 +1,4 @@
-import type { ApprovedTerminology, AuthoringResponse } from "@kpp/schemas";
+import type { ApprovedTerminology, AuthoringResponse } from "@longtable/kpp-schemas";
 import { findRepeatedSentences, type RepetitionOccurrence } from "./repetition.js";
 
 export type ContentFindingSeverity = "blocker" | "warning";

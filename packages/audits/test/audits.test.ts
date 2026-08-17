@@ -16,12 +16,12 @@ import {
   initializeProject,
   sha256File,
   writeReceipt,
-} from "@kpp/core";
+} from "@longtable/kpp-core";
 import {
   R08_TOKEN_PROFILE_SHA256,
   renderFigureArtifact,
   type GanttFigureSpec,
-} from "@kpp/renderers";
+} from "@longtable/kpp-renderers";
 
 const roots: string[] = [];
 

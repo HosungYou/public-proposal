@@ -1,5 +1,5 @@
 import { resolve } from "node:path";
-import { lockRequirements } from "@kpp/core";
+import { lockRequirements } from "@longtable/kpp-core";
 import { success, type CliEnvelope } from "../output.js";
 import { readJsonFile } from "./ingest.js";
 

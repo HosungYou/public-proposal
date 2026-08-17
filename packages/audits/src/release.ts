@@ -1,7 +1,7 @@
 import { lstat, realpath } from "node:fs/promises";
 import { join } from "node:path";
-import { PROJECT_STATES, readProject, sha256File, verifyReceipt } from "@kpp/core";
-import type { ProjectState } from "@kpp/schemas";
+import { PROJECT_STATES, readProject, sha256File, verifyReceipt } from "@longtable/kpp-core";
+import type { ProjectState } from "@longtable/kpp-schemas";
 import {
   blocked,
   inspectArtifact,

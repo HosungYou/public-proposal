@@ -1,8 +1,15 @@
 {
-  "name": "@kpp/core",
+  "name": "@longtable/kpp-core",
   "version": "0.1.0",
-  "private": true,
+  "description": "Evidence-bound planning and authoring core for Korean public proposals.",
   "type": "module",
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "publishConfig": {
+    "access": "public"
+  },
   "exports": {
     ".": {
       "types": "./dist/index.d.ts",
@@ -14,7 +21,7 @@
     "typecheck": "tsc --noEmit -p tsconfig.json"
   },
   "dependencies": {
-    "@kpp/schemas": "0.1.0",
+    "@longtable/kpp-schemas": "0.1.0",
     "yaml": "2.9.0"
   }
 }

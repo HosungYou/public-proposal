@@ -3,7 +3,7 @@ import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { RfpCandidateSchema, RfpCandidatesFileSchema } from "@kpp/schemas";
+import { RfpCandidateSchema, RfpCandidatesFileSchema } from "@longtable/kpp-schemas";
 import {
   extractRequirementCandidates,
   extractTextDocument,

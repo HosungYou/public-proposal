@@ -10,7 +10,7 @@ import {
   type RequirementDecision,
   type RequirementDecisionFile,
   type RfpCandidate,
-} from "@kpp/schemas";
+} from "@longtable/kpp-schemas";
 import { KppError } from "./errors.js";
 import { sha256File } from "./hash.js";
 import { advanceProject, verifyProjectState } from "./state-machine.js";

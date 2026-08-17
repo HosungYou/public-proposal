@@ -134,7 +134,7 @@ describe("deterministic proposal figure renderers", () => {
     expect(second).toEqual(first);
     expect(first.manifest).toMatchObject({
       schemaVersion: "1",
-      renderer: { name: "@kpp/renderers", version: FIGURE_RENDERER_VERSION },
+      renderer: { name: "@longtable/kpp-renderers", version: FIGURE_RENDERER_VERSION },
       figure: { id: "FIG-GANTT-001", family: "gantt" },
       tokenProfile: {
         id: "R08-approved-project-profile",

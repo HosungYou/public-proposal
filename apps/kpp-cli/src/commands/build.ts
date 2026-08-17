@@ -9,7 +9,7 @@ import {
   verifyReceipt,
   verifyProjectState,
   writeReceipt,
-} from "@kpp/core";
+} from "@longtable/kpp-core";
 import { success, type CliEnvelope } from "../output.js";
 
 const BUILDER_VERSION = "0.1.0";

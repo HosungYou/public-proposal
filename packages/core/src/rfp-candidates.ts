@@ -6,7 +6,7 @@ import {
   type RfpCandidate,
   type RfpCandidateCategory,
   type RfpCandidatesFile,
-} from "@kpp/schemas";
+} from "@longtable/kpp-schemas";
 import { sha256File } from "./hash.js";
 import {
   extractTextDocument,

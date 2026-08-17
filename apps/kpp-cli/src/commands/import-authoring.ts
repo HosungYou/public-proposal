@@ -1,5 +1,5 @@
 import { resolve } from "node:path";
-import { importAuthoring } from "@kpp/core";
+import { importAuthoring } from "@longtable/kpp-core";
 import { success, type CliEnvelope } from "../output.js";
 import { readJsonFile } from "./ingest.js";
 

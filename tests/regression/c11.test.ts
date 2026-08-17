@@ -1,5 +1,5 @@
 import { afterEach, expect, test } from "vitest";
-import { auditProposal } from "@kpp/audits";
+import { auditProposal } from "@longtable/kpp-audits";
 import { cleanupFixtures, materializeC11KnownBad, projectPath, rebindFigureOutputHash, runGeometry } from "./fixture-harness.js";
 
 afterEach(cleanupFixtures);

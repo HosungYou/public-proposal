@@ -1,6 +1,6 @@
 import { open, readFile, stat } from "node:fs/promises";
 import { basename } from "node:path";
-import { executeFile } from "@kpp/core";
+import { executeFile } from "@longtable/kpp-core";
 import {
   blocked,
   inspectArtifact,

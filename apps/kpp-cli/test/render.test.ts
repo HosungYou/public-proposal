@@ -20,7 +20,7 @@ import {
   readProject,
   sha256File,
   writeReceipt,
-} from "@kpp/core";
+} from "@longtable/kpp-core";
 import { afterEach, describe, expect, it } from "vitest";
 import { renderProject } from "../src/commands/render.js";
 

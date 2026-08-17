@@ -8,8 +8,8 @@ import {
   sha256File,
   verifyProjectState,
   writeReceipt,
-} from "@kpp/core";
-import { auditProposal, type FigureAuditInput, type ProposalAuditReport } from "@kpp/audits";
+} from "@longtable/kpp-core";
+import { auditProposal, type FigureAuditInput, type ProposalAuditReport } from "@longtable/kpp-audits";
 import { success, type CliEnvelope } from "../output.js";
 
 export interface AuditProjectOptions {

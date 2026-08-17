@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import { mkdir, open, readFile, rename, rm, stat } from "node:fs/promises";
 import { basename, dirname, join } from "node:path";
 import { randomUUID } from "node:crypto";
-import { sha256File } from "@kpp/core";
+import { sha256File } from "@longtable/kpp-core";
 
 export type AuditStatus = "PASS" | "BLOCKED";
 

@@ -2,7 +2,7 @@ import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { realpath } from "node:fs/promises";
 import { isDeepStrictEqual } from "node:util";
-import { executeFile } from "@kpp/core";
+import { executeFile } from "@longtable/kpp-core";
 import { inspectArtifact, readJsonObject, blocked, makeSlice, type AuditSlice } from "./source.js";
 
 export interface DocxAuditInput {

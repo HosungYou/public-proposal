@@ -17,7 +17,7 @@ import {
   type EvidenceLedger,
   type IssuerProfile,
   type PagePlan,
-} from "@kpp/schemas";
+} from "@longtable/kpp-schemas";
 import { KppError } from "./errors.js";
 import { sha256File } from "./hash.js";
 import { verifyProjectState } from "./state-machine.js";

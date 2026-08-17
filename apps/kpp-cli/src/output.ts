@@ -1,4 +1,4 @@
-import { KppError } from "@kpp/core";
+import { KppError } from "@longtable/kpp-core";
 
 export interface CliEnvelope {
   readonly ok: boolean;

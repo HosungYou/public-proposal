@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import { mkdir, open, readFile, rename, rm } from "node:fs/promises";
 import { basename, dirname, join } from "node:path";
 import { parse, stringify } from "yaml";
-import { ProjectSchema, type ProjectRecord } from "@kpp/schemas";
+import { ProjectSchema, type ProjectRecord } from "@longtable/kpp-schemas";
 import { KppError } from "./errors.js";
 
 export const PROJECT_FILE_NAME = "kpp.project.yaml";

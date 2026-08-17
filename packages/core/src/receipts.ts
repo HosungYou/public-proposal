@@ -6,7 +6,7 @@ import {
   type ProjectState,
   type Receipt,
   type ReceiptResult,
-} from "@kpp/schemas";
+} from "@longtable/kpp-schemas";
 import { KppError } from "./errors.js";
 import { sha256File } from "./hash.js";
 

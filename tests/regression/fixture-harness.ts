@@ -3,8 +3,8 @@ import { copyFile, cp, mkdir, mkdtemp, readFile, rename, rm, stat, writeFile } f
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
-import { advanceProject, executeFile, initializeProject, sha256File, writeReceipt } from "@kpp/core";
-import { R08_TOKEN_PROFILE_SHA256, renderFigureArtifact, type GanttFigureSpec } from "@kpp/renderers";
+import { advanceProject, executeFile, initializeProject, sha256File, writeReceipt } from "@longtable/kpp-core";
+import { R08_TOKEN_PROFILE_SHA256, renderFigureArtifact, type GanttFigureSpec } from "@longtable/kpp-renderers";
 
 const roots: string[] = [];
 const fixtureRoot = resolve("fixtures");

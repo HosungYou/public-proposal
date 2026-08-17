@@ -11,16 +11,16 @@ const glossary = {
   entries: [{ term: "AX", definition: "업무 전환을 위한 기관 내부 용어" }],
 };
 
-let core: typeof import("@kpp/core");
-let audits: typeof import("@kpp/audits");
+let core: typeof import("@longtable/kpp-core");
+let audits: typeof import("@longtable/kpp-audits");
 
 describe("Korean public-proposal prose lint", () => {
   const temporaryDirectories: string[] = [];
 
   beforeAll(async () => {
     expect(await runProcess("npm", ["run", "build"])).toMatchObject({ code: 0, stderr: "" });
-    core = await import("@kpp/core");
-    audits = await import("@kpp/audits");
+    core = await import("@longtable/kpp-core");
+    audits = await import("@longtable/kpp-audits");
   });
 
   afterEach(async () => {

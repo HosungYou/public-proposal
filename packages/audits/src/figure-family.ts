@@ -2,8 +2,8 @@ import { mkdtemp, mkdir, readFile, rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, extname, join } from "node:path";
 import { pathToFileURL } from "node:url";
-import { executeFile } from "@kpp/core";
-import { verifyFigureArtifact, type FigureManifest, type FigureSpec } from "@kpp/renderers";
+import { executeFile } from "@longtable/kpp-core";
+import { verifyFigureArtifact, type FigureManifest, type FigureSpec } from "@longtable/kpp-renderers";
 import {
   blocked,
   inspectArtifact,

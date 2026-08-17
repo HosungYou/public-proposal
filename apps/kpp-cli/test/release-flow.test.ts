@@ -2,8 +2,8 @@ import { access, chmod, copyFile, mkdir, mkdtemp, readFile, readdir, rm, stat, s
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
-import { advanceProject, executeFile, initializeProject, sha256File, verifyProjectState, writeReceipt } from "@kpp/core";
-import { R08_TOKEN_PROFILE_SHA256, renderFigureArtifact, type GanttFigureSpec } from "@kpp/renderers";
+import { advanceProject, executeFile, initializeProject, sha256File, verifyProjectState, writeReceipt } from "@longtable/kpp-core";
+import { R08_TOKEN_PROFILE_SHA256, renderFigureArtifact, type GanttFigureSpec } from "@longtable/kpp-renderers";
 import { afterEach, describe, expect, it } from "vitest";
 import { buildProject } from "../src/commands/build.js";
 import { auditProject } from "../src/commands/audit.js";
