@@ -15,6 +15,7 @@
   },
   "dependencies": {
     "@kpp/core": "0.1.0",
+    "@kpp/renderers": "0.1.0",
     "@kpp/schemas": "0.1.0"
   }
 }
