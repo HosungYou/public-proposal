@@ -1,3 +1,5 @@
+#!/usr/bin/env node
+
 import { Command } from "commander";
 import { doctorCommand } from "./commands/doctor.js";
 import { initializeCommand } from "./commands/init.js";
