@@ -210,6 +210,20 @@ def test_manifest_binds_template_inputs_pages_and_output_hashes(tmp_path: Path) 
     ]
     assert manifest["figures"] == []
     assert manifest["artifacts"]["docx"]["sha256"] == _sha256(result.docx)
+    assert result.docx == Path(request.output.docx_path)
+    assert result.manifest == Path(request.output.manifest_path)
+    assert result.docx.is_symlink()
+    assert result.manifest.is_symlink()
+    assert result.publication.is_symlink()
+    assert result.publication.resolve(strict=True) == result.generation
+    assert manifest["publication"] == {
+        "pointerPath": str(result.publication),
+        "generationPath": str(result.generation),
+        "docxMember": "document.docx",
+        "manifestMember": "manifest.json",
+        "readerContract": "resolve_pointer_once_then_open_both_members",
+        "compatibilityPathsAuthoritative": False,
+    }
     assert manifest["inputs"]["pagePlanSha256"] == _canonical_sha(
         request.page_plan.model_dump(by_alias=True)
     )
@@ -283,6 +297,98 @@ def test_manifest_publication_failure_rolls_back_docx_and_manifest(
     assert not manifest_path.exists()
     assert list(tmp_path.glob(".*.tmp")) == []
     assert list(tmp_path.glob(".*.backup")) == []
+
+
+def test_publication_boundary_never_exposes_a_partial_artifact_pair(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    request = sample_request(tmp_path)
+    docx_path = Path(request.output.docx_path)
+    manifest_path = Path(request.output.manifest_path)
+    real_replace = os.replace
+    observed_publication: Path | None = None
+
+    class SimulatedInterruption(RuntimeError):
+        pass
+
+    def interrupt_on_partial_pair(
+        source: str | os.PathLike[str],
+        target: str | os.PathLike[str],
+    ) -> None:
+        nonlocal observed_publication
+        real_replace(source, target)
+        publications = list(tmp_path.glob(".kpp-build-*/current"))
+        for publication in publications:
+            if not publication.exists():
+                continue
+            generation = publication.resolve(strict=True)
+            published_docx = generation / "document.docx"
+            published_manifest = generation / "manifest.json"
+            assert published_docx.is_file()
+            assert published_manifest.is_file()
+            manifest = json.loads(published_manifest.read_text(encoding="utf-8"))
+            assert manifest["artifacts"]["docx"]["sha256"] == _sha256(
+                published_docx
+            )
+            observed_publication = publication
+            raise SimulatedInterruption("interrupted immediately after publication")
+
+        visible = (docx_path.exists(), manifest_path.exists())
+        if visible[0] != visible[1]:
+            raise SimulatedInterruption(f"observer saw partial artifact pair: {visible}")
+
+    monkeypatch.setattr(build_module.os, "replace", interrupt_on_partial_pair)
+
+    with pytest.raises(SimulatedInterruption):
+        build_document(request)
+
+    assert observed_publication is not None
+    generation = observed_publication.resolve(strict=True)
+    assert (generation / "document.docx").is_file()
+    assert (generation / "manifest.json").is_file()
+
+
+def test_republication_switches_one_complete_canonical_generation(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    request = sample_request(tmp_path)
+    first = build_document(request)
+    old_generation = first.publication.resolve(strict=True)
+    payload = request.model_dump(by_alias=True)
+    payload["projectId"] = "synthetic-research-proposal-revision"
+    revised_request = BuildRequest.model_validate(payload)
+    real_replace = os.replace
+    observed_generations: list[Path] = []
+
+    class SimulatedInterruption(RuntimeError):
+        pass
+
+    def interrupt_after_pointer_switch(
+        source: str | os.PathLike[str],
+        target: str | os.PathLike[str],
+    ) -> None:
+        real_replace(source, target)
+        generation = first.publication.resolve(strict=True)
+        published_docx = generation / "document.docx"
+        published_manifest = generation / "manifest.json"
+        manifest = json.loads(published_manifest.read_text(encoding="utf-8"))
+        assert manifest["artifacts"]["docx"]["sha256"] == _sha256(published_docx)
+        observed_generations.append(generation)
+        if Path(target) == first.publication and generation != old_generation:
+            raise SimulatedInterruption("interrupted after canonical pointer switch")
+
+    monkeypatch.setattr(build_module.os, "replace", interrupt_after_pointer_switch)
+
+    with pytest.raises(SimulatedInterruption):
+        build_document(revised_request)
+
+    new_generation = first.publication.resolve(strict=True)
+    assert new_generation != old_generation
+    assert set(observed_generations).issubset({old_generation, new_generation})
+    assert (new_generation / "document.docx").is_file()
+    assert (new_generation / "manifest.json").is_file()
 
 
 def test_manifest_directory_probe_leaves_no_partial_docx(tmp_path: Path) -> None:
@@ -464,6 +570,63 @@ def test_rejects_cross_claim_paragraph_evidence_pairing(tmp_path: Path) -> None:
     with pytest.raises(
         ValidationError,
         match="paragraph evidenceIds must support every paragraph claimId",
+    ):
+        BuildRequest.model_validate(payload)
+
+
+def test_rejects_cross_claim_figure_evidence_pairing(tmp_path: Path) -> None:
+    payload = sample_request(tmp_path).model_dump(by_alias=True)
+    payload["pagePlan"]["pages"][0]["claimIds"].append("CLM-02")
+    payload["evidenceLedger"]["claims"].append(
+        {"claimId": "CLM-02", "status": "verified", "evidenceIds": ["EV-02"]}
+    )
+    payload["evidenceLedger"]["bindings"].append(
+        {
+            "evidenceId": "EV-02",
+            "sourcePath": "/locked/other-source.pdf",
+            "sourceSha256": "b" * 64,
+            "scope": "다른 주장에 대한 공식 근거",
+            "claimIds": ["CLM-02"],
+            "targetRequirementId": "REQ-01",
+            "targetPageId": "P-01",
+            "targetPageRole": "research_method",
+        }
+    )
+    payload["figureManifest"]["figures"] = [
+        {
+            "figureId": "FIG-01",
+            "requirementId": "REQ-01",
+            "pageId": "P-01",
+            "claimIds": ["CLM-01"],
+            "renderer": "svg-flow",
+            "path": str(tmp_path / "not-read-during-validation.png"),
+            "sha256": "c" * 64,
+            "format": "png",
+            "caption": "그림 1. 연구 수행 구조",
+            "evidenceIds": ["EV-02"],
+            "widthDxa": 3600,
+        }
+    ]
+    payload["contentBlocks"][0]["figureIds"] = ["FIG-01"]
+    payload["pagePlan"]["pages"][0]["figureSpecs"] = [
+        {
+            "figureId": "FIG-01",
+            "requirementId": "REQ-01",
+            "pageId": "P-01",
+            "title": "연구 수행 구조",
+            "intent": "flow",
+            "dataShape": "process_flow",
+            "decisionTask": "연구 수행 구조를 확인한다.",
+            "claimIds": ["CLM-01"],
+            "evidenceIds": ["EV-02"],
+            "family": "flow",
+            "renderer": "svg-flow",
+        }
+    ]
+
+    with pytest.raises(
+        ValidationError,
+        match="figure evidenceIds must support every figure claimId",
     ):
         BuildRequest.model_validate(payload)
 
