@@ -20,6 +20,9 @@
       ],
       "@kpp/audits": [
         "./packages/audits/src/index.ts"
+      ],
+      "@kpp/renderers": [
+        "./packages/renderers/src/index.ts"
       ]
     },
     "isolatedModules": true,

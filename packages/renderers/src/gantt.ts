@@ -67,6 +67,12 @@ function validateGantt(figure: GanttFigureSpec): void {
   if (figure.data.periods.length === 0 || figure.data.workPackages.length === 0 || figure.data.milestones.length === 0) {
     throw new Error("Gantt data requires periods, work packages, and milestones");
   }
+  if (figure.data.periods.length > MAX_GANTT_PERIODS) {
+    throw new Error(`Gantt period capacity is ${MAX_GANTT_PERIODS} to retain readable axis cells`);
+  }
+  if (figure.data.workPackages.length > MAX_GANTT_WORK_PACKAGES) {
+    throw new Error(`Gantt work package capacity is ${MAX_GANTT_WORK_PACKAGES} for an A4-safe surface`);
+  }
   figure.data.periods.forEach((period) => assertText(period, "period"));
   for (const workPackage of figure.data.workPackages) {
     assertText(workPackage.id, "workPackage.id");
@@ -79,6 +85,7 @@ function validateGantt(figure: GanttFigureSpec): void {
       throw new Error("Gantt work package range must address the declared time axis");
     }
   }
+  const occupiedMilestonePeriods = new Set<number>();
   for (const milestone of figure.data.milestones) {
     assertText(milestone.id, "milestone.id");
     assertText(milestone.label, "milestone.label");
@@ -88,8 +95,15 @@ function validateGantt(figure: GanttFigureSpec): void {
     if (!Number.isInteger(milestone.period) || milestone.period < 0 || milestone.period >= figure.data.periods.length) {
       throw new Error("Gantt milestone must address the declared time axis");
     }
+    if (occupiedMilestonePeriods.has(milestone.period)) {
+      throw new Error("Gantt milestone periods must be unique to prevent label collisions");
+    }
+    occupiedMilestonePeriods.add(milestone.period);
   }
 }
+
+const MAX_GANTT_PERIODS = 10;
+const MAX_GANTT_WORK_PACKAGES = 12;
 
 function format(value: number): string {
   return Number.isInteger(value) ? String(value) : value.toFixed(2).replace(/0+$/, "").replace(/\.$/, "");

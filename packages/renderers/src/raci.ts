@@ -56,6 +56,12 @@ function validateRaci(figure: RaciFigureSpec): void {
   if (figure.data.actors.length === 0 || figure.data.activities.length === 0) {
     throw new Error("RACI data requires actors and activities");
   }
+  if (figure.data.actors.length > MAX_RACI_ACTORS) {
+    throw new Error(`RACI actor capacity is ${MAX_RACI_ACTORS} to retain readable cells`);
+  }
+  if (figure.data.activities.length > MAX_RACI_ACTIVITIES) {
+    throw new Error(`RACI activity capacity is ${MAX_RACI_ACTIVITIES} for an A4-safe surface`);
+  }
   figure.data.actors.forEach((actor) => assertText(actor, "actor"));
   for (const activity of figure.data.activities) {
     assertText(activity.id, "activity.id");
@@ -70,13 +76,18 @@ function validateRaci(figure: RaciFigureSpec): void {
     if (activity.assignments.some((assignment) => !RACI_ASSIGNMENTS.has(assignment))) {
       throw new Error("RACI assignment must be one of R, A, C, I, or -");
     }
-    if (!activity.assignments.includes("R") || !activity.assignments.includes("A")) {
-      throw new Error("Each RACI row must identify Responsible and Accountable assignments");
+    if (!activity.assignments.includes("R")) {
+      throw new Error("Each RACI row must identify at least one Responsible assignment");
+    }
+    if (activity.assignments.filter((assignment) => assignment === "A").length !== 1) {
+      throw new Error("Each RACI row must identify exactly one Accountable assignment");
     }
   }
 }
 
 const RACI_ASSIGNMENTS: ReadonlySet<string> = new Set(["R", "A", "C", "I", "-"]);
+const MAX_RACI_ACTORS = 6;
+const MAX_RACI_ACTIVITIES = 10;
 
 function format(value: number): string {
   return Number.isInteger(value) ? String(value) : value.toFixed(2).replace(/0+$/, "").replace(/\.$/, "");

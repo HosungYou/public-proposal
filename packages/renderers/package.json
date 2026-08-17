@@ -1,0 +1,17 @@
+{
+  "name": "@kpp/renderers",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "render:fixture": "tsx scripts/render-fixture.ts",
+    "typecheck": "tsc --noEmit -p tsconfig.json"
+  }
+}

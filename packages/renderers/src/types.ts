@@ -1,3 +1,5 @@
+import { createHash } from "node:crypto";
+
 export const R08_RENDERER_TOKENS = {
   paper: "#FCFCFA",
   ink: "#1D232B",
@@ -12,6 +14,9 @@ export const R08_RENDERER_TOKENS = {
 } as const;
 
 export const R08_TOKEN_PROFILE = "R08-approved-project-profile" as const;
+export const R08_TOKEN_PROFILE_SHA256 = createHash("sha256")
+  .update(stableCanonicalJson(R08_RENDERER_TOKENS))
+  .digest("hex");
 
 interface BaseFigureSpec {
   readonly figureId: string;
@@ -19,8 +24,8 @@ interface BaseFigureSpec {
   readonly caption: string;
   readonly evidenceIds: readonly string[];
   readonly claimIds: readonly string[];
-  readonly inputKind?: "semantic";
-  readonly tokenProfileHash?: string;
+  readonly inputKind: "semantic";
+  readonly tokenProfileHash: typeof R08_TOKEN_PROFILE_SHA256;
 }
 
 export interface GanttWorkPackage {
@@ -115,7 +120,7 @@ export function joinEvidenceIds(evidenceIds: readonly string[]): string {
 
 export function assertFigureBase(figure: FigureSpec): void {
   const candidate = figure as FigureSpec & { readonly inputKind?: unknown };
-  if (candidate.inputKind !== undefined && candidate.inputKind !== "semantic") {
+  if (candidate.inputKind !== "semantic") {
     throw new Error("Final figure input must be semantic; raster and imagegen inputs are prohibited");
   }
   assertText(candidate.figureId, "figureId");
@@ -123,6 +128,9 @@ export function assertFigureBase(figure: FigureSpec): void {
   assertText(candidate.caption, "caption");
   assertNonEmptyIds(candidate.evidenceIds, "evidenceIds");
   assertNonEmptyIds(candidate.claimIds, "claimIds");
+  if (candidate.tokenProfileHash !== R08_TOKEN_PROFILE_SHA256) {
+    throw new Error("R08 token profile hash is missing or does not match the canonical profile");
+  }
 }
 
 export function assertText(value: unknown, field: string): asserts value is string {
@@ -141,17 +149,35 @@ export function assertNonEmptyIds(value: unknown, field: string): asserts value 
 }
 
 export function svgOpen(figure: FigureSpec, width: number, height: number): string[] {
-  const tokenHash = figure.tokenProfileHash === undefined
-    ? ""
-    : ` data-token-hash="${escapeXml(figure.tokenProfileHash)}"`;
+  const ids = figureScopedIds(figure.figureId);
   return [
-    `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}" role="img" aria-labelledby="figure-title figure-caption" data-kpp-family="${figure.family}" data-token-profile="${R08_TOKEN_PROFILE}"${tokenHash}>`,
-    `  <title id="figure-title">${escapeXml(figure.title)}</title>`,
-    `  <desc id="figure-caption">${escapeXml(figure.caption)}</desc>`,
+    `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}" role="img" aria-labelledby="${ids.title} ${ids.caption}" data-kpp-family="${figure.family}" data-token-profile="${R08_TOKEN_PROFILE}" data-token-hash="${R08_TOKEN_PROFILE_SHA256}">`,
+    `  <title id="${ids.title}">${escapeXml(figure.title)}</title>`,
+    `  <desc id="${ids.caption}">${escapeXml(figure.caption)}</desc>`,
     `  <rect width="${width}" height="${height}" fill="${R08_RENDERER_TOKENS.paper}"/>`,
     `  <style>text{font-family:"Noto Sans CJK KR","Noto Sans KR","맑은 고딕",sans-serif;font-size:${R08_RENDERER_TOKENS.minimumLabelPt}pt;fill:${R08_RENDERER_TOKENS.ink}}.title{font-size:12pt;font-weight:700;fill:${R08_RENDERER_TOKENS.navy}}.meta{font-size:8pt;fill:${R08_RENDERER_TOKENS.muted}}.strong{font-weight:700}</style>`,
     `  <text class="title" x="24" y="30">${escapeXml(figure.title)}</text>`,
   ];
+}
+
+export function figureScopedIds(figureId: string): Readonly<{ title: string; caption: string; arrow: string }> {
+  const scope = createHash("sha256").update(figureId).digest("hex").slice(0, 16);
+  return {
+    title: `kpp-${scope}-title`,
+    caption: `kpp-${scope}-caption`,
+    arrow: `kpp-${scope}-arrow`,
+  };
+}
+
+export function stableCanonicalJson(value: unknown): string {
+  if (value === null || typeof value !== "object") {
+    return JSON.stringify(value);
+  }
+  if (Array.isArray(value)) {
+    return `[${value.map((item) => stableCanonicalJson(item)).join(",")}]`;
+  }
+  const record = value as Readonly<Record<string, unknown>>;
+  return `{${Object.keys(record).sort().map((key) => `${JSON.stringify(key)}:${stableCanonicalJson(record[key])}`).join(",")}}`;
 }
 
 export function svgClose(figure: FigureSpec, height: number): string[] {

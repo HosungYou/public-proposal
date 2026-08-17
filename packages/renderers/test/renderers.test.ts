@@ -1,53 +1,16 @@
 import { createHash } from "node:crypto";
 import { describe, expect, it } from "vitest";
 import {
+  FIGURE_RENDERER_VERSION,
   R08_RENDERER_TOKENS,
+  R08_TOKEN_PROFILE_SHA256,
   renderFigure,
+  renderFigureArtifact,
   renderFigureHash,
+  verifyFigureArtifact,
   type FigureSpec,
 } from "../src/index.js";
-
-const gantt: FigureSpec = {
-  figureId: "FIG-GANTT-001",
-  family: "gantt",
-  title: "연구 수행 일정",
-  caption: "그림 1. 연구 수행 일정과 검토 관문",
-  evidenceIds: ["EV-SCHEDULE-001"],
-  claimIds: ["CL-SCHEDULE-001"],
-  inputKind: "semantic",
-  data: {
-    kind: "time_axis",
-    periods: ["1개월", "2개월", "3개월", "4개월"],
-    workPackages: [
-      {
-        id: "WP1",
-        label: "현황 진단",
-        owner: "연구책임자",
-        start: 0,
-        end: 1,
-        evidenceIds: ["EV-WP1"],
-      },
-      {
-        id: "WP2",
-        label: "실행안 설계",
-        owner: "분석팀",
-        start: 1,
-        end: 3,
-        evidenceIds: ["EV-WP2"],
-      },
-    ],
-    milestones: [
-      {
-        id: "MS1",
-        label: "중간보고 승인",
-        period: 2,
-        owner: "발주기관",
-        evidenceIds: ["EV-MS1"],
-        acceptance: "수용",
-      },
-    ],
-  },
-};
+import { ganttFixture as gantt } from "./fixtures.js";
 
 const raci: FigureSpec = {
   figureId: "FIG-RACI-001",
@@ -57,6 +20,7 @@ const raci: FigureSpec = {
   evidenceIds: ["EV-RACI-001"],
   claimIds: ["CL-RACI-001"],
   inputKind: "semantic",
+  tokenProfileHash: R08_TOKEN_PROFILE_SHA256,
   data: {
     kind: "responsibility_matrix",
     actors: ["발주기관", "연구책임자", "분석팀"],
@@ -82,6 +46,7 @@ const framework: FigureSpec = {
   evidenceIds: ["EV-FRAMEWORK-001"],
   claimIds: ["CL-FRAMEWORK-001"],
   inputKind: "semantic",
+  tokenProfileHash: R08_TOKEN_PROFILE_SHA256,
   data: {
     kind: "research_framework",
     readingOrder: ["input", "method", "output"],
@@ -162,6 +127,48 @@ describe("deterministic proposal figure renderers", () => {
     expect(await renderFigureHash(gantt)).toBe(await renderFigureHash(gantt));
   });
 
+  it("binds ordered semantic input and SVG output into a deterministic figure manifest", async () => {
+    const first = await renderFigureArtifact(gantt);
+    const second = await renderFigureArtifact(gantt);
+
+    expect(second).toEqual(first);
+    expect(first.manifest).toMatchObject({
+      schemaVersion: "1",
+      renderer: { name: "@kpp/renderers", version: FIGURE_RENDERER_VERSION },
+      figure: { id: "FIG-GANTT-001", family: "gantt" },
+      tokenProfile: {
+        id: "R08-approved-project-profile",
+        sha256: R08_TOKEN_PROFILE_SHA256,
+      },
+      input: { kind: "semantic" },
+      output: { format: "svg" },
+    });
+    expect(first.manifest.input.sha256).toMatch(/^[a-f0-9]{64}$/);
+    expect(first.manifest.output.sha256).toBe(createHash("sha256").update(first.svg).digest("hex"));
+    expect(first.manifest).not.toHaveProperty("png");
+    expect(verifyFigureArtifact(first)).toBe(true);
+  });
+
+  it("rejects a missing or forged R08 token profile hash", async () => {
+    const { tokenProfileHash: _missing, ...withoutTokenHash } = gantt;
+    await expect(renderFigure(withoutTokenHash as FigureSpec)).rejects.toThrow(/token.*hash|profile/i);
+    await expect(renderFigure({ ...gantt, tokenProfileHash: "0".repeat(64) })).rejects.toThrow(/token.*hash|profile/i);
+  });
+
+  it("detects a manifest/output hash mismatch", async () => {
+    const artifact = await renderFigureArtifact(gantt);
+    expect(() => verifyFigureArtifact({ ...artifact, svg: `${artifact.svg}\n<!-- tampered -->` })).toThrow(
+      /output.*hash|hash.*mismatch/i,
+    );
+    expect(() => verifyFigureArtifact({
+      ...artifact,
+      manifest: {
+        ...artifact.manifest,
+        tokenProfile: { ...artifact.manifest.tokenProfile, sha256: "0".repeat(64) },
+      },
+    })).toThrow(/token.*hash|hash.*mismatch/i);
+  });
+
   it("rejects empty evidence bindings and mismatched family data", async () => {
     await expect(renderFigure({ ...gantt, evidenceIds: [] })).rejects.toThrow(/evidence/i);
     await expect(renderFigure({ ...gantt, data: framework.data } as unknown as FigureSpec)).rejects.toThrow(
@@ -185,6 +192,95 @@ describe("deterministic proposal figure renderers", () => {
     };
 
     await expect(renderFigure(malformed as unknown as FigureSpec)).rejects.toThrow(/RACI.*assignment/i);
+  });
+
+  it("requires exactly one Accountable and at least one Responsible per RACI row", async () => {
+    const duplicateAccountable = {
+      ...raci,
+      data: {
+        ...raci.data,
+        activities: [{ ...raci.data.activities[0], assignments: ["A", "A", "R"] }],
+      },
+    };
+    const missingResponsible = {
+      ...raci,
+      data: {
+        ...raci.data,
+        activities: [{ ...raci.data.activities[0], assignments: ["A", "C", "I"] }],
+      },
+    };
+
+    await expect(renderFigure(duplicateAccountable as FigureSpec)).rejects.toThrow(/exactly one.*Accountable/i);
+    await expect(renderFigure(missingResponsible as FigureSpec)).rejects.toThrow(/Responsible/i);
+  });
+
+  it("rejects layout inputs that cannot retain readable Gantt or RACI cells", async () => {
+    const overloadedRaci = {
+      ...raci,
+      data: { ...raci.data, actors: ["A", "B", "C", "D", "E", "F", "G"] },
+    };
+    const collidingGantt = {
+      ...gantt,
+      data: {
+        ...gantt.data,
+        milestones: [gantt.data.milestones[0], { ...gantt.data.milestones[0], id: "MS2" }],
+      },
+    };
+
+    await expect(renderFigure(overloadedRaci as FigureSpec)).rejects.toThrow(/actor.*capacity|capacity.*actor/i);
+    await expect(renderFigure(collidingGantt as FigureSpec)).rejects.toThrow(/milestone.*period|period.*milestone/i);
+  });
+
+  it("wraps four framework nodes inside the SVG viewBox and preserves forward reading order", async () => {
+    const fourthNode = {
+      id: "adoption",
+      label: "기관 적용",
+      owner: "기관담당",
+      state: "수용",
+      evidenceIds: ["EV-ADOPTION"],
+      acceptance: "최종 승인",
+    };
+    const wrapped = {
+      ...framework,
+      data: {
+        ...framework.data,
+        readingOrder: [...framework.data.readingOrder, fourthNode.id],
+        nodes: [...framework.data.nodes, fourthNode],
+        edges: [...framework.data.edges, { from: "output", to: "adoption", label: "적용" }],
+      },
+    };
+
+    const svg = await renderFigure(wrapped as FigureSpec);
+    const viewBox = svg.match(/viewBox="0 0 (\d+) (\d+)"/);
+    expect(viewBox).not.toBeNull();
+    const width = Number(viewBox?.[1]);
+    const height = Number(viewBox?.[2]);
+    const nodeRects = [...svg.matchAll(/data-kpp-role="framework-node"[\s\S]*?<rect x="([\d.]+)" y="([\d.]+)" width="(\d+)" height="(\d+)"/g)];
+    expect(nodeRects).toHaveLength(4);
+    for (const match of nodeRects) {
+      const [, x, y, nodeWidth, nodeHeight] = match.map(Number);
+      expect(x).toBeGreaterThanOrEqual(0);
+      expect(y).toBeGreaterThanOrEqual(0);
+      expect(x + nodeWidth).toBeLessThanOrEqual(width);
+      expect(y + nodeHeight).toBeLessThanOrEqual(height);
+    }
+    expect(svg).toContain('data-reading-order="4"');
+    expect(svg).toContain('data-from="output" data-to="adoption"');
+    expect(svg).not.toMatch(/\bx="-/);
+  });
+
+  it("uses figure-scoped SVG IDs and references across multiple figures", async () => {
+    const first = await renderFigure(framework);
+    const second = await renderFigure({ ...framework, figureId: "FIG-FRAMEWORK-002" });
+    const firstIds = [...first.matchAll(/(?:^|\s)id="([^"]+)"/g)].map((match) => match[1]);
+    const secondIds = [...second.matchAll(/(?:^|\s)id="([^"]+)"/g)].map((match) => match[1]);
+
+    expect(firstIds.length).toBeGreaterThanOrEqual(3);
+    expect(new Set([...firstIds, ...secondIds]).size).toBe(firstIds.length + secondIds.length);
+    expect(first).toContain(`aria-labelledby="${firstIds[0]} ${firstIds[1]}"`);
+    expect(second).toContain(`aria-labelledby="${secondIds[0]} ${secondIds[1]}"`);
+    expect(first).toContain(`url(#${firstIds[2]})`);
+    expect(second).toContain(`url(#${secondIds[2]})`);
   });
 
   it("uses the R08 neutral palette, square boxes, and readable label sizes", async () => {
@@ -214,7 +310,7 @@ describe("deterministic proposal figure renderers", () => {
       caption: "근거 > 일정",
     });
 
-    expect(svg).toContain('<title id="figure-title">일정 &lt;검토&gt; &amp; &quot;승인&quot;</title>');
+    expect(svg).toContain('>일정 &lt;검토&gt; &amp; &quot;승인&quot;</title>');
     expect(svg).toContain("근거 &gt; 일정");
     expect(svg).not.toContain("일정 <검토>");
   });
