@@ -48,3 +48,10 @@ export {
   type ImportAuthoringResult,
   type VerifiedAuthoringResponse,
 } from "./authoring-bundle.js";
+export { planFigure } from "./figure-planner.js";
+export {
+  createTopologyStudyRequest,
+  validateVisualSourcePacket,
+  type TopologyStudyInput,
+  type ValidatedVisualSourcePacket,
+} from "./visual-source-gate.js";
