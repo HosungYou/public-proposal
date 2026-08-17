@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
-import { chmod, mkdtemp, mkdir, readFile, writeFile } from "node:fs/promises";
-import { join } from "node:path";
+import { chmod, copyFile, mkdtemp, mkdir, readFile, rename, stat, writeFile } from "node:fs/promises";
+import { dirname, join, resolve } from "node:path";
 import { tmpdir } from "node:os";
 import { afterEach, describe, expect, test } from "vitest";
 import {
@@ -12,6 +12,7 @@ import {
 } from "../src/index.js";
 import {
   advanceProject,
+  executeFile,
   initializeProject,
   sha256File,
   writeReceipt,
@@ -40,6 +41,27 @@ describe("artifact-backed proposal audits", () => {
     expect(result.findings.map((finding) => finding.code)).toContain("KPP_SOURCE_DOCX_LINEAGE");
   });
 
+  test("blocks a forged PASS geometry report over a non-DOCX payload", async () => {
+    const fixture = await docxFixture();
+    await writeFile(fixture.docxPath, "synthetic-docx-bytes", "utf8");
+    const forgedHash = await sha256File(fixture.docxPath);
+    const manifest = JSON.parse(await readFile(fixture.buildManifestPath, "utf8")) as {
+      artifacts: { docx: { sha256: string } };
+    };
+    manifest.artifacts.docx.sha256 = forgedHash;
+    await writeFile(fixture.buildManifestPath, `${JSON.stringify(manifest, null, 2)}\n`, "utf8");
+    const geometry = JSON.parse(await readFile(fixture.geometryReportPath, "utf8")) as {
+      docx: { sha256: string };
+    };
+    geometry.docx.sha256 = forgedHash;
+    await writeFile(fixture.geometryReportPath, `${JSON.stringify(geometry, null, 2)}\n`, "utf8");
+
+    const result = await auditDocxArtifacts(fixture);
+
+    expect(result.status).toBe("BLOCKED");
+    expect(result.findings.map((finding) => finding.code)).toContain("KPP_SOURCE_DOCX_GEOMETRY");
+  });
+
   test("recomputes PDF, page image, and searchable Korean text lineage from real files", async () => {
     const fixture = await renderFixture();
 
@@ -53,8 +75,83 @@ describe("artifact-backed proposal audits", () => {
     expect(blocked.findings.map((finding) => finding.code)).toContain("KPP_DESIGN_SURFACE_LINEAGE");
   });
 
+  test("blocks a corrupt PDF even when its manifest hash and byte count match", async () => {
+    const fixture = await renderFixture();
+    await writeFile(fixture.pdfPath, "%PDF-1.7 corrupt", "utf8");
+    await rebindRenderArtifact(fixture.manifestPath, "pdf", fixture.pdfPath);
+
+    const result = await auditRenderArtifacts(fixture.manifestPath, { trustedPdftotextPath: fixture.extractorPath });
+
+    expect(result.status).toBe("BLOCKED");
+    expect(result.findings.map((finding) => finding.code)).toContain("KPP_RENDER_PDF_INVALID");
+  });
+
+  test("blocks a fake PNG page even when its manifest hash and byte count match", async () => {
+    const fixture = await renderFixture();
+    await writeFile(fixture.pagePath, "png-bytes", "utf8");
+    await rebindRenderArtifact(fixture.manifestPath, "page", fixture.pagePath);
+
+    const result = await auditRenderArtifacts(fixture.manifestPath, { trustedPdftotextPath: fixture.extractorPath });
+
+    expect(result.status).toBe("BLOCKED");
+    expect(result.findings.map((finding) => finding.code)).toContain("KPP_RENDER_PAGE_IMAGES");
+  });
+
+  test("blocks a manifest page count that differs from fixed pdfinfo", async () => {
+    const fixture = await renderFixture();
+    const manifest = JSON.parse(await readFile(fixture.manifestPath, "utf8")) as {
+      output: { pdf: { pages: number }; pages: Array<{ page: number; path: string; sha256: string; bytes: number }> };
+    };
+    const secondPage = join(fixture.pagePath, "..", "page-0002.png");
+    await copyFile(fixture.pagePath, secondPage);
+    manifest.output.pdf.pages = 2;
+    manifest.output.pages.push({
+      page: 2,
+      path: secondPage,
+      sha256: await sha256File(secondPage),
+      bytes: (await stat(secondPage)).size,
+    });
+    await writeFile(fixture.manifestPath, `${JSON.stringify(manifest, null, 2)}\n`, "utf8");
+
+    const result = await auditRenderArtifacts(fixture.manifestPath, {
+      trustedPdftotextPath: fixture.extractorPath,
+      trustedPdfinfoPath: "/opt/homebrew/bin/pdfinfo",
+    });
+
+    expect(result.status).toBe("BLOCKED");
+    expect(result.findings.map((finding) => finding.code)).toContain("KPP_RENDER_PDF_INVALID");
+  });
+
   test("does not execute a pdftotext path supplied only by an untrusted render manifest", async () => {
     const fixture = await renderFixture();
+    const maliciousExtractor = join(dirname(fixture.manifestPath), "manifest-pdftotext");
+    const sentinel = join(dirname(fixture.manifestPath), "extractor-executed");
+    await writeFile(maliciousExtractor, `#!/bin/sh\ntouch '${sentinel}'\nprintf '검색 가능한 한글 본문\\n'\n`, "utf8");
+    await chmod(maliciousExtractor, 0o755);
+    const manifest = JSON.parse(await readFile(fixture.manifestPath, "utf8")) as {
+      executables: { pdftotext: { path: string } };
+      searchableTextProof: { extractor: { path: string } };
+    };
+    manifest.executables.pdftotext.path = maliciousExtractor;
+    manifest.searchableTextProof.extractor.path = maliciousExtractor;
+    await writeFile(fixture.manifestPath, `${JSON.stringify(manifest, null, 2)}\n`, "utf8");
+
+    const result = await auditRenderArtifacts(fixture.manifestPath);
+
+    expect(result.status).toBe("BLOCKED");
+    expect(result.findings.map((finding) => finding.code)).toContain("KPP_RENDER_EXTRACTOR_UNTRUSTED");
+    await expect(readFile(sentinel, "utf8")).rejects.toBeDefined();
+  });
+
+  test("blocks a forged identity for the fixed pdftotext executable", async () => {
+    const fixture = await renderFixture();
+    const manifest = JSON.parse(await readFile(fixture.manifestPath, "utf8")) as {
+      executables: { pdftotext: { version: string } };
+      searchableTextProof: { extractor: { version: string } };
+    };
+    manifest.executables.pdftotext.version = "forged pdftotext version";
+    manifest.searchableTextProof.extractor.version = "forged pdftotext version";
+    await writeFile(fixture.manifestPath, `${JSON.stringify(manifest, null, 2)}\n`, "utf8");
 
     const result = await auditRenderArtifacts(fixture.manifestPath);
 
@@ -116,7 +213,7 @@ describe("artifact-backed proposal audits", () => {
       outputPath,
     });
 
-    expect(first.status).toBe("PASS");
+    expect(first.status, JSON.stringify(first.findings)).toBe("PASS");
     expect(second).toEqual(first);
     expect(await readFile(outputPath, "utf8")).toBe(firstBytes);
     expect(first.artifacts.every((artifact) => /^[a-f0-9]{64}$/u.test(artifact.sha256))).toBe(true);
@@ -158,8 +255,19 @@ async function docxFixture(): Promise<{
   const buildManifestPath = join(root, "manifest.json");
   const geometryReportPath = join(root, "geometry.json");
   const figurePath = join(root, "figure.png");
-  await writeFile(docxPath, "synthetic-docx-bytes", "utf8");
-  await writeFile(figurePath, "figure-bytes", "utf8");
+  const packageRoot = join(root, "ooxml");
+  await mkdir(join(packageRoot, "word", "_rels"), { recursive: true });
+  await mkdir(join(packageRoot, "word", "media"), { recursive: true });
+  await mkdir(join(packageRoot, "_rels"), { recursive: true });
+  await writeFile(join(packageRoot, "[Content_Types].xml"), validContentTypesXml(), "utf8");
+  await writeFile(join(packageRoot, "_rels", ".rels"), validPackageRelationshipsXml(), "utf8");
+  await writeFile(join(packageRoot, "word", "document.xml"), validDocumentXml(), "utf8");
+  await writeFile(join(packageRoot, "word", "styles.xml"), validStylesXml(), "utf8");
+  await writeFile(join(packageRoot, "word", "_rels", "document.xml.rels"), validRelationshipsXml(), "utf8");
+  const png = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=", "base64");
+  await writeFile(join(packageRoot, "word", "media", "image1.png"), png);
+  await executeFile("/usr/bin/zip", ["-q", "-r", docxPath, "[Content_Types].xml", "_rels", "word"], { cwd: packageRoot });
+  await writeFile(figurePath, png);
   const docxSha256 = await sha256File(docxPath);
   const profileSha256 = "1".repeat(64);
   await writeFile(buildManifestPath, `${JSON.stringify({
@@ -180,19 +288,11 @@ async function docxFixture(): Promise<{
     figures: [{ figureId: "FIG-1", path: figurePath, sha256: await sha256File(figurePath), embedded: true }],
     artifacts: { docx: { path: docxPath, sha256: docxSha256 } },
   }, null, 2)}\n`, "utf8");
-  await writeFile(geometryReportPath, `${JSON.stringify({
-    schemaVersion: "1",
-    status: "PASS",
-    docx: { path: docxPath, sha256: docxSha256 },
-    expectedProfileSha256: profileSha256,
-    facts: {
-      bodyParagraphs: 1,
-      nativeTables: 1,
-      drawings: 1,
-      captions: 2,
-    },
-    findings: [],
-  }, null, 2)}\n`, "utf8");
+  const geometry = await executeFile(
+    resolve("workers/docx-python/.venv/bin/python"),
+    [resolve("workers/docx-python/src/kpp_docx/audit_geometry.py"), docxPath, "--profile-sha256", profileSha256],
+  );
+  await writeFile(geometryReportPath, geometry.stdout, "utf8");
   return { docxPath, buildManifestPath, geometryReportPath };
 }
 
@@ -207,30 +307,91 @@ async function renderFixture(docxInput?: string): Promise<{
   const pdfPath = join(root, "proposal.pdf");
   const pagePath = join(root, "page-0001.png");
   const manifestPath = join(root, "render.json");
-  const extractorPath = join(root, "pdftotext-fixture");
-  if (docxInput === undefined) await writeFile(docxPath, "docx", "utf8");
-  await writeFile(pdfPath, "%PDF-1.7 synthetic", "utf8");
-  await writeFile(pagePath, "png-bytes", "utf8");
-  await writeFile(extractorPath, "#!/bin/sh\nprintf '검색 가능한 한글 본문\\n'\n", "utf8");
-  await chmod(extractorPath, 0o755);
-  const searchableText = "검색 가능한 한글 본문";
+  if (docxInput === undefined) {
+    const docx = await docxFixture();
+    await copyFile(docx.docxPath, docxPath);
+  }
+  const profile = join(root, "libreoffice-profile");
+  await mkdir(profile);
+  await executeFile("/Applications/LibreOffice.app/Contents/MacOS/soffice", [
+    `-env:UserInstallation=file://${profile}`,
+    "--headless",
+    "--convert-to",
+    "pdf:writer_pdf_Export",
+    "--outdir",
+    root,
+    docxPath,
+  ]);
+  const converted = join(root, `${docxPath.split("/").at(-1)?.replace(/\.docx$/u, "")}.pdf`);
+  if (converted !== pdfPath) await rename(converted, pdfPath);
+  await executeFile("/opt/homebrew/bin/pdftoppm", ["-f", "1", "-singlefile", "-png", pdfPath, join(root, "page-0001")]);
+  const extracted = await executeFile("/opt/homebrew/bin/pdftotext", [pdfPath, "-"]);
+  const searchableText = extracted.stdout.normalize("NFC").trim();
+  const pdfInfo = await executeFile("/opt/homebrew/bin/pdfinfo", [pdfPath]);
+  const pageCount = Number(/^Pages:\s+(\d+)$/mu.exec(pdfInfo.stdout)?.[1]);
+  const pdfBytes = (await stat(pdfPath)).size;
+  const pageBytes = (await stat(pagePath)).size;
+  const extractorPath = "/opt/homebrew/bin/pdftotext";
+  const extractorIdentity = await executeFile(extractorPath, ["-v"]);
+  const extractorVersion = `${extractorIdentity.stdout}${extractorIdentity.stderr}`.trim();
   await writeFile(manifestPath, `${JSON.stringify({
     schemaVersion: "1.0.0",
     rendererVersion: "0.1.0",
     input: { docx: { path: docxPath, sha256: await sha256File(docxPath) } },
     output: {
-      pdf: { path: pdfPath, sha256: await sha256File(pdfPath), bytes: 18, pages: 1 },
-      pages: [{ page: 1, path: pagePath, sha256: await sha256File(pagePath), bytes: 9 }],
+      pdf: { path: pdfPath, sha256: await sha256File(pdfPath), bytes: pdfBytes, pages: pageCount },
+      pages: [{ page: 1, path: pagePath, sha256: await sha256File(pagePath), bytes: pageBytes }],
     },
-    executables: { pdftotext: { path: extractorPath, version: "fixture 1" } },
+    executables: { pdftotext: { path: extractorPath, version: extractorVersion } },
     searchableTextProof: {
-      extractor: { path: extractorPath, version: "fixture 1" },
+      extractor: { path: extractorPath, version: extractorVersion },
       textSha256: sha256(searchableText),
-      nonWhitespaceCodePointCount: 9,
-      hangulCodePointCount: 9,
+      nonWhitespaceCodePointCount: [...searchableText].filter((character) => !/\s/u.test(character)).length,
+      hangulCodePointCount: [...searchableText].filter((character) => /[\uAC00-\uD7A3]/u.test(character)).length,
     },
   }, null, 2)}\n`, "utf8");
   return { manifestPath, pdfPath, pagePath, extractorPath };
+}
+
+async function rebindRenderArtifact(manifestPath: string, kind: "pdf" | "page", path: string): Promise<void> {
+  const manifest = JSON.parse(await readFile(manifestPath, "utf8")) as {
+    output: {
+      pdf: { sha256: string; bytes: number };
+      pages: Array<{ sha256: string; bytes: number }>;
+    };
+  };
+  const record = kind === "pdf" ? manifest.output.pdf : manifest.output.pages[0];
+  if (record === undefined) throw new Error("missing render artifact record");
+  record.sha256 = await sha256File(path);
+  record.bytes = (await stat(path)).size;
+  await writeFile(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`, "utf8");
+}
+
+function validDocumentXml(): string {
+  return `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships" xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"><w:body>
+<w:p><w:pPr><w:pStyle w:val="KPPBody"/><w:jc w:val="both"/><w:spacing w:line="365" w:lineRule="auto"/></w:pPr><w:r><w:rPr><w:rFonts w:ascii="Noto Serif CJK KR" w:hAnsi="Noto Serif CJK KR" w:eastAsia="Noto Serif CJK KR" w:cs="Noto Serif CJK KR"/><w:sz w:val="19"/><w:szCs w:val="19"/><w:spacing w:val="-4"/></w:rPr><w:t>검색 가능한 한글 본문</w:t></w:r></w:p>
+<w:p><w:pPr><w:pStyle w:val="KPPCaption"/></w:pPr><w:r><w:t>표 1. 연구 결과</w:t></w:r></w:p>
+<w:p><w:pPr><w:pStyle w:val="KPPCaption"/></w:pPr><w:r><w:t>그림 1. 연구 구조</w:t></w:r></w:p>
+<w:p><w:r><w:drawing><a:blip r:embed="rId1"/></w:drawing></w:r></w:p>
+<w:tbl><w:tblPr><w:tblLayout w:type="fixed"/><w:tblCellMar><w:top w:w="80" w:type="dxa"/><w:start w:w="80" w:type="dxa"/><w:bottom w:w="80" w:type="dxa"/><w:end w:w="80" w:type="dxa"/></w:tblCellMar><w:tblBorders><w:top w:val="single" w:sz="4"/><w:bottom w:val="single" w:sz="4"/></w:tblBorders></w:tblPr><w:tblGrid><w:gridCol w:w="7200"/></w:tblGrid><w:tr><w:tc><w:tcPr><w:tcW w:w="7200" w:type="dxa"/></w:tcPr><w:p><w:r><w:t>검증 표</w:t></w:r></w:p></w:tc></w:tr></w:tbl><w:sectPr/></w:body></w:document>`;
+}
+
+function validStylesXml(): string {
+  const style = (id: string, font: string, size: string, spacing = "") => `<w:style w:type="paragraph" w:styleId="${id}"><w:rPr><w:rFonts w:ascii="${font}" w:hAnsi="${font}" w:eastAsia="${font}" w:cs="${font}"/><w:sz w:val="${size}"/><w:szCs w:val="${size}"/>${spacing}</w:rPr></w:style>`;
+  return `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><w:styles xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">${style("KPPBody", "Noto Serif CJK KR", "19", '<w:spacing w:val="-4"/>')}${style("KPPHeading1", "Noto Sans CJK KR", "32")}${style("KPPNavigation", "Noto Sans CJK KR", "18")}${style("KPPCaption", "Noto Sans CJK KR", "18")}${style("KPPTableHeader", "Noto Sans CJK KR", "18")}${style("KPPTableBody", "Noto Serif CJK KR", "18", '<w:spacing w:val="-4"/>')}</w:styles>`;
+}
+
+function validRelationshipsXml(): string {
+  return `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/image" Target="media/image1.png"/></Relationships>`;
+}
+
+function validContentTypesXml(): string {
+  return `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Default Extension="png" ContentType="image/png"/><Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/><Override PartName="/word/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.styles+xml"/></Types>`;
+}
+
+function validPackageRelationshipsXml(): string {
+  return `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/></Relationships>`;
 }
 
 async function figureFixture(): Promise<{

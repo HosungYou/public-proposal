@@ -1,3 +1,8 @@
+import { dirname, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
+import { realpath } from "node:fs/promises";
+import { isDeepStrictEqual } from "node:util";
+import { executeFile } from "@kpp/core";
 import { inspectArtifact, readJsonObject, blocked, makeSlice, type AuditSlice } from "./source.js";
 
 export interface DocxAuditInput {
@@ -27,9 +32,10 @@ export async function auditDocxArtifacts(input: DocxAuditInput): Promise<AuditSl
     const body = styles === undefined ? undefined : objectAt(styles, "body");
     const figures = Array.isArray(manifest.figures) ? manifest.figures : [];
     const tables = Array.isArray(manifest.tables) ? manifest.tables : [];
-    const facts = objectAt(geometry, "facts");
-    if (manifestDocx?.sha256 !== docx.sha256 || manifestDocx?.path !== input.docxPath
-      || geometryDocx?.sha256 !== docx.sha256 || geometryDocx?.path !== input.docxPath) {
+    const liveGeometry = await inspectDocxGeometry(input.docxPath, manifestProfile?.sha256);
+    const facts = objectAt(liveGeometry, "facts");
+    if (manifestDocx?.sha256 !== docx.sha256 || !(await sameExistingPath(manifestDocx?.path, input.docxPath))
+      || geometryDocx?.sha256 !== docx.sha256 || !(await sameExistingPath(geometryDocx?.path, input.docxPath))) {
       findings.push(blocked("KPP_SOURCE_DOCX_LINEAGE", "DOCX bytes가 build/geometry lineage와 일치하지 않습니다.", {
         path: input.docxPath,
         expected: { build: manifestDocx, geometry: geometryDocx },
@@ -53,10 +59,17 @@ export async function auditDocxArtifacts(input: DocxAuditInput): Promise<AuditSl
         path: input.buildManifestPath,
       }));
     }
-    if (geometry.status !== "PASS" || !Array.isArray(geometry.findings) || geometry.findings.length > 0) {
-      findings.push(blocked("KPP_SOURCE_DOCX_GEOMETRY", "직접 OOXML geometry 검사가 차단되었습니다.", {
+    if (!sameGeometryEvidence(geometry, liveGeometry)) {
+      findings.push(blocked("KPP_SOURCE_DOCX_GEOMETRY", "저장된 geometry report가 현재 DOCX의 직접 OOXML 검사 결과와 다릅니다.", {
         path: input.geometryReportPath,
-        actual: geometry.findings,
+        expected: liveGeometry,
+        actual: geometry,
+      }));
+    }
+    if (liveGeometry.status !== "PASS" || !Array.isArray(liveGeometry.findings) || liveGeometry.findings.length > 0) {
+      findings.push(blocked("KPP_SOURCE_DOCX_GEOMETRY", "직접 OOXML geometry 검사가 차단되었습니다.", {
+        path: input.docxPath,
+        actual: liveGeometry.findings,
       }));
     }
     const bodyParagraphs = numericFact(facts, "bodyParagraphs");
@@ -105,6 +118,37 @@ export async function auditDocxArtifacts(input: DocxAuditInput): Promise<AuditSl
     }));
   }
   return makeSlice(findings, artifacts);
+}
+
+async function sameExistingPath(left: unknown, right: string): Promise<boolean> {
+  if (typeof left !== "string") return false;
+  const [canonicalLeft, canonicalRight] = await Promise.all([realpath(left), realpath(right)]);
+  return canonicalLeft === canonicalRight;
+}
+
+async function inspectDocxGeometry(
+  docxPath: string,
+  profileSha256: unknown,
+): Promise<Record<string, unknown>> {
+  if (typeof profileSha256 !== "string") {
+    throw new Error("locked profile SHA-256 is missing");
+  }
+  const root = resolve(dirname(fileURLToPath(import.meta.url)), "../../..");
+  const python = "/usr/bin/python3";
+  const worker = resolve(root, "workers/docx-python/src/kpp_docx/audit_geometry.py");
+  const result = await executeFile(python, [worker, docxPath, "--profile-sha256", profileSha256]);
+  const parsed: unknown = JSON.parse(result.stdout);
+  if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) {
+    throw new Error("DOCX geometry worker returned a non-object report");
+  }
+  return parsed as Record<string, unknown>;
+}
+
+function sameGeometryEvidence(
+  stored: Record<string, unknown>,
+  observed: Record<string, unknown>,
+): boolean {
+  return isDeepStrictEqual(stored, observed);
 }
 
 function numericFact(facts: Record<string, unknown> | undefined, key: string): number {
