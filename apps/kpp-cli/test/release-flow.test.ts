@@ -119,6 +119,31 @@ describe("verified proposal release flow", () => {
     })).rejects.toMatchObject({ code: "KPP_APPROVAL_STATE" });
   }, 60_000);
 
+  it("blocks duplicate semantic figure input that omits another build figure", async () => {
+    const fixture = await createContentApprovedProject(roots, true, false, 2);
+    const built = await buildProject(fixture.root, { requestPath: fixture.requestPath });
+    const rendered = await renderProject(fixture.root, { docxPath: built.docxPath });
+    const [figureA] = fixture.auditFigures;
+    expect(figureA).toBeDefined();
+
+    const audited = await auditProject(fixture.root, {
+      docxPath: built.docxPath,
+      buildManifestPath: built.manifestPath,
+      renderManifestPath: rendered.manifestPath,
+      figures: [figureA!, figureA!],
+    });
+
+    expect(audited.state).toBe("RENDERED");
+    expect(audited.report.status).toBe("BLOCKED");
+    expect(audited.report.findings.map((finding) => finding.code)).toContain("KPP_DESIGN_FIGURE_MEDIA_LINEAGE");
+    await expect(approveProject(fixture.root, {
+      approvedBy: "제출책임자",
+      auditPath: audited.auditPath,
+    })).rejects.toMatchObject({ code: "KPP_APPROVAL_STATE" });
+    await expect(access(join(fixture.root, "receipts", "approval.json"))).rejects.toBeDefined();
+    await expect(access(join(fixture.root, "release-output"))).rejects.toBeDefined();
+  }, 60_000);
+
   it("rejects a BuildRequest body that is not the approved authoring response", async () => {
     const fixture = await createContentApprovedProject(roots);
     const request = JSON.parse(await readFile(fixture.requestPath, "utf8")) as { contentBlocks: { paragraphs: { text: string }[] }[] };
@@ -199,6 +224,7 @@ async function createContentApprovedProject(
   roots: string[],
   withFigure = false,
   unrelatedFigure = false,
+  figureCount = 1,
 ): Promise<{
   readonly root: string;
   readonly requestPath: string;
@@ -207,7 +233,7 @@ async function createContentApprovedProject(
   const root = await mkdtemp(join(tmpdir(), "kpp-release-build-"));
   roots.push(root);
   await initializeProject(root, { projectId: "release-build-fixture" });
-  const semanticFigure: GanttFigureSpec = {
+  const semanticFigures: GanttFigureSpec[] = [{
     figureId: "FIG-GANTT-01",
     family: "gantt",
     title: "100일 연구 수행계획",
@@ -222,23 +248,32 @@ async function createContentApprovedProject(
       workPackages: [{ id: "WP1", label: "현황 진단", owner: "연구책임자", start: 0, end: 2, evidenceIds: ["EV-01"] }],
       milestones: [{ id: "M1", label: "최종 검토", period: 2, owner: "발주기관", evidenceIds: ["EV-01"], acceptance: "승인" }],
     },
-  };
-  const plannedFigure = {
+  }];
+  if (figureCount > 1) {
+    semanticFigures.push({
+      ...semanticFigures[0]!,
+      figureId: "FIG-GANTT-02",
+      title: "100일 검증 게이트",
+      caption: "그림 2. 검증 게이트와 인수 기준",
+    });
+  }
+  const figuresToBuild = withFigure ? semanticFigures.slice(0, figureCount) : [];
+  const plannedFigures = figuresToBuild.map((semanticFigure, index) => ({
     figureId: semanticFigure.figureId,
     requirementId: "REQ-01",
     pageId: "P-01",
     title: semanticFigure.title,
     intent: "schedule",
     dataShape: "time_axis",
-    decisionTask: "연구 단계와 검토 관문을 확인한다.",
+    decisionTask: index === 0 ? "연구 단계와 검토 관문을 확인한다." : "검증 게이트와 인수 기준을 확인한다.",
     claimIds: ["CLM-01"],
     evidenceIds: ["EV-01"],
     family: "gantt",
     renderer: "svg-gantt",
-  };
+  }));
   const pagePlan = {
     schemaVersion: "1.0.0",
-    pages: [{ pageId: "P-01", requirementId: "REQ-01", pageRole: "research_method", surfaceTemplateId: "r08-research-method-v1", claimIds: ["CLM-01"], figureSpecs: withFigure ? [plannedFigure] : [] }],
+    pages: [{ pageId: "P-01", requirementId: "REQ-01", pageRole: "research_method", surfaceTemplateId: "r08-research-method-v1", claimIds: ["CLM-01"], figureSpecs: plannedFigures }],
   };
   const evidenceLedger = {
     schemaVersion: "1.0.0",
@@ -254,22 +289,22 @@ async function createContentApprovedProject(
   await writeFile(join(root, "evidence", "source.txt"), "synthetic source\n");
   await writeFile(join(root, "figures", "design-profile.json"), `${JSON.stringify(profile)}\n`);
   const auditFigures: { specPath: string; svgPath: string; manifestPath: string }[] = [];
-  let embeddedFigure: Record<string, unknown> | undefined;
-  if (withFigure) {
-    const imagePath = join(root, "figures", "FIG-GANTT-01.png");
+  const embeddedFigures: Record<string, unknown>[] = [];
+  for (const [index, semanticFigure] of figuresToBuild.entries()) {
+    const imagePath = join(root, "figures", `${semanticFigure.figureId}.png`);
     const semantic = await renderFigureArtifact(semanticFigure);
-    const specPath = join(root, "figures", "FIG-GANTT-01.spec.json");
-    const svgPath = join(root, "figures", "FIG-GANTT-01.svg");
-    const manifestPath = join(root, "figures", "FIG-GANTT-01.render.json");
+    const specPath = join(root, "figures", `${semanticFigure.figureId}.spec.json`);
+    const svgPath = join(root, "figures", `${semanticFigure.figureId}.svg`);
+    const manifestPath = join(root, "figures", `${semanticFigure.figureId}.render.json`);
     await writeFile(specPath, `${JSON.stringify(semanticFigure)}\n`);
     await writeFile(svgPath, semantic.svg);
     await writeFile(manifestPath, `${JSON.stringify(semantic.manifest)}\n`);
-    if (unrelatedFigure) {
+    if (unrelatedFigure && index === 0) {
       await copyFile(resolve("fixtures/valid/r08-reference/ooxml/word/media/image1.png"), imagePath);
     } else {
       await rasterizeSvg(svgPath, join(root, "figures"));
     }
-    embeddedFigure = {
+    embeddedFigures.push({
       figureId: semanticFigure.figureId,
       requirementId: "REQ-01",
       pageId: "P-01",
@@ -281,7 +316,7 @@ async function createContentApprovedProject(
       caption: semanticFigure.caption,
       evidenceIds: ["EV-01"],
       widthDxa: 7200,
-    };
+    });
     auditFigures.push({ specPath, svgPath, manifestPath });
   }
   const approvedText = "공식 근거와 현장 검증을 연결하여 연구 결과의 활용 가능성을 높인다.";
@@ -289,9 +324,9 @@ async function createContentApprovedProject(
   const responsePath = join(root, "content", "authoring-response.json");
   const structurePath = join(root, "content", "build-structure.json");
   const figureManifestPath = join(root, "figures", "build-figure-manifest.json");
-  const figureManifest = { schemaVersion: "1.0.0", figures: embeddedFigure === undefined ? [] : [embeddedFigure] };
+  const figureManifest = { schemaVersion: "1.0.0", figures: embeddedFigures };
   await writeFile(responsePath, `${JSON.stringify({ schemaVersion: "1.0.0", blocks: [{ pageId: "P-01", claimIds: ["CLM-01"], evidenceIds: ["EV-01"], status: "provisional", text: approvedText, evaluatorAnswer: "합성 평가자 답변", pendingBlankFieldIds: [] }] })}\n`);
-  const figureIds = withFigure ? [semanticFigure.figureId] : [];
+  const figureIds = figuresToBuild.map((figure) => figure.figureId);
   await writeFile(structurePath, `${JSON.stringify({ schemaVersion: "1.0.0", blocks: [{ pageId: "P-01", heading: "1. 연구 수행방법", tables, figureIds }] })}\n`);
   await writeFile(figureManifestPath, `${JSON.stringify(figureManifest)}\n`);
   await advanceToContentApproved(
@@ -300,7 +335,7 @@ async function createContentApprovedProject(
     withFigure
       ? [
           figureManifestPath,
-          join(root, "figures", "FIG-GANTT-01.png"),
+          ...embeddedFigures.map((figure) => figure.path as string),
           ...auditFigures.flatMap((figure) => [figure.specPath, figure.svgPath, figure.manifestPath]),
         ]
       : [figureManifestPath],

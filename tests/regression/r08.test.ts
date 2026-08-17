@@ -7,24 +7,27 @@ import { join } from "node:path";
 afterEach(cleanupFixtures);
 
 async function audit(fixture: Awaited<ReturnType<typeof materializeR08Reference>>, suffix: string) {
-  return auditProposal({
+  const result = await auditProposal({
     root: await projectPath(fixture), docx: { docxPath: fixture.docxPath, buildManifestPath: fixture.buildManifestPath, geometryReportPath: fixture.geometryReportPath },
     renderManifestPath: fixture.renderManifestPath, trustedPdftotextPath: fixture.extractorPath, figures: [fixture.figure], outputPath: `${fixture.root}/audit/${suffix}.json`,
   });
+  return result;
 }
 
 test("R08 sanitized reference renders its fixture-backed visual surface", async () => {
   const fixture = await materializeR08Reference();
   expect((await audit(fixture, "pass")).status).toBe("PASS");
 
-  const source = await readFile(join(fixture.root, "fixture", "ooxml", "word", "media", "image1.png"));
-  expect(source.length).toBeGreaterThan(1_000_000);
-  expect((await readEmbeddedDocxMedia(fixture.docxPath)).equals(source)).toBe(true);
+  const visualReference = await readFile(join(fixture.root, "fixture", "ooxml", "word", "media", "visual-reference.png"));
+  expect(visualReference.length).toBeGreaterThan(1_000_000);
+  const embedded = await readEmbeddedDocxMedia(fixture.docxPath);
+  expect(embedded.length).toBeGreaterThan(1_000);
+  expect(embedded.equals(await readFile(join(fixture.root, "fixture", "ooxml", "word", "media", "image1.png")))).toBe(true);
 
   const page = await readFile(fixture.pagePath);
   expect(pngSize(page)).toEqual({ width: 1275, height: 1650 });
-  expect((await stat(fixture.pagePath)).size).toBeGreaterThan(500_000);
-});
+  expect((await stat(fixture.pagePath)).size).toBeGreaterThan(50_000);
+}, 30_000);
 
 test("R08 mutations remain blocked by their structural audit boundaries", async () => {
   const figure = await materializeR08Reference();

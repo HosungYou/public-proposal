@@ -83,7 +83,6 @@ export async function auditProject(rootInput: string, options: AuditProjectOptio
         svgPath: await regularFile(root, figure.svgPath, "KPP_AUDIT_FIGURE_INVALID"),
         manifestPath: await regularFile(root, figure.manifestPath, "KPP_AUDIT_FIGURE_INVALID"),
       }))),
-      enforceFigureMediaBinding: true,
       outputPath: auditPath,
     });
     if (report.status !== "PASS") {

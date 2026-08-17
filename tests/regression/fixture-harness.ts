@@ -1,7 +1,8 @@
 import { createHash } from "node:crypto";
-import { cp, mkdir, mkdtemp, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
+import { copyFile, cp, mkdir, mkdtemp, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
+import { pathToFileURL } from "node:url";
 import { advanceProject, executeFile, initializeProject, sha256File, writeReceipt } from "@kpp/core";
 import { R08_TOKEN_PROFILE_SHA256, renderFigureArtifact, type GanttFigureSpec } from "@kpp/renderers";
 
@@ -82,11 +83,20 @@ async function materialize(relativeFixture: string, prefix: string): Promise<Pro
   const lineage = await readKnownBadLineage(copied);
   const hasBoundary = (boundary: KnownBadLineage["failureBoundary"][number]) => lineage?.failureBoundary.includes(boundary) ?? false;
   const docxPath = join(copied, "docx", "proposal.docx");
-  await buildDocx(copied, docxPath);
   const profileSha256 = "1".repeat(64);
   const figure = await buildFigure(copied, hasBoundary("generic_box_schedule"));
-  const buildManifestPath = join(copied, "docx", "build.json");
+  // Keep the supplied public reference as a visual-reference-only asset. The
+  // actual DOCX drawing must use the governed rasterization of the semantic
+  // SVG, otherwise the always-on figure/media lineage audit must (correctly)
+  // reject this sanitized fixture.
   const figureSource = join(copied, "ooxml", "word", "media", "image1.png");
+  const visualReference = join(copied, "ooxml", "word", "media", "visual-reference.png");
+  if (await stat(figureSource).then(() => true).catch(() => false)) {
+    await copyFile(figureSource, visualReference);
+    await rasterizeSvgToDocxMedia(figure.svgPath, figureSource);
+  }
+  await buildDocx(copied, docxPath);
+  const buildManifestPath = join(copied, "docx", "build.json");
   await writeJson(buildManifestPath, {
     schemaVersion: "1.0.0",
     profile: {
@@ -100,7 +110,16 @@ async function materialize(relativeFixture: string, prefix: string): Promise<Pro
       body: { font: "Noto Serif CJK KR", ooxmlHalfPoints: 19, lineDxa: 365, alignment: "justified", characterSpacingTwips: 0 },
     },
     tables: hasBoundary("invalid_docx_geometry") ? [] : [{ tableId: "T-R08", native: true }],
-    figures: hasBoundary("invalid_docx_geometry") ? [] : [{ figureId: "FIG-R08-GANTT", path: figureSource, sha256: await sha256File(figureSource), embedded: true }],
+    figures: hasBoundary("invalid_docx_geometry") ? [] : [{
+      figureId: "FIG-R08-GANTT",
+      path: figureSource,
+      sha256: await sha256File(figureSource),
+      embedded: true,
+      format: "png",
+      renderer: "svg-gantt",
+      claimIds: ["CL-R08-METHOD"],
+      evidenceIds: ["EV-R08-METHOD"],
+    }],
     artifacts: { docx: { path: docxPath, sha256: await sha256File(docxPath) } },
   });
   const geometryReportPath = join(copied, "docx", "geometry.json");
@@ -152,6 +171,24 @@ async function readKnownBadLineage(copied: string): Promise<KnownBadLineage | un
     if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined;
     throw error;
   }
+}
+
+async function rasterizeSvgToDocxMedia(svgPath: string, destination: string): Promise<void> {
+  const root = await mkdtemp(join(tmpdir(), "kpp-r08-figure-raster-"));
+  roots.push(root);
+  const profile = join(root, "libreoffice-profile");
+  await mkdir(profile);
+  await executeFile("/Applications/LibreOffice.app/Contents/MacOS/soffice", [
+    `-env:UserInstallation=${pathToFileURL(profile).href}`,
+    "--headless",
+    "--convert-to",
+    "png:draw_png_Export",
+    "--outdir",
+    root,
+    svgPath,
+  ], { timeoutMs: 120_000 });
+  const generated = join(root, `${svgPath.slice(svgPath.lastIndexOf("/") + 1, svgPath.lastIndexOf("."))}.png`);
+  await rename(generated, destination);
 }
 
 async function renderDocx(copied: string, docxPath: string): Promise<Pick<ProposalFixture, "renderManifestPath" | "pdfPath" | "pagePath" | "extractorPath">> {

@@ -55,7 +55,6 @@ export interface ProposalAuditInput {
   readonly renderManifestPath: string;
   readonly trustedPdftotextPath?: string;
   readonly figures: readonly FigureAuditInput[];
-  readonly enforceFigureMediaBinding?: boolean;
   readonly outputPath: string;
 }
 
@@ -76,13 +75,11 @@ export async function auditProposal(input: ProposalAuditInput): Promise<Proposal
     auditReleaseReadiness(resolve(input.root), receiptBindings),
     auditCrossSurfaceLineage(input.docx.docxPath, input.renderManifestPath),
   ];
-  if (input.enforceFigureMediaBinding === true) {
-    slices.push(auditFigureDocumentBindings({
-      figures: input.figures,
-      buildManifestPath: input.docx.buildManifestPath,
-      geometryReportPath: input.docx.geometryReportPath,
-    }));
-  }
+  slices.push(auditFigureDocumentBindings({
+    figures: input.figures,
+    buildManifestPath: input.docx.buildManifestPath,
+    geometryReportPath: input.docx.geometryReportPath,
+  }));
   const combined = combineSlices(await Promise.all(slices));
   const report: ProposalAuditReport = {
     schemaVersion: "1",

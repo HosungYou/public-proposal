@@ -102,20 +102,45 @@ export async function auditFigureDocumentBindings(input: FigureDocumentBindingIn
         expected: input.trustedSofficePath ?? APPROVED_SOFFICE_PATHS,
       })], artifacts);
     }
-    const recordById = new Map(records.map((record) => [record!.figureId, record!] as const));
-    if (recordById.size !== records.length || recordById.has(undefined)) {
-      return makeSlice([blocked("KPP_DESIGN_FIGURE_MEDIA_LINEAGE", "build figureId가 유일하지 않습니다.", { path: input.buildManifestPath })], artifacts);
+    const recordIds = records.map((record) => record?.figureId);
+    if (!recordIds.every((figureId): figureId is string => typeof figureId === "string" && figureId.length > 0)
+      || new Set(recordIds).size !== recordIds.length) {
+      return makeSlice([blocked("KPP_DESIGN_FIGURE_MEDIA_LINEAGE", "build figureId가 유일한 비어 있지 않은 집합이 아닙니다.", { path: input.buildManifestPath, actual: recordIds })], artifacts);
     }
-    for (const figureInput of input.figures) {
-      const [spec, rendererManifest, sourceArtifacts] = await Promise.all([
-        readJsonObject(figureInput.specPath) as unknown as Promise<FigureSpec>,
-        readJsonObject(figureInput.manifestPath) as unknown as Promise<FigureManifest>,
+    const auditedFigures = await Promise.all(input.figures.map(async (figureInput) => {
+      const [specValue, rendererManifestValue, sourceArtifacts] = await Promise.all([
+        readJsonObject(figureInput.specPath),
+        readJsonObject(figureInput.manifestPath),
         Promise.all([inspectArtifact(figureInput.specPath), inspectArtifact(figureInput.svgPath), inspectArtifact(figureInput.manifestPath)]),
       ]);
+      return {
+        figureInput,
+        spec: specValue as unknown as FigureSpec,
+        rendererManifest: rendererManifestValue as unknown as FigureManifest,
+        sourceArtifacts,
+      };
+    }));
+    const expectedFigureIds = recordIds.filter((figureId): figureId is string => typeof figureId === "string" && figureId.length > 0);
+    const auditedIds = auditedFigures.map(({ spec }) => spec.figureId);
+    const auditedFigureIds = auditedIds.filter((figureId): figureId is string => typeof figureId === "string" && figureId.length > 0);
+    if (auditedFigureIds.length !== auditedIds.length
+      || new Set(auditedFigureIds).size !== auditedFigureIds.length
+      || !sameOrderedStrings([...expectedFigureIds].sort(), [...auditedFigureIds].sort())) {
+      return makeSlice([blocked("KPP_DESIGN_FIGURE_MEDIA_LINEAGE", "감사 입력 figureId가 build figureId의 유일한 완전 집합이 아닙니다.", {
+        path: input.buildManifestPath,
+        expected: [...expectedFigureIds].sort(),
+        actual: auditedIds,
+      })], artifacts);
+    }
+    const recordById = new Map(records.map((record) => [record!.figureId as string, record!] as const));
+    for (const { figureInput, spec, rendererManifest, sourceArtifacts } of auditedFigures) {
       artifacts.push(...sourceArtifacts);
       const record = recordById.get(spec.figureId);
       const expectedRenderer = `svg-${spec.family}`;
       if (record === undefined || rendererManifest.figure.id !== spec.figureId
+        || rendererManifest.figure.family !== spec.family
+        || !sameOrderedStrings(rendererManifest.bindings.evidenceIds, spec.evidenceIds)
+        || !sameOrderedStrings(rendererManifest.bindings.claimIds, spec.claimIds)
         || record.renderer !== expectedRenderer || record.format !== "png" || record.embedded !== true
         || typeof record.path !== "string" || typeof record.sha256 !== "string"
         || !sameOrderedStrings(record.claimIds, spec.claimIds)

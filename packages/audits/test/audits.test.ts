@@ -261,9 +261,9 @@ describe("artifact-backed proposal audits", () => {
   });
 
   test("writes a stable audit/audit.json that is bound to all real artifacts", async () => {
-    const docx = await docxFixture();
-    const render = await renderFixture(docx.docxPath);
     const figure = await figureFixture();
+    const docx = await docxFixture(figure);
+    const render = await renderFixture(docx.docxPath);
     const root = await renderedProjectFixture({
       built: [docx.buildManifestPath, docx.docxPath],
       rendered: [render.manifestPath, render.pdfPath, render.pagePath],
@@ -292,7 +292,7 @@ describe("artifact-backed proposal audits", () => {
     expect(second).toEqual(first);
     expect(await readFile(outputPath, "utf8")).toBe(firstBytes);
     expect(first.artifacts.every((artifact) => /^[a-f0-9]{64}$/u.test(artifact.sha256))).toBe(true);
-  });
+  }, 60_000);
 
   test("blocks a proposal whose valid receipt chain binds only unrelated placeholders", async () => {
     const docx = await docxFixture();
@@ -330,7 +330,7 @@ describe("artifact-backed proposal audits", () => {
 
     expect(report.status).toBe("BLOCKED");
     expect(report.findings.map((finding) => finding.code)).toContain("KPP_DESIGN_SURFACE_LINEAGE");
-  });
+  }, 60_000);
 });
 
 async function makeRoot(prefix: string): Promise<string> {
@@ -339,7 +339,10 @@ async function makeRoot(prefix: string): Promise<string> {
   return root;
 }
 
-async function docxFixture(): Promise<{
+async function docxFixture(figure?: {
+  readonly figureId: string;
+  readonly rasterPath: string;
+}): Promise<{
   readonly docxPath: string;
   readonly buildManifestPath: string;
   readonly geometryReportPath: string;
@@ -358,7 +361,9 @@ async function docxFixture(): Promise<{
   await writeFile(join(packageRoot, "word", "document.xml"), validDocumentXml(), "utf8");
   await writeFile(join(packageRoot, "word", "styles.xml"), validStylesXml(), "utf8");
   await writeFile(join(packageRoot, "word", "_rels", "document.xml.rels"), validRelationshipsXml(), "utf8");
-  const png = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=", "base64");
+  const png = figure === undefined
+    ? Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=", "base64")
+    : await readFile(figure.rasterPath);
   await writeFile(join(packageRoot, "word", "media", "image1.png"), png);
   await executeFile("/usr/bin/zip", ["-q", "-r", docxPath, "[Content_Types].xml", "_rels", "word"], { cwd: packageRoot });
   await writeFile(figurePath, png);
@@ -379,7 +384,16 @@ async function docxFixture(): Promise<{
       },
     },
     tables: [{ tableId: "T-1", native: true }],
-    figures: [{ figureId: "FIG-1", path: figurePath, sha256: await sha256File(figurePath), embedded: true }],
+    figures: [{
+      figureId: figure?.figureId ?? "FIG-1",
+      path: figurePath,
+      sha256: await sha256File(figurePath),
+      embedded: true,
+      format: "png",
+      renderer: "svg-gantt",
+      claimIds: ["CL-1"],
+      evidenceIds: ["EV-1"],
+    }],
     artifacts: { docx: { path: docxPath, sha256: docxSha256 } },
   }, null, 2)}\n`, "utf8");
   const geometry = await executeFile(
@@ -492,6 +506,8 @@ async function figureFixture(): Promise<{
   readonly specPath: string;
   readonly svgPath: string;
   readonly manifestPath: string;
+  readonly figureId: string;
+  readonly rasterPath: string;
 }> {
   const root = await makeRoot("kpp-audit-figure-");
   const specPath = join(root, "figure-spec.json");
@@ -517,7 +533,23 @@ async function figureFixture(): Promise<{
   await writeFile(specPath, `${JSON.stringify(figure, null, 2)}\n`, "utf8");
   await writeFile(svgPath, artifact.svg, "utf8");
   await writeFile(manifestPath, `${JSON.stringify(artifact.manifest, null, 2)}\n`, "utf8");
-  return { specPath, svgPath, manifestPath };
+  const profile = await mkdtemp(join(tmpdir(), "kpp-audit-figure-profile-"));
+  try {
+    await executeFile("/Applications/LibreOffice.app/Contents/MacOS/soffice", [
+      `-env:UserInstallation=file://${profile}`,
+      "--headless",
+      "--convert-to",
+      "png:draw_png_Export",
+      "--outdir",
+      root,
+      svgPath,
+    ]);
+  } finally {
+    const { rm } = await import("node:fs/promises");
+    await rm(profile, { recursive: true, force: true });
+  }
+  const rasterPath = join(root, "figure.png");
+  return { specPath, svgPath, manifestPath, figureId: figure.figureId, rasterPath };
 }
 
 async function renderedProjectFixture(bindings?: {
