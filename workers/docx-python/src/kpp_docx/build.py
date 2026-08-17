@@ -580,7 +580,10 @@ def build_document(request: BuildRequest) -> BuildResult:
             "tables": table_records,
             "figures": figure_records,
             "artifacts": {
-                "docx": {"path": str(docx_path), "sha256": docx_hash},
+                "docx": {
+                    "path": str(generation_path / "document.docx"),
+                    "sha256": docx_hash,
+                },
             },
             "publication": {
                 "pointerPath": str(publication_path),
@@ -746,6 +749,11 @@ def _publish_artifact_pair(
             f"publication bundle root must not be a symlink: {bundle_root}"
         )
     bundle_root.mkdir(parents=True, exist_ok=True)
+    if generations.is_symlink():
+        raise ValueError(
+            "publication generations directory must not be a symlink: "
+            f"{generations}"
+        )
     generations.mkdir(exist_ok=True)
     if bundle_root.resolve().parent != bundle_parent:
         raise ValueError("publication bundle escaped its output parent")

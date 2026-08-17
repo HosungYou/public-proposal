@@ -209,7 +209,12 @@ def test_manifest_binds_template_inputs_pages_and_output_hashes(tmp_path: Path) 
         }
     ]
     assert manifest["figures"] == []
-    assert manifest["artifacts"]["docx"]["sha256"] == _sha256(result.docx)
+    assert manifest["artifacts"]["docx"]["path"] == str(
+        result.generation / "document.docx"
+    )
+    assert manifest["artifacts"]["docx"]["sha256"] == _sha256(
+        Path(manifest["artifacts"]["docx"]["path"])
+    )
     assert result.docx == Path(request.output.docx_path)
     assert result.manifest == Path(request.output.manifest_path)
     assert result.docx.is_symlink()
@@ -389,6 +394,61 @@ def test_republication_switches_one_complete_canonical_generation(
     assert set(observed_generations).issubset({old_generation, new_generation})
     assert (new_generation / "document.docx").is_file()
     assert (new_generation / "manifest.json").is_file()
+
+
+def test_old_generation_manifest_keeps_its_document_after_republication(
+    tmp_path: Path,
+) -> None:
+    request = sample_request(tmp_path)
+    first = build_document(request)
+    old_generation = first.generation
+    old_manifest_path = old_generation / "manifest.json"
+    old_manifest = json.loads(old_manifest_path.read_text(encoding="utf-8"))
+
+    payload = request.model_dump(by_alias=True)
+    payload["contentBlocks"][0]["paragraphs"][0]["text"] = (
+        "개정된 자료와 현장 검증을 연결하여 후속 문서를 발행한다."
+    )
+    second = build_document(BuildRequest.model_validate(payload))
+
+    old_manifest_after_republish = json.loads(
+        old_manifest_path.read_text(encoding="utf-8")
+    )
+    old_document_path = Path(
+        old_manifest_after_republish["artifacts"]["docx"]["path"]
+    )
+    assert second.generation != old_generation
+    assert old_manifest_after_republish == old_manifest
+    assert old_document_path == old_generation / "document.docx"
+    assert _sha256(old_document_path) == old_manifest["artifacts"]["docx"]["sha256"]
+    assert "개정된 자료" not in "\n".join(
+        paragraph.text for paragraph in Document(old_document_path).paragraphs
+    )
+
+
+def test_rejects_preexisting_generations_symlink_without_publishing(
+    tmp_path: Path,
+) -> None:
+    request = sample_request(tmp_path)
+    docx_path = Path(request.output.docx_path)
+    manifest_path = Path(request.output.manifest_path)
+    publication = build_module._publication_path(docx_path, manifest_path)
+    bundle_root = publication.parent
+    bundle_root.mkdir()
+    alternate = bundle_root / "alternate"
+    alternate.mkdir()
+    (bundle_root / "generations").symlink_to(alternate.name, target_is_directory=True)
+
+    with pytest.raises(
+        ValueError,
+        match="publication generations directory must not be a symlink",
+    ):
+        build_document(request)
+
+    assert not docx_path.exists()
+    assert not manifest_path.exists()
+    assert not publication.exists()
+    assert list(alternate.iterdir()) == []
 
 
 def test_manifest_directory_probe_leaves_no_partial_docx(tmp_path: Path) -> None:
