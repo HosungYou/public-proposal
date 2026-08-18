@@ -1,6 +1,8 @@
-import { readFile, realpath, rm, stat } from "node:fs/promises";
-import { isAbsolute, join, normalize, relative, resolve } from "node:path";
+import { randomUUID } from "node:crypto";
+import { link, mkdir, open, readFile, realpath, rm, stat } from "node:fs/promises";
+import { basename, dirname, isAbsolute, join, normalize, relative, resolve } from "node:path";
 import {
+  ReceiptSchema,
   ResearchLockSchema,
   type ProposalClass,
   type Receipt,
@@ -9,7 +11,10 @@ import {
 import { KppError } from "./errors.js";
 import { sha256File } from "./hash.js";
 import { readProject } from "./project-store.js";
-import { verifyReceipt, writeReceipt } from "./receipts.js";
+import { verifyReceipt } from "./receipts.js";
+
+const DEFAULT_SCHEMA_VERSION = "1.0.0";
+const DEFAULT_TOOL_VERSION = "0.1.0";
 
 const REQUIRED_RESEARCH_CLASSES = new Set<ProposalClass>([
   "academic_research",
@@ -41,8 +46,11 @@ export interface ResearchLockImportResult {
   readonly state: "PASS";
 }
 
-export interface ResearchLockImportDependencies {
+interface ResearchLockTestHooks {
   readonly afterArtifactsVerified?: () => Promise<void>;
+  readonly beforeReceiptCreate?: () => Promise<void>;
+  readonly afterReceiptCreate?: (receiptPath: string) => Promise<void>;
+  readonly beforePostWriteCleanup?: (receiptPath: string) => Promise<void>;
 }
 
 interface VerifiedResearchArtifact {
@@ -51,11 +59,20 @@ interface VerifiedResearchArtifact {
   readonly sha256: string;
 }
 
+interface CreatedResearchReceipt {
+  readonly contents: string;
+}
+
+let testHooks: ResearchLockTestHooks = {};
+
+export function __setResearchLockTestHooks(hooks: ResearchLockTestHooks): void {
+  testHooks = hooks;
+}
+
 export async function importResearchLock(
   rootInput: string,
   handoffPathInput: string,
   expectedLongtableVersion: string,
-  dependencies: ResearchLockImportDependencies = {},
 ): Promise<ResearchLockImportResult> {
   const root = resolve(rootInput);
   const handoffPath = resolve(handoffPathInput);
@@ -87,14 +104,23 @@ export async function importResearchLock(
   }
 
   await verifyArtifactHashes(artifacts);
-  await dependencies.afterArtifactsVerified?.();
-  await writeReceipt({
-    stage: "EVIDENCE_LOCKED",
-    files,
-    inputReceiptHashes,
-    output: receiptPath,
-  });
-  await verifyEmittedReceipt(receiptPath, files, inputReceiptHashes);
+  await testHooks.afterArtifactsVerified?.();
+  await testHooks.beforeReceiptCreate?.();
+  let createdReceipt: CreatedResearchReceipt;
+  try {
+    createdReceipt = await createResearchReceiptExclusive({
+      files,
+      inputReceiptHashes,
+      output: receiptPath,
+    });
+  } catch (error) {
+    if (error instanceof KppError && error.code === "PP_RESEARCH_LOCK_EXISTS") {
+      return await resolveConcurrentReceipt(receiptPath, files, inputReceiptHashes);
+    }
+    throw error;
+  }
+  await testHooks.afterReceiptCreate?.(receiptPath);
+  await verifyEmittedReceipt(receiptPath, files, inputReceiptHashes, createdReceipt.contents);
   return { receiptPath, state: "PASS" };
 }
 
@@ -225,13 +251,6 @@ function validateDistinctArtifacts(artifacts: readonly VerifiedResearchArtifact[
       rule: "artifact_realpath_duplicate",
     });
   }
-  const duplicateHash = firstDuplicate(artifacts.map((artifact) => artifact.sha256));
-  if (duplicateHash !== null) {
-    throw new KppError("PP_RESEARCH_ARTIFACT_DUPLICATE", "LongTable 연구 handoff의 네 산출물 해시는 서로 달라야 합니다.", {
-      actual: duplicateHash,
-      rule: "artifact_sha256_duplicate",
-    });
-  }
 }
 
 async function verifyArtifactHashes(artifacts: readonly VerifiedResearchArtifact[]): Promise<void> {
@@ -330,14 +349,115 @@ function receiptMatches(
   );
 }
 
+async function resolveConcurrentReceipt(
+  receiptPath: string,
+  files: readonly string[],
+  inputReceiptHashes: readonly string[],
+): Promise<ResearchLockImportResult> {
+  const existing = await readExistingReceiptState(receiptPath);
+  if (existing.state === "valid" && receiptMatches(existing.receipt, files, inputReceiptHashes)) {
+    return { receiptPath, state: "PASS" };
+  }
+  if (existing.state === "invalid") {
+    throw new KppError("PP_RESEARCH_LOCK_INVALID", "동시에 생성된 연구 잠금 영수증이 유효하지 않아 덮어쓸 수 없습니다.", {
+      path: receiptPath,
+      rule: existing.rule,
+    });
+  }
+  throw new KppError("PP_RESEARCH_LOCK_EXISTS", "동시에 다른 연구 잠금 영수증이 생성되었습니다.", {
+    path: receiptPath,
+    rule: "receipt_create_conflict",
+  });
+}
+
+async function createResearchReceiptExclusive(input: {
+  readonly files: readonly string[];
+  readonly inputReceiptHashes: readonly string[];
+  readonly output: string;
+}): Promise<CreatedResearchReceipt> {
+  const files = await Promise.all(
+    input.files.map(async (path) => ({ path, sha256: await sha256File(path) })),
+  );
+  const parsed = ReceiptSchema.safeParse({
+    schemaVersion: DEFAULT_SCHEMA_VERSION,
+    stage: "EVIDENCE_LOCKED",
+    createdAt: new Date().toISOString(),
+    toolVersion: DEFAULT_TOOL_VERSION,
+    files: files.sort(compareFileRecords),
+    inputReceiptHashes: [...input.inputReceiptHashes].sort(),
+    result: "PASS",
+  });
+  if (!parsed.success) {
+    throw new KppError("PP_RESEARCH_LOCK_WRITE_MISMATCH", "연구 잠금 영수증 형식이 올바르지 않습니다.", {
+      path: input.output,
+      rule: "generated_receipt_invalid",
+      actual: parsed.error.issues,
+    });
+  }
+
+  const contents = `${JSON.stringify(parsed.data, null, 2)}\n`;
+  await writeCreateOnly(input.output, contents);
+  return { contents };
+}
+
+async function writeCreateOnly(path: string, contents: string): Promise<void> {
+  const directory = dirname(path);
+  await mkdir(directory, { recursive: true });
+  const temporaryPath = join(directory, `.${basename(path)}.${process.pid}.${randomUUID()}.tmp`);
+  let created = false;
+  let linked = false;
+  try {
+    const handle = await open(temporaryPath, "wx", 0o600);
+    created = true;
+    try {
+      await handle.writeFile(contents, "utf8");
+      await handle.sync();
+    } finally {
+      await handle.close();
+    }
+
+    try {
+      await link(temporaryPath, path);
+      linked = true;
+    } catch (error) {
+      if (isFileExistsError(error)) {
+        throw new KppError("PP_RESEARCH_LOCK_EXISTS", "연구 잠금 영수증 경로가 이미 존재합니다.", {
+          path,
+          rule: "receipt_create_exists",
+        });
+      }
+      throw error;
+    }
+    await syncDirectory(directory);
+  } finally {
+    if (created) {
+      await rm(temporaryPath, { force: true });
+      if (linked) {
+        await syncDirectory(directory);
+      }
+    }
+  }
+}
+
 async function verifyEmittedReceipt(
   receiptPath: string,
   files: readonly string[],
   inputReceiptHashes: readonly string[],
+  emittedContents: string,
 ): Promise<void> {
-  const verification = await verifyReceipt(receiptPath);
+  let verification;
+  try {
+    verification = await verifyReceipt(receiptPath);
+  } catch (error) {
+    await cleanupOwnedReceipt(receiptPath, emittedContents);
+    throw new KppError("PP_RESEARCH_LOCK_WRITE_MISMATCH", "발급된 연구 잠금 영수증을 다시 검증할 수 없습니다.", {
+      path: receiptPath,
+      rule: "emitted_receipt_unreadable",
+      actual: error instanceof Error ? error.message : error,
+    });
+  }
   if (!verification.valid || !receiptMatches(verification.receipt, files, inputReceiptHashes)) {
-    await rm(receiptPath, { force: true });
+    await cleanupOwnedReceipt(receiptPath, emittedContents);
     throw new KppError("PP_RESEARCH_LOCK_WRITE_MISMATCH", "발급된 연구 잠금 영수증이 검증된 LongTable handoff와 일치하지 않습니다.", {
       path: receiptPath,
       rule: "emitted_receipt_mismatch",
@@ -352,12 +472,25 @@ async function verifyEmittedReceipt(
     .filter((file) => artifactShaByPath.has(file.path))
     .filter((file) => artifactShaByPath.get(file.path) !== file.sha256);
   if (mismatchedFiles.length > 0) {
-    await rm(receiptPath, { force: true });
+    await cleanupOwnedReceipt(receiptPath, emittedContents);
     throw new KppError("PP_RESEARCH_LOCK_WRITE_MISMATCH", "발급된 연구 잠금 영수증의 산출물 해시가 LongTable handoff와 일치하지 않습니다.", {
       path: receiptPath,
       rule: "emitted_artifact_sha256_mismatch",
       actual: mismatchedFiles,
     });
+  }
+}
+
+async function cleanupOwnedReceipt(receiptPath: string, emittedContents: string): Promise<void> {
+  await testHooks.beforePostWriteCleanup?.(receiptPath);
+  let currentContents: string;
+  try {
+    currentContents = await readFile(receiptPath, "utf8");
+  } catch {
+    return;
+  }
+  if (currentContents === emittedContents) {
+    await rm(receiptPath, { force: true });
   }
 }
 
@@ -368,6 +501,13 @@ function isSubpath(parent: string, child: string): boolean {
 
 function sorted(values: readonly string[]): string[] {
   return [...values].sort();
+}
+
+function compareFileRecords(
+  left: { path: string },
+  right: { path: string },
+): number {
+  return left.path < right.path ? -1 : left.path > right.path ? 1 : 0;
 }
 
 function firstDuplicate(values: readonly string[]): string | null {
@@ -387,5 +527,23 @@ async function fileExists(path: string): Promise<boolean> {
     return true;
   } catch {
     return false;
+  }
+}
+
+function isFileExistsError(error: unknown): boolean {
+  return (
+    typeof error === "object"
+    && error !== null
+    && "code" in error
+    && (error as { code?: unknown }).code === "EEXIST"
+  );
+}
+
+async function syncDirectory(directory: string): Promise<void> {
+  const handle = await open(directory, "r");
+  try {
+    await handle.sync();
+  } finally {
+    await handle.close();
   }
 }

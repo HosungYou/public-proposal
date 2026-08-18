@@ -58,7 +58,6 @@ export {
 } from "./visual-source-gate.js";
 export {
   importResearchLock,
-  type ResearchLockImportDependencies,
   type ResearchLockImportResult,
 } from "./research-lock.js";
 export {

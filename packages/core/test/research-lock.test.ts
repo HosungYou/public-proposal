@@ -1,4 +1,4 @@
-import { cp, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
+import { copyFile, cp, mkdir, mkdtemp, readFile, rm, stat, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { spawn } from "node:child_process";
@@ -13,6 +13,7 @@ let importResearchLock: typeof import("../src/index.js").importResearchLock;
 let initializeProject: typeof import("../src/index.js").initializeProject;
 let verifyReceipt: typeof import("../src/index.js").verifyReceipt;
 let writeReceipt: typeof import("../src/index.js").writeReceipt;
+let setResearchLockTestHooks: (hooks: Record<string, unknown>) => void;
 
 describe("LongTable research lock import", () => {
   const temporaryDirectories: string[] = [];
@@ -21,9 +22,14 @@ describe("LongTable research lock import", () => {
     expect(await runProcess("npm", ["run", "build", "--workspace", "@longtable/kpp-schemas"]))
       .toMatchObject({ code: 0, stderr: "" });
     ({ importResearchLock, initializeProject, verifyReceipt, writeReceipt } = await import("../src/index.js"));
+    const researchLockModule = await import("../src/research-lock.js") as unknown as {
+      __setResearchLockTestHooks: (hooks: Record<string, unknown>) => void;
+    };
+    setResearchLockTestHooks = researchLockModule.__setResearchLockTestHooks;
   });
 
   afterEach(async () => {
+    setResearchLockTestHooks({});
     await Promise.all(
       temporaryDirectories.splice(0).map((directory) =>
         rm(directory, { force: true, recursive: true }),
@@ -100,6 +106,27 @@ describe("LongTable research lock import", () => {
     expect(await readFile(receiptPath, "utf8")).toBe(originalReceipt);
   });
 
+  it("does not replace a receipt created concurrently after the absent check", async () => {
+    const root = await createResearchProject(temporaryDirectories);
+    const receiptPath = join(root, "receipts", "research-lock.json");
+    setResearchLockTestHooks({
+      beforeReceiptCreate: async () => {
+        await writeReceipt({
+          stage: "SOURCE_LOCKED",
+          files: expectedReceiptFiles(root),
+          inputReceiptHashes: expectedInputHashes(),
+          output: receiptPath,
+        });
+      },
+    });
+
+    await expect(importResearchLock(root, handoffPath, "0.1.72"))
+      .rejects.toMatchObject({ code: "PP_RESEARCH_LOCK_EXISTS" });
+
+    const receipt = await verifyReceipt(receiptPath);
+    expect(receipt.receipt.stage).toBe("SOURCE_LOCKED");
+  });
+
   it("rejects and preserves an existing malformed research-lock receipt", async () => {
     const root = await createResearchProject(temporaryDirectories);
     const receiptPath = join(root, "receipts", "research-lock.json");
@@ -173,6 +200,20 @@ describe("LongTable research lock import", () => {
       .rejects.toMatchObject({ code: "PP_RESEARCH_ARTIFACT_DUPLICATE" });
   });
 
+  it("allows distinct artifact references with equal bytes and equal hashes", async () => {
+    const root = await createResearchProject(temporaryDirectories);
+    const duplicateBytesPath = join(root, "evidence", "research-lock", "citation-slot-matrix-copy.json");
+    await copyFile(join(root, "evidence", "research-lock", "research-specification.json"), duplicateBytesPath);
+    const handoff = JSON.parse(await readFile(handoffPath, "utf8")) as Record<string, unknown>;
+    handoff.citationSlotMatrixPath = "evidence/research-lock/citation-slot-matrix-copy.json";
+    handoff.citationSlotMatrixSha256 = handoff.researchSpecificationSha256;
+    const equalHashHandoffPath = join(root, "evidence", "research-lock", "equal-hash-handoff.json");
+    await writeFile(equalHashHandoffPath, `${JSON.stringify(handoff, null, 2)}\n`);
+
+    await expect(importResearchLock(root, equalHashHandoffPath, "0.1.72"))
+      .resolves.toMatchObject({ state: "PASS" });
+  });
+
   it("rejects all four artifact hash mismatches without writing a receipt", async () => {
     const hashFields = [
       "researchSpecificationSha256",
@@ -222,18 +263,80 @@ describe("LongTable research lock import", () => {
       .rejects.toMatchObject({ code: "PP_LONGTABLE_REQUIRED" });
   });
 
-  it("cleans up a newly emitted receipt when post-write verification detects replaced artifact bytes", async () => {
+  it("cleans up its own newly emitted receipt when post-write verification detects replaced artifact bytes", async () => {
     const root = await createResearchProject(temporaryDirectories);
     const sourceLedger = join(root, "evidence", "research-lock", "source-ledger.json");
-
-    await expect(importResearchLock(root, handoffPath, "0.1.72", {
+    setResearchLockTestHooks({
       afterArtifactsVerified: async () => {
         await writeFile(sourceLedger, "changed between verification and receipt write\n");
       },
-    })).rejects.toMatchObject({ code: "PP_RESEARCH_LOCK_WRITE_MISMATCH" });
+    });
+
+    await expect(importResearchLock(root, handoffPath, "0.1.72"))
+      .rejects.toMatchObject({ code: "PP_RESEARCH_LOCK_WRITE_MISMATCH" });
 
     await expect(readFile(join(root, "receipts", "research-lock.json"), "utf8"))
       .rejects.toMatchObject({ code: "ENOENT" });
+  });
+
+  it("does not remove another writer's receipt when cleanup sees replacement before unlink", async () => {
+    const root = await createResearchProject(temporaryDirectories);
+    const receiptPath = join(root, "receipts", "research-lock.json");
+    const sourceLedger = join(root, "evidence", "research-lock", "source-ledger.json");
+    let replacementReceipt = "";
+    setResearchLockTestHooks({
+      afterArtifactsVerified: async () => {
+        await writeFile(sourceLedger, "changed before receipt write\n");
+      },
+      beforePostWriteCleanup: async () => {
+        await writeFile(sourceLedger, await readFile(join(fixtureDirectory, "evidence", "research-lock", "source-ledger.json")));
+        await writeReceipt({
+          stage: "SOURCE_LOCKED",
+          files: expectedReceiptFiles(root),
+          inputReceiptHashes: expectedInputHashes(),
+          output: receiptPath,
+        });
+        replacementReceipt = await readFile(receiptPath, "utf8");
+      },
+    });
+
+    await expect(importResearchLock(root, handoffPath, "0.1.72"))
+      .rejects.toMatchObject({ code: "PP_RESEARCH_LOCK_WRITE_MISMATCH" });
+
+    expect(await readFile(receiptPath, "utf8")).toBe(replacementReceipt);
+  });
+
+  it("does not remove a malformed receipt that appears before post-write verification reads it", async () => {
+    const root = await createResearchProject(temporaryDirectories);
+    const receiptPath = join(root, "receipts", "research-lock.json");
+    const malformedReplacement = "{malformed replacement}\n";
+    setResearchLockTestHooks({
+      afterReceiptCreate: async () => {
+        await writeFile(receiptPath, malformedReplacement);
+      },
+    });
+
+    await expect(importResearchLock(root, handoffPath, "0.1.72"))
+      .rejects.toMatchObject({ code: "PP_RESEARCH_LOCK_WRITE_MISMATCH" });
+
+    expect(await readFile(receiptPath, "utf8")).toBe(malformedReplacement);
+  });
+
+  it("does not remove an unreadable receipt path that appears before post-write verification reads it", async () => {
+    const root = await createResearchProject(temporaryDirectories);
+    const receiptPath = join(root, "receipts", "research-lock.json");
+    setResearchLockTestHooks({
+      afterReceiptCreate: async () => {
+        await rm(receiptPath, { force: true });
+        await mkdir(receiptPath);
+      },
+    });
+
+    await expect(importResearchLock(root, handoffPath, "0.1.72"))
+      .rejects.toMatchObject({ code: "PP_RESEARCH_LOCK_WRITE_MISMATCH" });
+
+    await expect(stat(receiptPath)).resolves.toMatchObject({ isDirectory: expect.any(Function) });
+    expect((await stat(receiptPath)).isDirectory()).toBe(true);
   });
 });
 
