@@ -25,16 +25,49 @@ export async function runUpdate(
     return { mode: "preview", changes };
   }
 
-  const setup = await dependencies.setup({
-    provider: "codex",
-    installScope: "user",
-    installRoot: options.installRoot,
-  });
+  const setup = await runSetupForUpdate(dependencies, options.installRoot);
+  if (!setup.ok) {
+    return {
+      mode: "preview",
+      changes: [`blocked: ${setup.error?.code ?? "PP_SETUP_FAILED"}`],
+    };
+  }
   return {
     mode: "applied",
     changes,
     manifest: setup.manifest,
   };
+}
+
+async function runSetupForUpdate(
+  dependencies: UpdateDependencies,
+  installRoot: string,
+): Promise<SetupResult> {
+  try {
+    return await dependencies.setup({
+      provider: "codex",
+      installScope: "user",
+      installRoot,
+    });
+  } catch (error) {
+    const code =
+      typeof error === "object" &&
+      error !== null &&
+      "code" in error &&
+      typeof (error as { code?: unknown }).code === "string"
+        ? (error as { code: string }).code
+        : "PP_SETUP_FAILED";
+    return {
+      ok: false,
+      plan: [],
+      writes: [],
+      checks: [],
+      error: {
+        code,
+        message: error instanceof Error ? error.message : "Setup failed during update apply.",
+      },
+    };
+  }
 }
 
 function changesFromMatrix(matrix: unknown): readonly string[] {

@@ -1,6 +1,7 @@
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
+  parseInstallManifest,
   SUPPORTED_KPP_VERSION,
   SUPPORTED_LONGTABLE_VERSION,
   WORKER_PROTOCOL_VERSION,
@@ -109,8 +110,10 @@ async function pluginCheck(
   const pluginManifestPath = join(packageRoot, "plugin", ".codex-plugin", "plugin.json");
   const bundleManifestPath = join(packageRoot, "plugin", "skills", "korean-public-proposal", "BUNDLE-MANIFEST.json");
   const marketplacePath = join(packageRoot, "marketplace", "marketplace.json");
+  const installedPluginPath = join(installRoot, "plugin", ".codex-plugin", "plugin.json");
+  const installedBundlePath = join(installRoot, "plugin", "skills", "korean-public-proposal", "BUNDLE-MANIFEST.json");
   try {
-    const [pluginRaw, bundleRaw, marketplaceRaw, pluginSha] = await Promise.all([
+    const [pluginRaw, bundleRaw, marketplaceRaw, packagePluginSha] = await Promise.all([
       dependencies.readFile(pluginManifestPath),
       dependencies.readFile(bundleManifestPath),
       dependencies.readFile(marketplacePath),
@@ -122,18 +125,17 @@ async function pluginCheck(
     };
     JSON.parse(bundleRaw);
     const marketplaceEntry = marketplace.plugins?.find((entry) => entry.name === "public-proposal");
-    const installedPluginPath = join(installRoot, "plugin", ".codex-plugin", "plugin.json");
     const installed = await dependencies.exists(installedPluginPath);
     if (
       plugin.name !== "public-proposal" ||
       marketplaceEntry?.source?.path !== "../plugin" ||
-      !pluginSha.startsWith("sha256:")
+      !packagePluginSha.startsWith("sha256:")
     ) {
       return {
         name: "plugin",
         status: "blocker",
         code: "PP_PLUGIN_INTEGRITY_FAILED",
-        detected: { pluginName: plugin.name, marketplaceSource: marketplaceEntry?.source?.path, pluginSha },
+        detected: { pluginName: plugin.name, marketplaceSource: marketplaceEntry?.source?.path, packagePluginSha },
         message: "Packaged public-proposal plugin or marketplace integrity failed.",
       };
     }
@@ -146,10 +148,50 @@ async function pluginCheck(
         message: "Public Proposal Codex plugin is not installed at the manifest-owned path.",
       };
     }
+    const manifest = parseInstallManifest(JSON.parse(await dependencies.readFile(join(installRoot, "installation.json"))));
+    if (manifest.installRoot !== installRoot) {
+      return {
+        name: "plugin",
+        status: "blocker",
+        code: "PP_INSTALL_MANIFEST_MISMATCH",
+        detected: { manifestInstallRoot: manifest.installRoot, installRoot },
+        message: "Installation receipt does not match the requested install root.",
+      };
+    }
+    const [installedPluginRaw, installedBundleRaw, installedPluginSha, installedBundleSha] = await Promise.all([
+      dependencies.readFile(installedPluginPath),
+      dependencies.readFile(installedBundlePath),
+      dependencies.sha256(installedPluginPath),
+      dependencies.sha256(installedBundlePath),
+    ]);
+    const installedPlugin = JSON.parse(installedPluginRaw) as { name?: string; version?: string };
+    if (
+      installedPlugin.name !== "public-proposal" ||
+      installedPluginSha !== manifest.pluginManifestSha256 ||
+      installedBundleSha !== manifest.bundleManifestSha256
+    ) {
+      return {
+        name: "plugin",
+        status: "blocker",
+        code: "PP_PLUGIN_INTEGRITY_FAILED",
+        detected: {
+          installedPluginName: installedPlugin.name,
+          installedPluginSha,
+          expectedPluginSha: manifest.pluginManifestSha256,
+          installedBundleSha,
+          expectedBundleSha: manifest.bundleManifestSha256,
+        },
+        message: "Installed Public Proposal plugin or Korean bundle hash does not match the receipt.",
+      };
+    }
+    const bundleCheck = await validateBundleFiles(installedBundleRaw, join(installRoot, "plugin", "skills", "korean-public-proposal"), dependencies);
+    if (bundleCheck) {
+      return bundleCheck;
+    }
     return {
       name: "plugin",
       status: "pass",
-      detected: { version: plugin.version, pluginSha },
+      detected: { version: installedPlugin.version, pluginSha: installedPluginSha, bundleSha: installedBundleSha },
       message: "Public Proposal plugin integrity is valid.",
     };
   } catch (error) {
@@ -161,6 +203,50 @@ async function pluginCheck(
       message: "Packaged public-proposal plugin cannot be verified.",
     };
   }
+}
+
+async function validateBundleFiles(
+  bundleRaw: string,
+  bundleRoot: string,
+  dependencies: DoctorDependencies,
+): Promise<DoctorCheck | null> {
+  const bundle = JSON.parse(bundleRaw) as { files?: Array<{ path?: string; sha256?: string }> };
+  for (const file of bundle.files ?? []) {
+    if (!file.path || !file.sha256) {
+      return {
+        name: "plugin",
+        status: "blocker",
+        code: "PP_PLUGIN_INTEGRITY_FAILED",
+        detected: file,
+        message: "Installed Korean bundle manifest contains an invalid file entry.",
+      };
+    }
+    const installedFile = join(bundleRoot, file.path);
+    if (!(await dependencies.exists(installedFile))) {
+      return {
+        name: "plugin",
+        status: "blocker",
+        code: "PP_PLUGIN_INTEGRITY_FAILED",
+        detected: { missing: installedFile },
+        message: "Installed Korean bundle file is missing.",
+      };
+    }
+    const actual = await dependencies.sha256(installedFile);
+    if (normalizeHash(actual) !== normalizeHash(file.sha256)) {
+      return {
+        name: "plugin",
+        status: "blocker",
+        code: "PP_PLUGIN_INTEGRITY_FAILED",
+        detected: { path: installedFile, actual, expected: file.sha256 },
+        message: "Installed Korean bundle file hash does not match the bundle manifest.",
+      };
+    }
+  }
+  return null;
+}
+
+function normalizeHash(hash: string): string {
+  return hash.startsWith("sha256:") ? hash.slice("sha256:".length) : hash;
 }
 
 async function kppCheck(spawn: ProcessRunner, expectedVersion: string): Promise<DoctorCheck> {

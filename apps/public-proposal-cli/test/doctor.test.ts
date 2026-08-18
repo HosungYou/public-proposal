@@ -76,6 +76,24 @@ describe("public proposal doctor", () => {
       }),
     );
   });
+
+  it("blocks when the installed copied plugin or Korean bundle drifts from the stored manifest hashes", async () => {
+    const report = await runDoctor(
+      fakeDoctorInput(),
+      fakeDoctorDependencies({
+        installedPluginSha: "sha256:tampered-installed-plugin",
+      }),
+    );
+
+    expect(report.ok).toBe(false);
+    expect(report.checks).toContainEqual(
+      expect.objectContaining({
+        name: "plugin",
+        status: "blocker",
+        code: "PP_PLUGIN_INTEGRITY_FAILED",
+      }),
+    );
+  });
 });
 
 function fakeDoctorInput(input?: Partial<DoctorInput>): DoctorInput {
@@ -97,22 +115,66 @@ function fakeDoctorDependencies(input?: {
   longtableVersion?: string | null;
   workerProtocol?: string | null;
   pluginManifestSha?: string;
+  installedPluginSha?: string;
 }): FakeDoctorDependencies {
   const kppVersion = input?.kppVersion === undefined ? SUPPORTED_KPP_VERSION : input.kppVersion;
   const longtableVersion =
     input?.longtableVersion === undefined ? SUPPORTED_LONGTABLE_VERSION : input.longtableVersion;
   const workerProtocol = input?.workerProtocol === undefined ? WORKER_PROTOCOL_VERSION : input.workerProtocol;
   const pluginManifestSha = input?.pluginManifestSha ?? "sha256:/pkg/plugin/.codex-plugin/plugin.json";
+  const installedPluginSha =
+    input?.installedPluginSha ?? "sha256:/home/ada/.config/public-proposal/plugin/.codex-plugin/plugin.json";
   const commands: string[] = [];
 
   return {
     packageRoot: "/pkg",
     commands,
     sha256: async (path) => {
+      if (path === "/home/ada/.config/public-proposal/plugin/.codex-plugin/plugin.json") return installedPluginSha;
+      if (path === "/home/ada/.config/public-proposal/plugin/skills/korean-public-proposal/BUNDLE-MANIFEST.json") {
+        return "sha256:/home/ada/.config/public-proposal/plugin/skills/korean-public-proposal/BUNDLE-MANIFEST.json";
+      }
       if (path.endsWith("plugin.json")) return pluginManifestSha;
       return `sha256:${path}`;
     },
     readFile: async (path) => {
+      if (path === "/home/ada/.config/public-proposal/installation.json") {
+        return JSON.stringify({
+          schemaVersion: "1.0.0",
+          packageVersion: "0.1.0",
+          kppVersion: "0.2.1",
+          longtableVersion: "0.1.72",
+          pluginVersion: "0.1.0",
+          workerProtocol: "1.0.0",
+          installRoot: "/home/ada/.config/public-proposal",
+          pluginManifestSha256: "sha256:/home/ada/.config/public-proposal/plugin/.codex-plugin/plugin.json",
+          bundleManifestSha256:
+            "sha256:/home/ada/.config/public-proposal/plugin/skills/korean-public-proposal/BUNDLE-MANIFEST.json",
+          ownedPaths: [
+            "/home/ada/.config/public-proposal/plugin",
+            "/home/ada/.config/public-proposal/marketplace",
+            "/home/ada/.config/public-proposal/codex-skills",
+          ],
+          createdAt: "2026-08-18T00:00:00.000Z",
+        });
+      }
+      if (path === "/home/ada/.config/public-proposal/plugin/.codex-plugin/plugin.json") {
+        return JSON.stringify({ name: "public-proposal", version: "0.1.0" });
+      }
+      if (path === "/home/ada/.config/public-proposal/plugin/skills/korean-public-proposal/BUNDLE-MANIFEST.json") {
+        return JSON.stringify({
+          schemaVersion: "1.0.0",
+          files: [
+            {
+              path: "SKILL.md",
+              sha256: "sha256:/home/ada/.config/public-proposal/plugin/skills/korean-public-proposal/SKILL.md",
+            },
+          ],
+        });
+      }
+      if (path === "/home/ada/.config/public-proposal/plugin/skills/korean-public-proposal/SKILL.md") {
+        return "# Korean Public Proposal\n";
+      }
       if (path === "/pkg/plugin/.codex-plugin/plugin.json") {
         return JSON.stringify({ name: "public-proposal", version: "0.1.0" });
       }

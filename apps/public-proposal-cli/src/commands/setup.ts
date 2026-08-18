@@ -59,6 +59,10 @@ export async function runSetup(
 
   const existingManifest = await readExistingManifest(dependencies, manifest);
   if (existingManifest) {
+    const existingValidation = await validateExistingManifest(existingManifest, installRoot, exists);
+    if (existingValidation) {
+      return failed(existingValidation.code, existingValidation.message, []);
+    }
     return {
       ok: true,
       plan: PLAN,
@@ -71,7 +75,8 @@ export async function runSetup(
 
   const conflict = await findConflict(installRoot, exists);
   if (conflict) {
-    return failed("PP_MARKETPLACE_CONFLICT", `Existing path is not owned by Public Proposal: ${conflict}`, []);
+    const code = conflict.includes("/marketplace") ? "PP_MARKETPLACE_CONFLICT" : "PP_INSTALL_TARGET_CONFLICT";
+    return failed(code, `Existing path is not owned by Public Proposal: ${conflict}`, []);
   }
 
   const integrity = await packageIntegrity(packageRoot, dependencies);
@@ -101,6 +106,11 @@ export async function runSetup(
       join(ownedPaths[0], ".codex-plugin", "plugin.json"),
       dependencies,
     );
+    await mirrorPackagedFile(
+      join(packageRoot, "plugin", "skills", "korean-public-proposal", "BUNDLE-MANIFEST.json"),
+      join(ownedPaths[0], "skills", "korean-public-proposal", "BUNDLE-MANIFEST.json"),
+      dependencies,
+    );
     await copyDir(join(packageRoot, "marketplace"), ownedPaths[1]);
     writes.push(ownedPaths[1]);
     await mirrorPackagedFile(
@@ -122,6 +132,8 @@ export async function runSetup(
     await ensureMarketplaceRegistered(dependencies.spawn, join(installRoot, "marketplace"));
     await ensurePluginInstalled(dependencies.spawn);
 
+    const installManifest = await buildManifest(installRoot, ownedPaths, dependencies);
+    const manifestContents = serializeManifest(installManifest);
     const doctor = await runDoctor(
       {
         installRoot,
@@ -132,7 +144,7 @@ export async function runSetup(
       {
         packageRoot,
         spawn: dependencies.spawn,
-        readFile: dependencies.readFile,
+        readFile: async (path) => (path === manifest ? manifestContents : dependencies.readFile(path)),
         exists,
         sha256: dependencies.sha256,
       },
@@ -142,9 +154,8 @@ export async function runSetup(
       throw new SetupCommandError(failedCheck.code ?? "PP_DOCTOR_BLOCKED", failedCheck.message);
     }
 
-    const installManifest = await buildManifest(installRoot, packageRoot, ownedPaths, dependencies);
     const tempManifest = manifestTempPath(installRoot);
-    await dependencies.writeFile(tempManifest, serializeManifest(installManifest), 0o600);
+    await dependencies.writeFile(tempManifest, manifestContents, 0o600);
     writes.push(tempManifest);
     await dependencies.rename(tempManifest, manifest);
     return {
@@ -198,9 +209,36 @@ async function readExistingManifest(
 }
 
 async function findConflict(installRoot: string, exists: (path: string) => Promise<boolean>): Promise<string | null> {
-  for (const path of [join(installRoot, "marketplace", "marketplace.json"), join(installRoot, "plugin", ".codex-plugin", "plugin.json")]) {
+  for (const path of [
+    join(installRoot, "plugin"),
+    join(installRoot, "marketplace"),
+    join(installRoot, "codex-skills"),
+    join(installRoot, "worker"),
+  ]) {
     if (await exists(path)) {
       return path;
+    }
+  }
+  return null;
+}
+
+async function validateExistingManifest(
+  existingManifest: InstallManifest,
+  installRoot: string,
+  exists: (path: string) => Promise<boolean>,
+): Promise<{ code: string; message: string } | null> {
+  if (existingManifest.installRoot !== installRoot) {
+    return {
+      code: "PP_INSTALL_MANIFEST_MISMATCH",
+      message: `Existing installation receipt belongs to ${existingManifest.installRoot}, not ${installRoot}.`,
+    };
+  }
+  for (const ownedPath of existingManifest.ownedPaths) {
+    if (!(await exists(ownedPath))) {
+      return {
+        code: "PP_INSTALL_MANIFEST_STALE",
+        message: `Existing installation receipt references missing path: ${ownedPath}`,
+      };
     }
   }
   return null;
@@ -351,12 +389,11 @@ async function ensurePluginInstalled(spawn: ProcessRunner): Promise<void> {
 
 async function buildManifest(
   installRoot: string,
-  packageRoot: string,
   ownedPaths: readonly string[],
   dependencies: SetupDependencies,
 ): Promise<InstallManifest> {
-  const pluginManifestPath = join(packageRoot, "plugin", ".codex-plugin", "plugin.json");
-  const bundleManifestPath = join(packageRoot, "plugin", "skills", "korean-public-proposal", "BUNDLE-MANIFEST.json");
+  const pluginManifestPath = join(installRoot, "plugin", ".codex-plugin", "plugin.json");
+  const bundleManifestPath = join(installRoot, "plugin", "skills", "korean-public-proposal", "BUNDLE-MANIFEST.json");
   const plugin = JSON.parse(await dependencies.readFile(pluginManifestPath)) as { version?: string };
   return {
     schemaVersion: INSTALL_MANIFEST_SCHEMA_VERSION,

@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { spawn } from "node:child_process";
-import { chmod, cp, mkdir, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
+import { cp, mkdir, open, readFile, realpath, rename, rm, stat, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
 import type { ProcessResult } from "./contracts.js";
 
@@ -25,10 +25,16 @@ export async function sha256File(path: string): Promise<string> {
 
 export async function writeFileWithMode(path: string, contents: string, mode?: number): Promise<void> {
   await mkdir(dirname(path), { recursive: true });
-  await writeFile(path, contents, "utf8");
   if (mode !== undefined) {
-    await chmod(path, mode);
+    const handle = await open(path, "w", mode);
+    try {
+      await handle.writeFile(contents, "utf8");
+    } finally {
+      await handle.close();
+    }
+    return;
   }
+  await writeFile(path, contents, "utf8");
 }
 
 export const nodeFs = {
@@ -47,6 +53,7 @@ export const nodeFs = {
     await mkdir(path, { recursive: true });
   },
   readFile: async (path: string) => readFile(path, "utf8"),
+  realpath,
   remove: async (path: string) => {
     await rm(path, { recursive: true, force: true });
   },

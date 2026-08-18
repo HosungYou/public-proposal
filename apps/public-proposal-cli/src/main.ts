@@ -148,6 +148,11 @@ export async function runCli(argv: readonly string[]): Promise<number> {
           setup: async (setupOptions) => runSetup(setupOptions),
         },
       );
+      if (options.apply && result.mode !== "applied") {
+        const blocked = result.changes.find((change) => change.startsWith("blocked: "));
+        const code = blocked?.replace("blocked: ", "") || "PP_UPDATE_APPLY_FAILED";
+        throw new PublicProposalCliError(code, "Public Proposal update apply failed.", result);
+      }
       writeEnvelope(success("Public Proposal update preview completed.", result), Boolean(options.json));
     });
 

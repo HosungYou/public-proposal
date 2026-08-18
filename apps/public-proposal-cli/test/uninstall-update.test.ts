@@ -1,3 +1,7 @@
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { spawn } from "node:child_process";
 import { describe, expect, it } from "vitest";
 import type { InstallManifest } from "../src/contracts.js";
 import { runUninstall } from "../src/commands/uninstall.js";
@@ -26,8 +30,58 @@ describe("public proposal uninstall and update", () => {
     expect(removed).toEqual([
       "/home/ada/.config/public-proposal/plugin",
       "/home/ada/.config/public-proposal/marketplace",
+      "/home/ada/.config/public-proposal/installation.json",
     ]);
     expect(result.preserved).toEqual(["/home/ada/.config/public-proposal/.longtable", "/work/customer-evidence"]);
+  });
+
+  it("uninstall rejects manifest path traversal before recursive removal", async () => {
+    const removed: string[] = [];
+
+    await expect(
+      runUninstall("/home/ada/.config/public-proposal", {
+        readManifest: async () =>
+          fakeManifest({
+            ownedPaths: ["/home/ada/.config/public-proposal/plugin/../../ssh"],
+          }),
+        exists: async () => true,
+        remove: async (path) => {
+          removed.push(path);
+        },
+      }),
+    ).rejects.toMatchObject({ code: "PP_UNINSTALL_PATH_REJECTED" });
+    expect(removed).toEqual([]);
+  });
+
+  it("uninstall rejects symlink escapes after canonical realpath resolution", async () => {
+    const removed: string[] = [];
+    const dependencies = {
+      readManifest: async () =>
+        fakeManifest({
+          ownedPaths: ["/home/ada/.config/public-proposal/plugin"],
+        }),
+      exists: async () => true,
+      realpath: async (path: string) =>
+        path === "/home/ada/.config/public-proposal/plugin" ? "/tmp/escaped-plugin" : path,
+      remove: async (path: string) => {
+        removed.push(path);
+      },
+    };
+
+    await expect(runUninstall("/home/ada/.config/public-proposal", dependencies)).rejects.toMatchObject({
+      code: "PP_UNINSTALL_PATH_REJECTED",
+    });
+    expect(removed).toEqual([]);
+  });
+
+  it("uninstall rejects a receipt copied from another installation root", async () => {
+    await expect(
+      runUninstall("/home/ada/.config/public-proposal", {
+        readManifest: async () => fakeManifest({ installRoot: "/other/root", ownedPaths: ["/other/root/plugin"] }),
+        exists: async () => true,
+        remove: async () => undefined,
+      }),
+    ).rejects.toMatchObject({ code: "PP_INSTALL_MANIFEST_MISMATCH" });
   });
 
   it("update previews compatibility changes without applying setup", async () => {
@@ -84,6 +138,70 @@ describe("public proposal uninstall and update", () => {
       longtableVersion: "0.1.72",
     });
   });
+
+  it("update apply returns a failed result when delegated setup reports failure", async () => {
+    const result = await runUpdate(
+      { installRoot: "/home/ada/.config/public-proposal", apply: true },
+      {
+        readMatrix: async () => ({ publicProposalVersion: "0.1.1" }),
+        checkCompatibility: async () => [
+          { name: "authority", status: "pass", detected: "0.1.1", message: "Compatible update available." },
+        ],
+        setup: async () => ({
+          ok: false,
+          plan: [],
+          writes: [],
+          checks: [],
+          error: { code: "PP_MARKETPLACE_CONFLICT", message: "conflict" },
+        }),
+      },
+    );
+
+    expect(result).toEqual({
+      mode: "preview",
+      changes: ["blocked: PP_MARKETPLACE_CONFLICT"],
+    });
+  });
+
+  it("update apply returns a failed result when delegated setup throws", async () => {
+    const result = await runUpdate(
+      { installRoot: "/home/ada/.config/public-proposal", apply: true },
+      {
+        readMatrix: async () => ({ publicProposalVersion: "0.1.1" }),
+        checkCompatibility: async () => [
+          { name: "authority", status: "pass", detected: "0.1.1", message: "Compatible update available." },
+        ],
+        setup: async () => {
+          throw Object.assign(new Error("setup exploded"), { code: "PP_SETUP_COMMAND_FAILED" });
+        },
+      },
+    );
+
+    expect(result).toEqual({
+      mode: "preview",
+      changes: ["blocked: PP_SETUP_COMMAND_FAILED"],
+    });
+  });
+
+  it("CLI update --apply emits a failed JSON envelope when setup is blocked", async () => {
+    const installRoot = await mkdtemp(join(tmpdir(), "public-proposal-update-conflict-"));
+    try {
+      await mkdir(join(installRoot, "marketplace"), { recursive: true });
+      await writeFile(join(installRoot, "marketplace", "marketplace.json"), "{\"name\":\"other\"}\n", "utf8");
+
+      const result = await runCli(["update", "--install-root", installRoot, "--apply", "--json"]);
+      const envelope = JSON.parse(result.stdout) as { ok: boolean; code: string; data: unknown };
+
+      expect(result.code).toBe(1);
+      expect(envelope).toMatchObject({
+        ok: false,
+        code: "PP_MARKETPLACE_CONFLICT",
+      });
+      await expect(readFile(join(installRoot, "installation.json"), "utf8")).rejects.toThrow();
+    } finally {
+      await rm(installRoot, { force: true, recursive: true });
+    }
+  });
 });
 
 function fakeManifest(input?: Partial<InstallManifest>): InstallManifest {
@@ -101,4 +219,28 @@ function fakeManifest(input?: Partial<InstallManifest>): InstallManifest {
     createdAt: "2026-08-18T00:00:00.000Z",
     ...input,
   };
+}
+
+interface CommandResult {
+  readonly code: number;
+  readonly stdout: string;
+  readonly stderr: string;
+}
+
+async function runCli(args: readonly string[]): Promise<CommandResult> {
+  return new Promise((resolve) => {
+    const child = spawn(process.execPath, ["--import", "tsx", "apps/public-proposal-cli/src/main.ts", ...args], {
+      cwd: process.cwd(),
+      env: process.env,
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    let stdout = "";
+    let stderr = "";
+    child.stdout.setEncoding("utf8");
+    child.stderr.setEncoding("utf8");
+    child.stdout.on("data", (chunk: string) => { stdout += chunk; });
+    child.stderr.on("data", (chunk: string) => { stderr += chunk; });
+    child.on("error", (error: Error) => resolve({ code: 1, stdout, stderr: error.message }));
+    child.on("close", (code) => resolve({ code: code ?? 1, stdout, stderr }));
+  });
 }

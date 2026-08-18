@@ -109,10 +109,70 @@ describe("public proposal setup", () => {
     expect(fake.commands).toEqual([]);
     expect(fake.writes).toEqual([]);
   });
+
+  it("stops before mutation when codex-skills already exists and preserves it on later failures", async () => {
+    const conflictFake = fakeSetupDependencies();
+    conflictFake.files["/home/ada/.config/public-proposal/codex-skills/existing-skill.txt"] = "keep";
+
+    const conflict = await runSetup(
+      { provider: "codex", installScope: "user", cwd: "/work", home: "/home/ada" },
+      conflictFake,
+    );
+
+    expect(conflict.ok).toBe(false);
+    expect(conflict.error?.code).toBe("PP_INSTALL_TARGET_CONFLICT");
+    expect(conflictFake.commands).toEqual([]);
+    expect(conflictFake.files["/home/ada/.config/public-proposal/codex-skills/existing-skill.txt"]).toBe("keep");
+
+    const failureFake = fakeSetupDependencies({
+      commandFailures: new Map([["codex plugin add public-proposal@public-proposal", { code: 1, stdout: "", stderr: "install failed" }]]),
+    });
+    failureFake.preexisting.add("/home/ada/.config/public-proposal");
+
+    const failure = await runSetup(
+      { provider: "codex", installScope: "user", cwd: "/work", home: "/home/ada" },
+      failureFake,
+    );
+
+    expect(failure.ok).toBe(false);
+    expect(failureFake.removed).toEqual([
+      "/home/ada/.config/public-proposal/codex-skills",
+      "/home/ada/.config/public-proposal/marketplace",
+      "/home/ada/.config/public-proposal/plugin",
+    ]);
+    expect(failureFake.removed).not.toContain("/home/ada/.config/public-proposal");
+  });
+
+  it("rejects stale manifests instead of treating them as idempotent success", async () => {
+    const fake = fakeSetupDependencies();
+    fake.files["/home/ada/.config/public-proposal/installation.json"] = JSON.stringify({
+      schemaVersion: "1.0.0",
+      packageVersion: "0.1.0",
+      kppVersion: "0.2.1",
+      longtableVersion: "0.1.72",
+      pluginVersion: "0.1.0",
+      workerProtocol: "1.0.0",
+      installRoot: "/other/root",
+      pluginManifestSha256: "sha256:/pkg/plugin/.codex-plugin/plugin.json",
+      bundleManifestSha256: "sha256:/pkg/plugin/skills/korean-public-proposal/BUNDLE-MANIFEST.json",
+      ownedPaths: ["/other/root/plugin"],
+      createdAt: "2026-08-18T00:00:00.000Z",
+    });
+
+    const result = await runSetup(
+      { provider: "codex", installScope: "user", cwd: "/work", home: "/home/ada" },
+      fake,
+    );
+
+    expect(result.ok).toBe(false);
+    expect(result.error?.code).toBe("PP_INSTALL_MANIFEST_MISMATCH");
+    expect(fake.commands).toEqual([]);
+  });
 });
 
 interface FakeSetupDependencies extends SetupDependencies {
   readonly files: Record<string, string>;
+  readonly preexisting: Set<string>;
   readonly writes: string[];
   readonly renames: Array<{ from: string; to: string }>;
   readonly removed: string[];
@@ -132,6 +192,7 @@ function fakeSetupDependencies(input?: {
     }),
   };
   const writes: string[] = [];
+  const preexisting = new Set<string>();
   const renames: Array<{ from: string; to: string }> = [];
   const removed: string[] = [];
   const commands: string[] = [];
@@ -140,6 +201,7 @@ function fakeSetupDependencies(input?: {
   return {
     packageRoot: "/pkg",
     files,
+    preexisting,
     writes,
     renames,
     removed,
