@@ -2,7 +2,7 @@
 
 import { createHash } from "node:crypto";
 import { spawn } from "node:child_process";
-import { realpathSync } from "node:fs";
+import { existsSync, realpathSync } from "node:fs";
 import {
   chmod,
   cp,
@@ -513,7 +513,11 @@ async function prepareIsolation(fixtureRoot, installRoot) {
     [...writeGuardArguments(fixtureRoot), "-e", `require("node:fs").writeFileSync(${JSON.stringify(deniedPath)}, "denied")`],
     { env },
   );
-  const hostStatePath = join(resolve(process.env.HOME ?? dirname(fixtureRoot)), ".codex", "config.toml");
+  const configuredHostStatePath = join(resolve(process.env.HOME ?? dirname(fixtureRoot)), ".codex", "config.toml");
+  // Hosted runners do not provision a Codex config. Fall back to an existing
+  // executable outside the fixture so the permission probe tests access
+  // control rather than whether an optional host file happens to exist.
+  const hostStatePath = existsSync(configuredHostStatePath) ? configuredHostStatePath : process.execPath;
   const deniedReadProbe = await capture(
     "host-state read-boundary probe",
     process.execPath,
