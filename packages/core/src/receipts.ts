@@ -9,6 +9,7 @@ import {
 } from "@longtable/kpp-schemas";
 import { KppError } from "./errors.js";
 import { sha256File } from "./hash.js";
+import { withReceiptPathLock } from "./receipt-lock.js";
 
 const DEFAULT_SCHEMA_VERSION = "1.0.0";
 const DEFAULT_TOOL_VERSION = "0.1.0";
@@ -49,7 +50,9 @@ export async function writeReceipt(input: ReceiptInput): Promise<Receipt> {
     result: input.result ?? "PASS",
   }, input.output);
 
-  await writeAtomically(input.output, `${JSON.stringify(receipt, null, 2)}\n`);
+  await withReceiptPathLock(input.output, async () => {
+    await writeAtomically(input.output, `${JSON.stringify(receipt, null, 2)}\n`);
+  });
   return receipt;
 }
 

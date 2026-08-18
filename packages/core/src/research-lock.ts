@@ -11,6 +11,7 @@ import {
 import { KppError } from "./errors.js";
 import { sha256File } from "./hash.js";
 import { readProject } from "./project-store.js";
+import { withReceiptPathLock } from "./receipt-lock.js";
 import { verifyReceipt } from "./receipts.js";
 
 const DEFAULT_SCHEMA_VERSION = "1.0.0";
@@ -51,6 +52,7 @@ interface ResearchLockTestHooks {
   readonly beforeReceiptCreate?: () => Promise<void>;
   readonly afterReceiptCreate?: (receiptPath: string) => Promise<void>;
   readonly beforePostWriteCleanup?: (receiptPath: string) => Promise<void>;
+  readonly afterPostWriteOwnershipCheck?: (receiptPath: string) => Promise<void>;
 }
 
 interface VerifiedResearchArtifact {
@@ -396,7 +398,9 @@ async function createResearchReceiptExclusive(input: {
   }
 
   const contents = `${JSON.stringify(parsed.data, null, 2)}\n`;
-  await writeCreateOnly(input.output, contents);
+  await withReceiptPathLock(input.output, async () => {
+    await writeCreateOnly(input.output, contents);
+  });
   return { contents };
 }
 
@@ -483,15 +487,15 @@ async function verifyEmittedReceipt(
 
 async function cleanupOwnedReceipt(receiptPath: string, emittedContents: string): Promise<void> {
   await testHooks.beforePostWriteCleanup?.(receiptPath);
-  let currentContents: string;
-  try {
-    currentContents = await readFile(receiptPath, "utf8");
-  } catch {
-    return;
-  }
-  if (currentContents === emittedContents) {
-    await rm(receiptPath, { force: true });
-  }
+  await withReceiptPathLock(receiptPath, async () => {
+    if (!await receiptBytesStillMatch(receiptPath, emittedContents)) {
+      return;
+    }
+    await testHooks.afterPostWriteOwnershipCheck?.(receiptPath);
+    if (await receiptBytesStillMatch(receiptPath, emittedContents)) {
+      await rm(receiptPath, { force: true });
+    }
+  });
 }
 
 function isSubpath(parent: string, child: string): boolean {
@@ -525,6 +529,14 @@ async function fileExists(path: string): Promise<boolean> {
   try {
     await stat(path);
     return true;
+  } catch {
+    return false;
+  }
+}
+
+async function receiptBytesStillMatch(receiptPath: string, emittedContents: string): Promise<boolean> {
+  try {
+    return await readFile(receiptPath, "utf8") === emittedContents;
   } catch {
     return false;
   }

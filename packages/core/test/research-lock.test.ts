@@ -306,6 +306,28 @@ describe("LongTable research lock import", () => {
     expect(await readFile(receiptPath, "utf8")).toBe(replacementReceipt);
   });
 
+  it("does not remove another writer's receipt when replacement happens after ownership check", async () => {
+    const root = await createResearchProject(temporaryDirectories);
+    const receiptPath = join(root, "receipts", "research-lock.json");
+    const sourceLedger = join(root, "evidence", "research-lock", "source-ledger.json");
+    let replacementReceipt = "";
+    setResearchLockTestHooks({
+      afterArtifactsVerified: async () => {
+        await writeFile(sourceLedger, "changed before receipt write\n");
+      },
+      afterPostWriteOwnershipCheck: async () => {
+        await writeFile(sourceLedger, await readFile(join(fixtureDirectory, "evidence", "research-lock", "source-ledger.json")));
+        await writeFile(receiptPath, replacementReceiptBytes("SOURCE_LOCKED"));
+        replacementReceipt = await readFile(receiptPath, "utf8");
+      },
+    });
+
+    await expect(importResearchLock(root, handoffPath, "0.1.72"))
+      .rejects.toMatchObject({ code: "PP_RESEARCH_LOCK_WRITE_MISMATCH" });
+
+    expect(await readFile(receiptPath, "utf8")).toBe(replacementReceipt);
+  });
+
   it("does not remove a malformed receipt that appears before post-write verification reads it", async () => {
     const root = await createResearchProject(temporaryDirectories);
     const receiptPath = join(root, "receipts", "research-lock.json");
@@ -371,6 +393,20 @@ function expectedInputHashes(): string[] {
     "e28bd6b7a183bade21d9e18ce1d1fd2f4e7759974a46a4cb2135e7d1014d9d6e",
     "f10795ef239462d0cabd87a9e6b84e7a13156c86a346e09974e45c177609695e",
   ];
+}
+
+function replacementReceiptBytes(stage: "SOURCE_LOCKED" | "EVIDENCE_LOCKED"): string {
+  return `${JSON.stringify({
+    schemaVersion: "1.0.0",
+    stage,
+    createdAt: "2026-08-18T00:00:00.000Z",
+    toolVersion: "0.1.0",
+    files: [
+      { path: "/replacement/handoff.json", sha256: "a".repeat(64) },
+    ],
+    inputReceiptHashes: [],
+    result: "PASS",
+  }, null, 2)}\n`;
 }
 
 interface CommandResult {
