@@ -76,6 +76,26 @@ describe("kpp CLI", () => {
     await expect(readdir(root)).resolves.not.toContain("release");
   });
 
+  it("defaults init to general_procurement when proposalClass is omitted", async () => {
+    const root = await mkdtemp(join(tmpdir(), "kpp-cli-"));
+    temporaryDirectories.push(root);
+
+    const initialized = await run(["init", root, "--json"]);
+
+    expect(initialized).toMatchObject({ code: 0, stderr: "" });
+    expect(parseEnvelope(initialized.stdout)).toMatchObject({
+      ok: true,
+      code: "KPP_OK",
+      data: {
+        projectId: basename(root),
+        proposalClass: "general_procurement",
+      },
+    });
+    await expect(readFile(join(root, "kpp.project.yaml"), "utf8")).resolves.toContain(
+      "proposalClass: general_procurement",
+    );
+  });
+
   it("persists an explicit proposal class during init", async () => {
     const root = await mkdtemp(join(tmpdir(), "kpp-cli-"));
     temporaryDirectories.push(root);
@@ -102,6 +122,29 @@ describe("kpp CLI", () => {
     await expect(readFile(join(root, "kpp.project.yaml"), "utf8")).resolves.toContain(
       "proposalClass: research_service",
     );
+  });
+
+  it("rejects unknown proposal classes without creating a project", async () => {
+    const root = await mkdtemp(join(tmpdir(), "kpp-cli-"));
+    temporaryDirectories.push(root);
+
+    const initialized = await run([
+      "init",
+      root,
+      "--project-id",
+      "r1",
+      "--proposal-class",
+      "unknown",
+      "--json",
+    ]);
+
+    expect(initialized.code).not.toBe(0);
+    expect(initialized.stderr).toBe("");
+    expect(parseEnvelope(initialized.stdout)).toMatchObject({
+      ok: false,
+    });
+    await expect(readFile(join(root, "kpp.project.yaml"), "utf8")).rejects.toThrow();
+    await expect(readdir(root)).resolves.toEqual([]);
   });
 
   it("returns a stable JSON input error when status has no project", async () => {

@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, readdir, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -162,6 +162,22 @@ describe("project state transitions", () => {
       state: "INIT",
     });
     expect((await readdir(root)).filter((entry) => entry.endsWith(".tmp"))).toEqual([]);
+  });
+
+  it("defaults initializeProject to general_procurement when proposalClass is omitted", async () => {
+    const root = await mkdtemp(join(tmpdir(), "kpp-state-"));
+    temporaryDirectories.push(root);
+
+    const project = await initializeProject(root, { projectId: "sample" });
+
+    expect(project).toMatchObject({
+      projectId: "sample",
+      proposalClass: "general_procurement",
+      state: "INIT",
+    });
+    await expect(readFile(join(root, "kpp.project.yaml"), "utf8")).resolves.toContain(
+      "proposalClass: general_procurement",
+    );
   });
 });
 
