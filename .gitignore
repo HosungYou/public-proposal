@@ -1,5 +1,7 @@
 .worktrees/
 .superpowers/
+.omo/
+**/.omo/
 node_modules/
 dist/
 .venv/
