@@ -5,6 +5,7 @@ import { dirname, join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { advanceProject, executeFile, initializeProject, sha256File, writeReceipt } from "@longtable/kpp-core";
 import { R08_TOKEN_PROFILE_SHA256, renderFigureArtifact, type GanttFigureSpec } from "@longtable/kpp-renderers";
+import { resolveTool } from "../support/tool-paths.js";
 
 const roots: string[] = [];
 const fixtureRoot = resolve("fixtures");
@@ -177,8 +178,9 @@ async function rasterizeSvgToDocxMedia(svgPath: string, destination: string): Pr
   const root = await mkdtemp(join(tmpdir(), "kpp-r08-figure-raster-"));
   roots.push(root);
   const profile = join(root, "libreoffice-profile");
+  const soffice = await resolveTool("soffice");
   await mkdir(profile);
-  await executeFile("/Applications/LibreOffice.app/Contents/MacOS/soffice", [
+  await executeFile(soffice, [
     `-env:UserInstallation=${pathToFileURL(profile).href}`,
     "--headless",
     "--convert-to",
@@ -195,20 +197,24 @@ async function renderDocx(copied: string, docxPath: string): Promise<Pick<Propos
   const renderRoot = join(copied, "render");
   await mkdir(renderRoot, { recursive: true });
   const profile = join(renderRoot, "libreoffice-profile");
+  const soffice = await resolveTool("soffice");
+  const pdftoppm = await resolveTool("pdftoppm");
+  const pdftotext = await resolveTool("pdftotext");
+  const pdfinfo = await resolveTool("pdfinfo");
   await mkdir(profile);
-  await executeFile("/Applications/LibreOffice.app/Contents/MacOS/soffice", [
+  await executeFile(soffice, [
     `-env:UserInstallation=file://${profile}`, "--headless", "--convert-to", "pdf:writer_pdf_Export", "--outdir", renderRoot, docxPath,
   ]);
   const converted = join(renderRoot, "proposal.pdf");
   const pdfPath = converted;
   const pagePath = join(renderRoot, "page-0001.png");
-  await executeFile("/opt/homebrew/bin/pdftoppm", ["-f", "1", "-singlefile", "-png", pdfPath, join(renderRoot, "page-0001")]);
-  const extractorPath = "/opt/homebrew/bin/pdftotext";
+  await executeFile(pdftoppm, ["-f", "1", "-singlefile", "-png", pdfPath, join(renderRoot, "page-0001")]);
+  const extractorPath = pdftotext;
   const extracted = await executeFile(extractorPath, [pdfPath, "-"]);
   const text = extracted.stdout.normalize("NFC").trim();
   const identity = await executeFile(extractorPath, ["-v"]);
   const version = `${identity.stdout}${identity.stderr}`.trim();
-  const info = await executeFile("/opt/homebrew/bin/pdfinfo", [pdfPath]);
+  const info = await executeFile(pdfinfo, [pdfPath]);
   const pages = Number(/^Pages:\s+(\d+)$/mu.exec(info.stdout)?.[1]);
   const renderManifestPath = join(renderRoot, "render.json");
   await writeJson(renderManifestPath, {

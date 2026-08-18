@@ -2,6 +2,7 @@ import { access, chmod, copyFile, mkdir, mkdtemp, readFile, readdir, rm, stat, s
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
+import { resolveTool } from "../../../tests/support/tool-paths.js";
 import { advanceProject, executeFile, initializeProject, sha256File, verifyProjectState, writeReceipt } from "@longtable/kpp-core";
 import { R08_TOKEN_PROFILE_SHA256, renderFigureArtifact, type GanttFigureSpec } from "@longtable/kpp-renderers";
 import { afterEach, describe, expect, it } from "vitest";
@@ -445,8 +446,9 @@ async function createContentApprovedProject(
 
 async function rasterizeSvg(svgPath: string, outputDirectory: string): Promise<void> {
   const profile = await mkdtemp(join(tmpdir(), "kpp-figure-raster-profile-"));
+  const soffice = await resolveTool("soffice");
   try {
-    await executeFile("/Applications/LibreOffice.app/Contents/MacOS/soffice", [
+    await executeFile(soffice, [
       `-env:UserInstallation=${pathToFileURL(profile).href}`,
       "--headless",
       "--convert-to",
