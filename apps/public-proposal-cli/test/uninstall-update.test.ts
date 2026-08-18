@@ -222,7 +222,7 @@ function fakeManifest(input?: Partial<InstallManifest>): InstallManifest {
     worker: input?.worker ?? {
       executable: `${installRoot}/worker/bin/python`,
       protocolVersion: "1.0.0",
-      sha256: "sha256:worker",
+      sha256: `sha256:${"a".repeat(64)}`,
     },
   };
 }

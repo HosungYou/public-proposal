@@ -11,7 +11,7 @@
   "worker": {
     "executable": "/fixture/.public-proposal/worker/bin/python",
     "protocolVersion": "1.0.0",
-    "sha256": "sha256:worker"
+    "sha256": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
   },
   "ownedPaths": [
     "/fixture/.public-proposal/plugin",

@@ -27,6 +27,7 @@ export interface SetupDependencies {
   readonly rename: (from: string, to: string) => Promise<void>;
   readonly mkdir: (path: string) => Promise<void>;
   readonly sha256: (path: string) => Promise<string>;
+  readonly realpath?: (path: string) => Promise<string>;
   readonly now: () => string;
   readonly exists?: (path: string) => Promise<boolean>;
   readonly copyDir?: (from: string, to: string) => Promise<void>;
@@ -75,6 +76,10 @@ export async function runSetup(
       checks: [],
       manifest: existingManifest,
     };
+  }
+  const legacyManifest = await readLegacyManifest(dependencies, manifest);
+  if (legacyManifest) {
+    return migrateLegacyManifest(legacyManifest, installRoot, packageRoot, dependencies, exists, remove, installWorker);
   }
   if (await exists(manifest)) {
     return failed("PP_INSTALL_MANIFEST_MISMATCH", "Existing installation receipt cannot be parsed or is unsupported.", []);
@@ -157,6 +162,7 @@ export async function runSetup(
         spawn: dependencies.spawn,
         readFile: async (path) => (path === manifest ? manifestContents : dependencies.readFile(path)),
         exists,
+        realpath: dependencies.realpath,
         sha256: dependencies.sha256,
       },
     );
@@ -219,6 +225,49 @@ async function readExistingManifest(
   }
 }
 
+interface LegacyInstallManifest {
+  readonly schemaVersion: "1.0.0";
+  readonly packageVersion: string;
+  readonly kppVersion: typeof SUPPORTED_KPP_VERSION;
+  readonly longtableVersion: typeof SUPPORTED_LONGTABLE_VERSION;
+  readonly pluginVersion: string;
+  readonly workerProtocol: typeof WORKER_PROTOCOL_VERSION;
+  readonly installRoot: string;
+  readonly pluginManifestSha256: string;
+  readonly bundleManifestSha256: string;
+  readonly ownedPaths: readonly string[];
+  readonly createdAt: string;
+}
+
+async function readLegacyManifest(
+  dependencies: Pick<SetupDependencies, "readFile">,
+  path: string,
+): Promise<LegacyInstallManifest | null> {
+  try {
+    const parsed = JSON.parse(await dependencies.readFile(path)) as Record<string, unknown>;
+    if (
+      parsed.schemaVersion !== INSTALL_MANIFEST_SCHEMA_VERSION ||
+      parsed.kppVersion !== SUPPORTED_KPP_VERSION ||
+      parsed.longtableVersion !== SUPPORTED_LONGTABLE_VERSION ||
+      parsed.workerProtocol !== WORKER_PROTOCOL_VERSION ||
+      typeof parsed.packageVersion !== "string" ||
+      typeof parsed.pluginVersion !== "string" ||
+      typeof parsed.installRoot !== "string" ||
+      typeof parsed.pluginManifestSha256 !== "string" ||
+      typeof parsed.bundleManifestSha256 !== "string" ||
+      typeof parsed.createdAt !== "string" ||
+      "worker" in parsed ||
+      !Array.isArray(parsed.ownedPaths) ||
+      !parsed.ownedPaths.every((ownedPath) => typeof ownedPath === "string")
+    ) {
+      return null;
+    }
+    return parsed as unknown as LegacyInstallManifest;
+  } catch {
+    return null;
+  }
+}
+
 async function findConflict(installRoot: string, exists: (path: string) => Promise<boolean>): Promise<string | null> {
   for (const path of [
     join(installRoot, "plugin"),
@@ -269,6 +318,97 @@ async function validateExistingManifest(
     }
   }
   return null;
+}
+
+async function migrateLegacyManifest(
+  legacyManifest: LegacyInstallManifest,
+  installRoot: string,
+  packageRoot: string,
+  dependencies: SetupDependencies,
+  exists: (path: string) => Promise<boolean>,
+  remove: (path: string) => Promise<void>,
+  installWorker: (root: string, runner: ProcessRunner) => Promise<WorkerInstallation>,
+): Promise<SetupResult> {
+  const requestedRoot = resolve(installRoot);
+  const manifest = manifestPath(requestedRoot);
+  const expectedLegacyPaths = installerOwnedRoots(requestedRoot).filter((path) => !path.endsWith("/worker"));
+  const normalizedOwnedPaths = legacyManifest.ownedPaths.map((ownedPath) => resolve(ownedPath));
+  const uniqueOwnedPaths = new Set(normalizedOwnedPaths);
+  if (
+    resolve(legacyManifest.installRoot) !== requestedRoot ||
+    uniqueOwnedPaths.size !== expectedLegacyPaths.length ||
+    !expectedLegacyPaths.every((expectedPath) => uniqueOwnedPaths.has(expectedPath)) ||
+    legacyManifest.ownedPaths.some((ownedPath) => ownedPath !== resolve(ownedPath))
+  ) {
+    return failed("PP_INSTALL_MANIFEST_MISMATCH", "Existing legacy installation receipt does not match the installer-owned path set.", []);
+  }
+  for (const ownedPath of expectedLegacyPaths) {
+    if (!(await exists(ownedPath))) {
+      return failed("PP_INSTALL_MANIFEST_STALE", `Existing legacy installation receipt references missing path: ${ownedPath}`, []);
+    }
+  }
+  const workerRoot = join(requestedRoot, "worker");
+  if (await exists(workerRoot)) {
+    return failed("PP_INSTALL_TARGET_CONFLICT", `Existing path is not owned by Public Proposal: ${workerRoot}`, []);
+  }
+
+  const integrity = await packageIntegrity(packageRoot, dependencies);
+  if (integrity.status !== "pass") {
+    return { ok: false, plan: PLAN, writes: [], checks: [integrity], error: { code: integrity.code ?? "PP_PLUGIN_INTEGRITY_FAILED", message: integrity.message } };
+  }
+  const preflight = await preflightChecks(dependencies.spawn);
+  const blocker = preflight.find((check) => check.status === "blocker");
+  if (blocker) {
+    return { ok: false, plan: PLAN, writes: [], checks: preflight, error: { code: blocker.code ?? "PP_PREFLIGHT_BLOCKED", message: blocker.message } };
+  }
+
+  const writes: string[] = [];
+  try {
+    const worker = await installWorker(requestedRoot, dependencies.spawn);
+    writes.push(workerRoot);
+    const ownedPaths = [...expectedLegacyPaths, workerRoot];
+    const installManifest = await buildManifest(requestedRoot, ownedPaths, worker, dependencies);
+    const manifestContents = serializeManifest(installManifest);
+    const doctor = await runDoctor(
+      {
+        installRoot: requestedRoot,
+        expectedKppVersion: SUPPORTED_KPP_VERSION,
+        expectedLongtableVersion: SUPPORTED_LONGTABLE_VERSION,
+        expectedWorkerProtocol: WORKER_PROTOCOL_VERSION,
+      },
+      {
+        packageRoot,
+        spawn: dependencies.spawn,
+        readFile: async (path) => (path === manifest ? manifestContents : dependencies.readFile(path)),
+        exists,
+        realpath: dependencies.realpath,
+        sha256: dependencies.sha256,
+      },
+    );
+    if (!doctor.ok) {
+      const failedCheck = doctor.checks.find((check) => check.status === "blocker") ?? doctor.checks[0];
+      throw new SetupCommandError(failedCheck.code ?? "PP_DOCTOR_BLOCKED", failedCheck.message);
+    }
+    const tempManifest = manifestTempPath(requestedRoot);
+    await dependencies.writeFile(tempManifest, manifestContents, 0o600);
+    writes.push(tempManifest);
+    await dependencies.rename(tempManifest, manifest);
+    return {
+      ok: true,
+      plan: PLAN,
+      writes: [workerRoot, manifest],
+      manifestPath: manifest,
+      checks: doctor.checks,
+      manifest: installManifest,
+    };
+  } catch (error) {
+    await Promise.all([manifestTempPath(requestedRoot), workerRoot].map(async (path) => {
+      if (await exists(path)) await remove(path);
+    }));
+    const code = error instanceof SetupCommandError ? error.code : "PP_SETUP_COMMAND_FAILED";
+    const message = error instanceof Error ? error.message : String(error);
+    return failed(code, message, writes);
+  }
 }
 
 function installerOwnedRoots(installRoot: string): readonly string[] {

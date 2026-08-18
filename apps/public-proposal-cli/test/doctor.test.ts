@@ -77,6 +77,32 @@ describe("public proposal doctor", () => {
     );
   });
 
+  it("reports a managed worker protocol mismatch from the receipt", async () => {
+    const report = await runDoctor(fakeDoctorInput(), fakeDoctorDependencies({ manifestWorkerProtocol: "2.0.0" }));
+
+    expect(report.ok).toBe(false);
+    expect(report.checks).toContainEqual(
+      expect.objectContaining({
+        name: "worker",
+        status: "blocker",
+        code: "PP_WORKER_PROTOCOL_MISMATCH",
+      }),
+    );
+  });
+
+  it("blocks when the worker wrapper hash no longer matches the receipt", async () => {
+    const report = await runDoctor(fakeDoctorInput(), fakeDoctorDependencies({ installedWorkerSha: `sha256:${"f".repeat(64)}` }));
+
+    expect(report.ok).toBe(false);
+    expect(report.checks).toContainEqual(
+      expect.objectContaining({
+        name: "worker",
+        status: "blocker",
+        code: "PP_WORKER_INTEGRITY_FAILED",
+      }),
+    );
+  });
+
   it("blocks when the installed copied plugin or Korean bundle drifts from the stored manifest hashes", async () => {
     const report = await runDoctor(
       fakeDoctorInput(),
@@ -114,16 +140,21 @@ function fakeDoctorDependencies(input?: {
   kppVersion?: string | null;
   longtableVersion?: string | null;
   workerProtocol?: string | null;
+  manifestWorkerProtocol?: string;
   pluginManifestSha?: string;
   installedPluginSha?: string;
+  installedWorkerSha?: string;
 }): FakeDoctorDependencies {
   const kppVersion = input?.kppVersion === undefined ? SUPPORTED_KPP_VERSION : input.kppVersion;
   const longtableVersion =
     input?.longtableVersion === undefined ? SUPPORTED_LONGTABLE_VERSION : input.longtableVersion;
   const workerProtocol = input?.workerProtocol === undefined ? WORKER_PROTOCOL_VERSION : input.workerProtocol;
+  const manifestWorkerProtocol = input?.manifestWorkerProtocol ?? WORKER_PROTOCOL_VERSION;
   const pluginManifestSha = input?.pluginManifestSha ?? "sha256:/pkg/plugin/.codex-plugin/plugin.json";
   const installedPluginSha =
     input?.installedPluginSha ?? "sha256:/home/ada/.config/public-proposal/plugin/.codex-plugin/plugin.json";
+  const installedWorkerSha =
+    input?.installedWorkerSha ?? `sha256:${"a".repeat(64)}`;
   const commands: string[] = [];
 
   return {
@@ -134,6 +165,7 @@ function fakeDoctorDependencies(input?: {
       if (path === "/home/ada/.config/public-proposal/plugin/skills/korean-public-proposal/BUNDLE-MANIFEST.json") {
         return "sha256:/home/ada/.config/public-proposal/plugin/skills/korean-public-proposal/BUNDLE-MANIFEST.json";
       }
+      if (path === "/home/ada/.config/public-proposal/worker/bin/python") return installedWorkerSha;
       if (path.endsWith("plugin.json")) return pluginManifestSha;
       return `sha256:${path}`;
     },
@@ -152,8 +184,8 @@ function fakeDoctorDependencies(input?: {
             "sha256:/home/ada/.config/public-proposal/plugin/skills/korean-public-proposal/BUNDLE-MANIFEST.json",
           worker: {
             executable: "/home/ada/.config/public-proposal/worker/bin/python",
-            protocolVersion: "1.0.0",
-            sha256: "sha256:/home/ada/.config/public-proposal/worker/bin/python",
+            protocolVersion: manifestWorkerProtocol,
+            sha256: `sha256:${"a".repeat(64)}`,
           },
           ownedPaths: [
             "/home/ada/.config/public-proposal/plugin",
@@ -196,6 +228,7 @@ function fakeDoctorDependencies(input?: {
       throw Object.assign(new Error(`ENOENT ${path}`), { code: "ENOENT" });
     },
     exists: async (path) => path.startsWith("/home/ada/.config/public-proposal") || path.startsWith("/pkg"),
+    realpath: async (path) => path,
     spawn: async (command, args) => {
       const rendered = [command, ...args].join(" ");
       commands.push(rendered);

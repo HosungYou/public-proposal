@@ -67,7 +67,7 @@ describe("public proposal setup", () => {
       worker: {
         executable: "/home/ada/.config/public-proposal/worker/bin/python",
         protocolVersion: WORKER_PROTOCOL_VERSION,
-        sha256: "sha256:/home/ada/.config/public-proposal/worker/bin/python",
+        sha256: `sha256:${"a".repeat(64)}`,
       },
       ownedPaths: expect.arrayContaining([
         "/home/ada/.config/public-proposal/plugin",
@@ -242,6 +242,63 @@ describe("public proposal setup", () => {
     expect(arbitraryResult.error?.code).toBe("PP_INSTALL_MANIFEST_MISMATCH");
   });
 
+  it("migrates a valid Task 3 receipt by adding the managed worker root", async () => {
+    const fake = fakeSetupDependencies();
+    const installRoot = "/home/ada/.config/public-proposal";
+    fake.files[`${installRoot}/installation.json`] = JSON.stringify(task3Manifest(installRoot));
+    seedInstalledPlugin(fake, installRoot);
+    fake.files[`${installRoot}/marketplace/.dir`] = "dir";
+    fake.files[`${installRoot}/codex-skills/.dir`] = "dir";
+
+    const result = await runSetup(
+      { provider: "codex", installScope: "user", cwd: "/work", home: "/home/ada" },
+      fake,
+    );
+
+    expect(result.ok).toBe(true);
+    expect(fake.removed).toEqual([]);
+    expect(fake.writes).toEqual(expect.arrayContaining([
+      `${installRoot}/worker`,
+      `${installRoot}/installation.json.tmp`,
+    ]));
+    const manifest = JSON.parse(fake.files[`${installRoot}/installation.json`]);
+    expect(manifest).toMatchObject({
+      installRoot,
+      worker: {
+        executable: `${installRoot}/worker/bin/python`,
+        protocolVersion: WORKER_PROTOCOL_VERSION,
+      },
+      ownedPaths: [
+        `${installRoot}/plugin`,
+        `${installRoot}/marketplace`,
+        `${installRoot}/codex-skills`,
+        `${installRoot}/worker`,
+      ],
+    });
+  });
+
+  it("rolls back only the new worker root when Task 3 receipt migration fails", async () => {
+    const fake = fakeSetupDependencies({ workerFailure: new Error("worker install failed") });
+    const installRoot = "/home/ada/.config/public-proposal";
+    fake.files[`${installRoot}/installation.json`] = JSON.stringify(task3Manifest(installRoot));
+    seedInstalledPlugin(fake, installRoot);
+    fake.files[`${installRoot}/marketplace/.dir`] = "dir";
+    fake.files[`${installRoot}/codex-skills/.dir`] = "dir";
+
+    const result = await runSetup(
+      { provider: "codex", installScope: "user", cwd: "/work", home: "/home/ada" },
+      fake,
+    );
+
+    expect(result.ok).toBe(false);
+    expect(result.error?.code).toBe("PP_SETUP_COMMAND_FAILED");
+    expect(fake.removed).toEqual([`${installRoot}/worker`]);
+    expect(fake.files[`${installRoot}/plugin/.codex-plugin/plugin.json`]).toContain("public-proposal");
+    expect(fake.files[`${installRoot}/marketplace/.dir`]).toBe("dir");
+    expect(fake.files[`${installRoot}/codex-skills/.dir`]).toBe("dir");
+    expect(JSON.parse(fake.files[`${installRoot}/installation.json`])).not.toHaveProperty("worker");
+  });
+
   it("does not truncate an external file when a fixed manifest temp path is a symlink", async () => {
     const installRoot = await mkdtemp(join(tmpdir(), "public-proposal-setup-symlink-"));
     const externalTarget = join(tmpdir(), `public-proposal-external-${process.pid}-${Date.now()}.txt`);
@@ -280,10 +337,16 @@ interface FakeSetupDependencies extends SetupDependencies {
   readonly modes: Record<string, number | undefined>;
 }
 
+function seedInstalledPlugin(fake: FakeSetupDependencies, installRoot: string): void {
+  fake.files[`${installRoot}/plugin/.codex-plugin/plugin.json`] = JSON.stringify({ name: "public-proposal", version: "0.1.0" });
+  fake.files[`${installRoot}/plugin/skills/korean-public-proposal/BUNDLE-MANIFEST.json`] = JSON.stringify({ schemaVersion: "1.0.0", files: [] });
+}
+
 function fakeSetupDependencies(input?: {
   commandFailures?: Map<string, ProcessResult>;
   installRoot?: string;
   realFilesystemWrites?: boolean;
+  workerFailure?: Error;
 }): FakeSetupDependencies {
   const installRoot = input?.installRoot ?? "/home/ada/.config/public-proposal";
   const files: Record<string, string> = {
@@ -314,7 +377,8 @@ function fakeSetupDependencies(input?: {
     commands,
     modes,
     now: () => "2026-08-18T00:00:00.000Z",
-    sha256: async (path) => `sha256:${path}`,
+    sha256: async (path) => path.endsWith("/worker/bin/python") ? `sha256:${"a".repeat(64)}` : `sha256:${path}`,
+    realpath: async (path) => path,
     mkdir: async (path) => {
       files[`${path}/.dir`] = "dir";
     },
@@ -363,10 +427,13 @@ function fakeSetupDependencies(input?: {
       files[`${root}/worker/.dir`] = "dir";
       files[executable] = "#!/usr/bin/env sh\n";
       writes.push(`${root}/worker`);
+      if (input?.workerFailure !== undefined) {
+        throw input.workerFailure;
+      }
       return {
         executable,
         protocolVersion: WORKER_PROTOCOL_VERSION,
-        sha256: `sha256:${executable}`,
+        sha256: `sha256:${"a".repeat(64)}`,
       };
     },
     copyDir: async (from, to) => {
@@ -433,6 +500,26 @@ function fakeSetupDependencies(input?: {
   };
 }
 
+function task3Manifest(installRoot: string): Record<string, unknown> {
+  return {
+    schemaVersion: "1.0.0",
+    packageVersion: "0.1.0",
+    kppVersion: "0.2.1",
+    longtableVersion: "0.1.72",
+    pluginVersion: "0.1.0",
+    workerProtocol: "1.0.0",
+    installRoot,
+    pluginManifestSha256: `sha256:${installRoot}/plugin/.codex-plugin/plugin.json`,
+    bundleManifestSha256: `sha256:${installRoot}/plugin/skills/korean-public-proposal/BUNDLE-MANIFEST.json`,
+    ownedPaths: [
+      `${installRoot}/plugin`,
+      `${installRoot}/marketplace`,
+      `${installRoot}/codex-skills`,
+    ],
+    createdAt: "2026-08-18T00:00:00.000Z",
+  };
+}
+
 function fakeManifest(input?: Partial<{
   installRoot: string;
   ownedPaths: readonly string[];
@@ -451,7 +538,7 @@ function fakeManifest(input?: Partial<{
     worker: {
       executable: `${installRoot}/worker/bin/python`,
       protocolVersion: "1.0.0",
-      sha256: `sha256:${installRoot}/worker/bin/python`,
+      sha256: `sha256:${"a".repeat(64)}`,
     },
     ownedPaths: input?.ownedPaths ?? [
       `${installRoot}/plugin`,

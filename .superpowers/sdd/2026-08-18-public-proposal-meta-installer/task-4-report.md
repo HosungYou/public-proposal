@@ -211,3 +211,124 @@ No matches.
 
 - KPP keeps the repository `.venv/bin/python` fallback for in-repository development and existing release-flow tests. Installed/default behavior resolves the managed manifest; explicit worker path remains a test override.
 - `resolveManagedWorker` validates manifest structure and path containment, but does not hash-read the executable at resolution time because the required fixture resolver test uses a manifest-only path. Setup/install records the executable sha256, and doctor/build perform live protocol verification before use.
+
+## Fix Round 1: Review HIGH Findings
+
+Status: DONE
+
+### Changes
+
+- Added strict managed-worker verification before doctor/build execution.
+  - Worker receipt hash must match `sha256:<64 lowercase hex>`.
+  - Public Proposal doctor and KPP doctor/build compute the actual executable hash before protocol execution.
+  - Managed worker root and executable are canonicalized with `realpath`.
+  - A symlinked `worker/bin/python` that resolves outside canonical `<installRoot>/worker` is rejected with `PP_WORKER_INTEGRITY_FAILED`.
+  - KPP executes the canonical managed-worker path after verification.
+- Preserved explicit mismatch classification.
+  - A present manifest with `workerProtocol` or `worker.protocolVersion` mismatch now reports `PP_WORKER_PROTOCOL_MISMATCH`.
+  - A present invalid/tampered manifest no longer falls through to the repository `.venv` worker.
+  - Only absent manifests return `null` and allow the repository development fallback.
+  - Explicit `KPP_WORKER_PATH` remains an override and is not canonicalized through the managed-manifest path.
+- Added Task 3 receipt migration.
+  - Setup recognizes a valid legacy receipt with the old three owned paths and no `worker` field.
+  - Migration installs only `<installRoot>/worker`, runs doctor against the upgraded receipt, and atomically replaces `installation.json`.
+  - Migration rollback removes only the new worker root and any temporary receipt, preserving existing plugin, marketplace, and codex-skills paths.
+
+### Regression Tests Added
+
+- Public worker strict verification:
+  - executable hash tampering rejects with `PP_WORKER_INTEGRITY_FAILED`;
+  - in-root symlink escape rejects with `PP_WORKER_INTEGRITY_FAILED`.
+- Public installer doctor:
+  - manifest protocol mismatch reports `PP_WORKER_PROTOCOL_MISMATCH`;
+  - wrapper hash drift reports `PP_WORKER_INTEGRITY_FAILED`.
+- KPP doctor/build:
+  - managed manifest protocol mismatch reports `PP_WORKER_PROTOCOL_MISMATCH` and does not fall back;
+  - symlink escape is rejected before the external target executes.
+- Setup:
+  - valid Task 3 receipt migrates to include the worker root;
+  - failed migration rolls back only the new worker root and preserves old owned paths.
+
+### Commands and Output
+
+```text
+npm test -- apps/public-proposal-cli/test/worker.test.ts apps/public-proposal-cli/test/setup.test.ts apps/public-proposal-cli/test/doctor.test.ts apps/kpp-cli/test/cli.test.ts apps/kpp-cli/test/release-flow.test.ts
+```
+
+Result:
+
+```text
+Test Files  5 passed (5)
+Tests  50 passed (50)
+```
+
+```text
+npm run typecheck
+```
+
+Result:
+
+```text
+tsc --noEmit -p tsconfig.base.json && npm run typecheck --workspace @longtable/public-proposal
+@longtable/public-proposal@0.1.0 typecheck
+tsc --noEmit -p tsconfig.json
+```
+
+Exit code: 0.
+
+```text
+npm run build
+```
+
+Result:
+
+```text
+@longtable/kpp-schemas@0.2.1 build
+@longtable/kpp-core@0.2.1 build
+@longtable/kpp-renderers@0.2.1 build
+@longtable/kpp-audits@0.2.1 build
+@longtable/kpp-cli@0.2.1 build
+@longtable/public-proposal@0.1.0 build
+node ../../scripts/sync_public_proposal_worker.mjs && tsc -p tsconfig.json
+```
+
+Exit code: 0.
+
+```text
+npm pack --workspace @longtable/public-proposal --dry-run
+```
+
+Result:
+
+```text
+longtable-public-proposal-0.1.0.tgz
+```
+
+Exit code: 0.
+
+```text
+find apps/public-proposal-cli/worker -type d \( -name .venv -o -name .pytest_cache -o -name __pycache__ \) -print
+```
+
+No output.
+
+```text
+rg -n "/Users/|/var/folders|\.venv|__pycache__|\.pytest_cache" apps/public-proposal-cli/worker
+```
+
+No matches.
+
+```text
+git diff --check
+```
+
+Exit code: 0.
+
+### Fix Commit
+
+Committed in the fix-round changeset; final immutable HEAD is returned in the worker status.
+
+### Remaining Concerns
+
+- `resolveManagedWorker()` remains the compatibility/lightweight resolver and does not hash-read by itself; doctor/build now use strict verification paths before execution.
+- Repository `.venv` fallback is still present only when no managed manifest exists, preserving development test behavior.

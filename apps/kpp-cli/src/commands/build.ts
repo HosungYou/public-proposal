@@ -11,7 +11,7 @@ import {
   writeReceipt,
 } from "@longtable/kpp-core";
 import { success, type CliEnvelope } from "../output.js";
-import { EXPECTED_WORKER_PROTOCOL, WORKER_PROTOCOL_PROBE, resolveExplicitWorker, resolveManagedWorker } from "../managed-worker.js";
+import { EXPECTED_WORKER_PROTOCOL, ManagedWorkerError, WORKER_PROTOCOL_PROBE, resolveExplicitWorker, resolveManagedWorker } from "../managed-worker.js";
 
 const BUILDER_VERSION = "0.1.0";
 const PYTHON_BRIDGE = [
@@ -318,7 +318,15 @@ async function boundJson(root: string, path: string, receiptNames: readonly stri
 async function resolveManagedPython(input: string | undefined): Promise<string> {
   const repository = repositoryRoot();
   const repositoryPython = resolve(repository, "workers/docx-python/.venv/bin/python");
-  const requested = resolveExplicitWorker(input) ?? await resolveManagedWorker() ?? repositoryPython;
+  let requested: string;
+  try {
+    requested = resolveExplicitWorker(input) ?? await resolveManagedWorker() ?? repositoryPython;
+  } catch (error) {
+    if (error instanceof ManagedWorkerError) {
+      throw new KppError(error.code, error.message, { actual: error.actual, stage: "CONTENT_APPROVED" });
+    }
+    throw error;
+  }
   const canonical = await realpath(requested).catch(() => undefined);
   if (canonical === undefined) {
     throw new KppError("PP_WORKER_PROTOCOL_MISSING", "관리된 KPP DOCX worker를 찾을 수 없습니다.", { path: requested, stage: "CONTENT_APPROVED" });

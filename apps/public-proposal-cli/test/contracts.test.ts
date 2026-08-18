@@ -26,7 +26,7 @@ describe("public proposal installer contracts", () => {
       worker: {
         executable: "/tmp/public-proposal/worker/bin/python",
         protocolVersion: "1.0.0",
-        sha256: "sha256:worker",
+        sha256: `sha256:${"a".repeat(64)}`,
       },
       ownedPaths: ["/tmp/public-proposal"],
       createdAt: "2026-08-18T00:00:00.000Z",

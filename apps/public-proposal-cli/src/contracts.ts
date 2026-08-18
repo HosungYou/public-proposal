@@ -4,6 +4,7 @@ export const INSTALL_MANIFEST_SCHEMA_VERSION = "1.0.0";
 export const SUPPORTED_KPP_VERSION = "0.2.1";
 export const SUPPORTED_LONGTABLE_VERSION = "0.1.72";
 export const WORKER_PROTOCOL_VERSION = "1.0.0";
+const sha256Schema = z.string().regex(/^sha256:[a-f0-9]{64}$/u);
 
 export type ProposalClass =
   | "academic_research"
@@ -85,7 +86,7 @@ const installManifestSchema = z.object({
   worker: z.object({
     executable: z.string().min(1),
     protocolVersion: z.literal(WORKER_PROTOCOL_VERSION),
-    sha256: z.string().min(1),
+    sha256: sha256Schema,
   }),
   ownedPaths: z.array(z.string().min(1)).readonly(),
   createdAt: z.string().datetime({ offset: true }),

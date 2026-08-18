@@ -182,6 +182,54 @@ describe("verified proposal release flow", () => {
     await expect(access(join(fixture.root, "receipts", "build.json"))).rejects.toBeDefined();
   });
 
+  it("rejects a managed manifest protocol mismatch without repository worker fallback", async () => {
+    const fixture = await createContentApprovedProject(roots);
+    const installRoot = join(fixture.root, ".public-proposal");
+    const worker = join(installRoot, "worker", "bin", "python");
+    await mkdir(join(installRoot, "worker", "bin"), { recursive: true });
+    await writeFile(worker, "#!/usr/bin/env node\nprocess.stdout.write('1.0.0\\n');\n", { mode: 0o755 });
+    const manifestPath = join(installRoot, "installation.json");
+    await writeFile(manifestPath, `${JSON.stringify({
+      schemaVersion: "1.0.0",
+      packageVersion: "0.1.0",
+      kppVersion: "0.2.1",
+      longtableVersion: "0.1.72",
+      pluginVersion: "0.1.0",
+      workerProtocol: "1.0.0",
+      installRoot,
+      pluginManifestSha256: "sha256:plugin",
+      bundleManifestSha256: "sha256:bundle",
+      worker: { executable: worker, protocolVersion: "2.0.0", sha256: await sha256File(worker) },
+      ownedPaths: [
+        join(installRoot, "plugin"),
+        join(installRoot, "marketplace"),
+        join(installRoot, "codex-skills"),
+        join(installRoot, "worker"),
+      ],
+      createdAt: "2026-08-18T00:00:00.000Z",
+    })}\n`);
+    const previousManifest = process.env.PUBLIC_PROPOSAL_INSTALLATION_MANIFEST;
+    const previousWorker = process.env.KPP_WORKER_PATH;
+    delete process.env.KPP_WORKER_PATH;
+    process.env.PUBLIC_PROPOSAL_INSTALLATION_MANIFEST = manifestPath;
+    try {
+      await expect(buildProject(fixture.root, { requestPath: fixture.requestPath }))
+        .rejects.toMatchObject({ code: "PP_WORKER_PROTOCOL_MISMATCH" });
+      await expect(access(join(fixture.root, "receipts", "build.json"))).rejects.toBeDefined();
+    } finally {
+      if (previousManifest === undefined) {
+        delete process.env.PUBLIC_PROPOSAL_INSTALLATION_MANIFEST;
+      } else {
+        process.env.PUBLIC_PROPOSAL_INSTALLATION_MANIFEST = previousManifest;
+      }
+      if (previousWorker === undefined) {
+        delete process.env.KPP_WORKER_PATH;
+      } else {
+        process.env.KPP_WORKER_PATH = previousWorker;
+      }
+    }
+  });
+
   it("releases only approval-bound allowlisted artifacts", async () => {
     const fixture = await createAuditedProject(roots);
     const approved = await approveProject(fixture.root, { approvedBy: "제출책임자", auditPath: fixture.auditPath });

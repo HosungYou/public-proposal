@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { cp, mkdir, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
+import { cp, mkdir, readFile, realpath, rename, rm, writeFile } from "node:fs/promises";
 import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
@@ -14,6 +14,17 @@ import {
 import { manifestPath, manifestTempPath } from "./paths.js";
 
 const PROTOCOL_PROBE = "from kpp_docx.protocol import PROTOCOL_VERSION; print(PROTOCOL_VERSION)";
+const SHA256_PATTERN = /^sha256:[a-f0-9]{64}$/u;
+
+export interface VerifiedManagedWorker extends WorkerInstallation {
+  readonly executable: string;
+}
+
+export interface ManagedWorkerVerificationDependencies {
+  readonly readFile?: (path: string) => Promise<string>;
+  readonly realpath?: (path: string) => Promise<string>;
+  readonly sha256?: (path: string) => Promise<string>;
+}
 
 export async function installManagedWorker(root: string, runner: ProcessRunner): Promise<WorkerInstallation> {
   const installRoot = resolve(root);
@@ -55,7 +66,7 @@ export async function installManagedWorker(root: string, runner: ProcessRunner):
 export async function resolveManagedWorker(manifestPathInput?: string): Promise<string | null> {
   for (const candidate of candidateManifestPaths(manifestPathInput)) {
     const manifest = await readManifest(candidate);
-    const worker = resolveManagedWorkerFromManifest(manifest);
+    const worker = resolveManagedWorkerFromManifest(manifest, { verifyHashFormat: false });
     if (worker !== null) return worker;
   }
   return null;
@@ -65,11 +76,56 @@ export function resolveManagedWorkerFromManifestContents(contents: string): stri
   try {
     const parsed: unknown = JSON.parse(contents);
     return parsed !== null && typeof parsed === "object" && !Array.isArray(parsed)
-      ? resolveManagedWorkerFromManifest(parsed as Record<string, unknown>)
+      ? resolveManagedWorkerFromManifest(parsed as Record<string, unknown>, { verifyHashFormat: false })
       : null;
   } catch {
     return null;
   }
+}
+
+export async function resolveVerifiedManagedWorker(
+  manifestPathInput?: string,
+  dependencies: ManagedWorkerVerificationDependencies = {},
+): Promise<VerifiedManagedWorker | null> {
+  const read = dependencies.readFile ?? ((path: string) => readFile(path, "utf8"));
+  for (const candidate of candidateManifestPaths(manifestPathInput)) {
+    const raw = await read(candidate).catch(() => undefined);
+    if (raw === undefined) continue;
+    return verifyManagedWorkerFromManifestContents(raw, dependencies);
+  }
+  return null;
+}
+
+export async function verifyManagedWorkerFromManifestContents(
+  contents: string,
+  dependencies: ManagedWorkerVerificationDependencies = {},
+): Promise<VerifiedManagedWorker> {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(contents);
+  } catch {
+    throw new PublicProposalContractError("PP_WORKER_PROTOCOL_MISSING", "Managed worker receipt cannot be parsed.");
+  }
+  if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) {
+    throw new PublicProposalContractError("PP_WORKER_PROTOCOL_MISSING", "Managed worker receipt must be an object.");
+  }
+  const manifest = parsed as Record<string, unknown>;
+  const executable = resolveManagedWorkerFromManifest(manifest, { verifyHashFormat: true });
+  if (executable === null) {
+    throw workerManifestError(manifest);
+  }
+  const worker = manifest.worker as Record<string, unknown>;
+  const canonical = await canonicalManagedExecutable(manifest, executable, dependencies);
+  const expectedSha = worker.sha256 as string;
+  const actualSha = await (dependencies.sha256 ?? sha256File)(canonical);
+  if (actualSha !== expectedSha) {
+    throw new PublicProposalContractError("PP_WORKER_INTEGRITY_FAILED", "Managed worker executable hash does not match the receipt.");
+  }
+  return {
+    executable: canonical,
+    protocolVersion: WORKER_PROTOCOL_VERSION,
+    sha256: expectedSha,
+  };
 }
 
 export async function verifyWorkerProtocol(
@@ -150,6 +206,10 @@ async function sha256Text(contents: Buffer): Promise<string> {
   return `sha256:${createHash("sha256").update(contents).digest("hex")}`;
 }
 
+async function sha256File(path: string): Promise<string> {
+  return sha256Text(await readFile(path));
+}
+
 async function updateManifestIfPresent(root: string, worker: WorkerInstallation): Promise<void> {
   const path = manifestPath(root);
   const raw = await readFile(path, "utf8").catch(() => undefined);
@@ -183,7 +243,10 @@ async function readManifest(path: string): Promise<Record<string, unknown> | nul
   }
 }
 
-function resolveManagedWorkerFromManifest(manifest: Record<string, unknown> | null): string | null {
+function resolveManagedWorkerFromManifest(
+  manifest: Record<string, unknown> | null,
+  options: { verifyHashFormat: boolean },
+): string | null {
   if (manifest === null) return null;
   if (
     manifest.schemaVersion !== INSTALL_MANIFEST_SCHEMA_VERSION ||
@@ -204,7 +267,7 @@ function resolveManagedWorkerFromManifest(manifest: Record<string, unknown> | nu
   if (
     workerRecord.protocolVersion !== WORKER_PROTOCOL_VERSION ||
     typeof workerRecord.sha256 !== "string" ||
-    !workerRecord.sha256.startsWith("sha256:") ||
+    (options.verifyHashFormat ? !SHA256_PATTERN.test(workerRecord.sha256) : !workerRecord.sha256.startsWith("sha256:")) ||
     executable !== resolve(executable) ||
     !isAbsolute(executable) ||
     !isWithinOrEqual(join(installRoot, "worker"), executable)
@@ -224,6 +287,47 @@ function resolveManagedWorkerFromManifest(manifest: Record<string, unknown> | nu
     return null;
   }
   return executable;
+}
+
+function workerManifestError(manifest: Record<string, unknown>): PublicProposalContractError {
+  const workerProtocol = typeof manifest.workerProtocol === "string" ? manifest.workerProtocol : undefined;
+  const worker = manifest.worker;
+  const protocolVersion = worker !== null && typeof worker === "object" && !Array.isArray(worker)
+    ? (worker as Record<string, unknown>).protocolVersion
+    : undefined;
+  if (
+    (workerProtocol !== undefined && workerProtocol !== WORKER_PROTOCOL_VERSION) ||
+    (protocolVersion !== undefined && protocolVersion !== WORKER_PROTOCOL_VERSION)
+  ) {
+    return new PublicProposalContractError(
+      "PP_WORKER_PROTOCOL_MISMATCH",
+      `worker protocol ${WORKER_PROTOCOL_VERSION} is required.`,
+    );
+  }
+  return new PublicProposalContractError("PP_WORKER_PROTOCOL_MISSING", `worker protocol ${WORKER_PROTOCOL_VERSION} is required.`);
+}
+
+async function canonicalManagedExecutable(
+  manifest: Record<string, unknown>,
+  executable: string,
+  dependencies: ManagedWorkerVerificationDependencies,
+): Promise<string> {
+  const resolvePath = dependencies.realpath ?? realpath;
+  const installRoot = resolve(manifest.installRoot as string);
+  const workerRoot = join(installRoot, "worker");
+  const [canonicalInstallRoot, canonicalWorkerRoot, canonicalExecutable] = await Promise.all([
+    resolvePath(installRoot).catch(() => undefined),
+    resolvePath(workerRoot).catch(() => undefined),
+    resolvePath(executable).catch(() => undefined),
+  ]);
+  if (canonicalInstallRoot === undefined || canonicalWorkerRoot === undefined || canonicalExecutable === undefined) {
+    throw new PublicProposalContractError("PP_WORKER_PROTOCOL_MISSING", "Managed worker executable is missing.");
+  }
+  const expectedWorkerRoot = join(canonicalInstallRoot, "worker");
+  if (canonicalWorkerRoot !== expectedWorkerRoot || !isWithinOrEqual(canonicalWorkerRoot, canonicalExecutable)) {
+    throw new PublicProposalContractError("PP_WORKER_INTEGRITY_FAILED", "Managed worker executable resolves outside the owned worker root.");
+  }
+  return canonicalExecutable;
 }
 
 function isWithinOrEqual(parent: string, child: string): boolean {

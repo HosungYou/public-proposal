@@ -11,13 +11,14 @@ import {
   type ProcessRunner,
 } from "../contracts.js";
 import { nodeFs } from "../process.js";
-import { resolveManagedWorkerFromManifestContents, verifyWorkerProtocol } from "../worker.js";
+import { verifyManagedWorkerFromManifestContents, verifyWorkerProtocol } from "../worker.js";
 
 export interface DoctorDependencies {
   readonly packageRoot?: string;
   readonly spawn: ProcessRunner;
   readonly readFile: (path: string) => Promise<string>;
   readonly exists: (path: string) => Promise<boolean>;
+  readonly realpath?: (path: string) => Promise<string>;
   readonly sha256: (path: string) => Promise<string>;
 }
 
@@ -322,8 +323,7 @@ async function workerCheck(
   expectedProtocol: string,
 ): Promise<DoctorCheck> {
   const manifestRaw = await dependencies.readFile(join(installRoot, "installation.json")).catch(() => undefined);
-  const worker = manifestRaw === undefined ? null : resolveManagedWorkerFromManifestContents(manifestRaw);
-  if (worker === null) {
+  if (manifestRaw === undefined) {
     return {
       name: "worker",
       status: "blocker",
@@ -333,7 +333,11 @@ async function workerCheck(
     };
   }
   try {
-    const protocol = await verifyWorkerProtocol(worker, dependencies.spawn);
+    const worker = await verifyManagedWorkerFromManifestContents(manifestRaw, {
+      realpath: dependencies.realpath,
+      sha256: dependencies.sha256,
+    });
+    const protocol = await verifyWorkerProtocol(worker.executable, dependencies.spawn);
     return { name: "worker", status: "pass", detected: { protocol, worker }, message: "Managed worker protocol is installed." };
   } catch (error) {
     const code = error instanceof Error && "code" in error && typeof error.code === "string"
@@ -343,7 +347,7 @@ async function workerCheck(
       name: "worker",
       status: "blocker",
       code,
-      detected: { worker },
+      detected: null,
       message: `Managed worker protocol ${expectedProtocol} is required.`,
     };
   }
