@@ -24,6 +24,8 @@ npx @longtable/public-proposal doctor --json
 
 `setup` is a change command; `doctor` is read-only. See the full [installation and recovery guide](docs/installation/INSTALL.md) and the machine-readable [compatibility matrix](docs/installation/compatibility-matrix.json).
 
+Codex has a **single global Codex `public-proposal` marketplace selector**. A user-scoped and project-scoped installation cannot coexist when they register different marketplace sources. Setup stops with `PP_MARKETPLACE_CONFLICT`; choose one scope, uninstall the existing Public Proposal installation, then set up the selected scope.
+
 ## Four authorities, kept separate
 
 | Authority | It owns | It does not own |

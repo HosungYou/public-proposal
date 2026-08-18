@@ -103,6 +103,18 @@ test("installation guidance retains the required recovery paths", async () => {
   expect(install).toContain("public-proposal uninstall");
 });
 
+test("documentation explains the global Codex marketplace scope collision", async () => {
+  const { readme, install, packageReadme } = await readInstallationDocs();
+
+  for (const document of [readme, install, packageReadme]) {
+    expect(document).toContain("single global Codex `public-proposal` marketplace selector");
+    expect(document).toContain("PP_MARKETPLACE_CONFLICT");
+  }
+  expect(install).toContain("Choose one scope, uninstall the existing Public Proposal installation");
+  expect(install).toContain("npx @longtable/public-proposal uninstall --install-scope user");
+  expect(install).toContain("npx @longtable/public-proposal setup --provider codex --install-scope project");
+});
+
 interface InstallationDocs {
   readonly readme: string;
   readonly install: string;

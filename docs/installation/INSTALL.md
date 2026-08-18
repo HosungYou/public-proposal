@@ -23,6 +23,20 @@ If a later setup step fails, setup removes only marketplace/plugin registrations
 
 The `npx` form is intentionally repeatable: setup does not install a persistent `public-proposal` executable. Use the same `npx @longtable/public-proposal` prefix for doctor, update, and uninstall unless you deliberately choose the global fallback below.
 
+### Choose one installation scope
+
+Codex has a **single global Codex `public-proposal` marketplace selector**. Therefore a user-scoped installation and a project-scoped installation cannot coexist when they point to different installer marketplace sources. Setup reports `PP_MARKETPLACE_CONFLICT` rather than redirecting the global selector.
+
+Choose one scope, uninstall the existing Public Proposal installation, then set up the selected scope. For example, to move from user scope to the current project scope:
+
+```bash
+npx @longtable/public-proposal uninstall --install-scope user
+npx @longtable/public-proposal setup --provider codex --install-scope project
+npx @longtable/public-proposal doctor --install-scope project --json
+```
+
+Do not remove an unrelated Codex marketplace registration to force this transition. `uninstall` removes only the installation receipt's owned Public Proposal paths; if the existing marketplace source is not owned by that receipt, inspect it and choose one source before retrying setup.
+
 The setup command uses the Codex marketplace flow internally:
 
 ```text
