@@ -12,6 +12,7 @@ import {
   readdir,
   writeFile,
 } from "node:fs/promises";
+import { readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, delimiter, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -20,6 +21,7 @@ const REPOSITORY_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const PUBLIC_PROPOSAL_BINARY = join(REPOSITORY_ROOT, "apps/public-proposal-cli/dist/main.js");
 const KPP_BINARY = join(REPOSITORY_ROOT, "apps/kpp-cli/dist/main.js");
 const FIXTURE_SOURCE = join(REPOSITORY_ROOT, "fixtures/valid/minimal-research-proposal");
+const INSTALLER_VERSION = JSON.parse(readFileSync(join(REPOSITORY_ROOT, "apps/public-proposal-cli/package.json"), "utf8")).version;
 const KPP_VERSION = "0.2.1";
 const LONGTABLE_VERSION = "0.1.72";
 const WORKER_PROTOCOL = "1.0.0";
@@ -234,7 +236,7 @@ export async function verifyPackageContracts() {
     }
   }
   const meta = await readJson(join(REPOSITORY_ROOT, "apps/public-proposal-cli/package.json"));
-  if (meta.dependencies?.["@longtable/kpp-cli"] !== KPP_VERSION || meta.dependencies?.["@longtable/cli"] !== LONGTABLE_VERSION) {
+  if (meta.version !== INSTALLER_VERSION || meta.dependencies?.["@longtable/kpp-cli"] !== KPP_VERSION || meta.dependencies?.["@longtable/cli"] !== LONGTABLE_VERSION) {
     throw new Error("The meta-installer must pin the exact KPP and LongTable CLI versions.");
   }
   const plugin = await readJson(join(REPOSITORY_ROOT, "apps/public-proposal-cli/plugin/.codex-plugin/plugin.json"));
@@ -297,16 +299,16 @@ export async function runReleaseVerification() {
     const registryProbe = await capture(
       "npm registry availability",
       "npm",
-      ["view", "@longtable/public-proposal@0.1.0", "version", "--json"],
+      ["view", `@longtable/public-proposal@${INSTALLER_VERSION}`, "version", "--json"],
       { cwd: REPOSITORY_ROOT },
     );
     commands.push(registryProbe);
     const registry = {
-      package: "@longtable/public-proposal@0.1.0",
-      available: registryProbe.exitCode === 0 && registryProbe.stdout.includes("0.1.0"),
+      package: `@longtable/public-proposal@${INSTALLER_VERSION}`,
+      available: registryProbe.exitCode === 0 && registryProbe.stdout.includes(INSTALLER_VERSION),
       exitCode: registryProbe.exitCode,
       output: registryProbe.stdout.trim() || registryProbe.stderr.trim(),
-      prerequisite: "Registry publication is required before the documented npx command is release-ready.",
+      prerequisite: "Registry availability is independently checked before the documented npx command is marked release-ready.",
     };
     const dryRunHome = join(artifactRoot, "dry-run-home");
     await mkdir(dryRunHome, { recursive: true });

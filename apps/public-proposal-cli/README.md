@@ -2,7 +2,7 @@
 
 Pinned meta-installer for the Public Proposal Codex plugin, bundled Korean public-proposal authority, KPP CLI, LongTable CLI, and managed KPP DOCX worker.
 
-As of 2026-08-18, registry publication is a release prerequisite: this package has been verified as a local npm tarball but is not yet available from the public npm registry. The commands below are the intended interface after `@longtable/public-proposal@0.1.0` is published.
+This package is published on npm as `@longtable/public-proposal@0.1.1`. The commands below are the supported interface; pin `@0.1.1` when reproducibility is required.
 
 ```bash
 npx @longtable/public-proposal setup --provider codex
@@ -13,7 +13,7 @@ This release coordinates the following exact contract:
 
 | Component | Version / protocol | Authority |
 | --- | --- | --- |
-| `@longtable/public-proposal` | `0.1.0` | Installer and installation receipt |
+| `@longtable/public-proposal` | `0.1.1` | Installer and installation receipt |
 | `@longtable/kpp-cli` | `0.2.1` | Proposal state, receipts, build, audit, approval, release |
 | `@longtable/cli` | `0.1.72` | Conditional LongTable research and evidence service |
 | managed DOCX worker | protocol `1.0.0` | Deterministic DOCX construction and OOXML checks |

@@ -1,7 +1,7 @@
 {
   "schemaVersion": "1.0.0",
   "installerPackage": "@longtable/public-proposal",
-  "installerVersion": "0.1.0",
+  "installerVersion": "0.1.1",
   "kppPackage": "@longtable/kpp-cli",
   "kppVersion": "0.2.1",
   "longtablePackage": "@longtable/cli",
