@@ -31,6 +31,8 @@ const APPROVED_SOFFICE_PATHS = [
   "/Applications/LibreOffice.app/Contents/MacOS/soffice",
   "/opt/homebrew/bin/soffice",
   "/usr/local/bin/soffice",
+  "/usr/bin/soffice",
+  "/snap/bin/libreoffice",
 ] as const;
 
 export async function auditFigureArtifacts(inputs: readonly FigureAuditInput[]): Promise<AuditSlice> {

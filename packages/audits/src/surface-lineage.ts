@@ -20,10 +20,12 @@ export interface RenderAuditOptions {
 const APPROVED_PDFTOTEXT_PATHS = [
   "/opt/homebrew/bin/pdftotext",
   "/usr/local/bin/pdftotext",
+  "/usr/bin/pdftotext",
 ] as const;
 const APPROVED_PDFINFO_PATHS = [
   "/opt/homebrew/bin/pdfinfo",
   "/usr/local/bin/pdfinfo",
+  "/usr/bin/pdfinfo",
 ] as const;
 const PNG_SIGNATURE = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
 
