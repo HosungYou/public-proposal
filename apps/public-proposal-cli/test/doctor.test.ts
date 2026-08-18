@@ -303,6 +303,12 @@ function fakeDoctorDependencies(input?: {
       if (path === "/home/ada/.config/public-proposal/plugin/skills/longtable-research/SKILL.md" && input?.missingSkill !== "longtable-research") {
         return "# LongTable Research\n";
       }
+      if (path === "/home/ada/.config/public-proposal/marketplace/plugin/skills/longtable/SKILL.md" && input?.missingSkill !== "longtable") {
+        return "# LongTable\n";
+      }
+      if (path === "/home/ada/.config/public-proposal/marketplace/plugin/skills/longtable-research/SKILL.md" && input?.missingSkill !== "longtable-research") {
+        return "# LongTable Research\n";
+      }
       if (path === "/pkg/plugin/.codex-plugin/plugin.json") {
         return JSON.stringify({ name: "public-proposal", version: "0.1.0" });
       }

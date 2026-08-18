@@ -52,6 +52,10 @@ export async function runCleanEnvironmentFixture() {
   const manifest = await readJson(installationPath).catch(() => null);
   const pluginManifestPath = join(installRoot, "plugin", ".codex-plugin", "plugin.json");
   const marketplacePath = join(installRoot, "marketplace", ".agents", "plugins", "marketplace.json");
+  const registeredSkills = {
+    longtable: await readFile(join(installRoot, "marketplace", "plugin", "skills", "longtable", "SKILL.md"), "utf8").then(() => true).catch(() => false),
+    longtableResearch: await readFile(join(installRoot, "marketplace", "plugin", "skills", "longtable-research", "SKILL.md"), "utf8").then(() => true).catch(() => false),
+  };
   const pluginManifest = await readJson(pluginManifestPath).catch(() => null);
   const marketplace = await readJson(marketplacePath).catch(() => null);
   const marketplaceEntry = marketplace?.plugins?.find?.((entry) => entry?.name === "public-proposal");
@@ -75,6 +79,8 @@ export async function runCleanEnvironmentFixture() {
       && pluginManifest?.name === "public-proposal"
       && marketplaceEntry?.source?.source === "local"
       && marketplaceEntry?.source?.path === "./plugin"
+      && registeredSkills.longtable
+      && registeredSkills.longtableResearch
       && isolation.violations.length === 0
       && isolation.deniedWriteProbe.exitCode !== 0,
     fixtureRoot,
@@ -87,6 +93,7 @@ export async function runCleanEnvironmentFixture() {
       version: pluginManifest?.version ?? null,
       marketplaceSource: marketplaceEntry?.source?.path ?? null,
     },
+    registeredSkills,
     envelopes: { setup: setupEnvelope, publicDoctor: publicDoctorEnvelope, kppDoctor: kppDoctorEnvelope, longtableDoctor: longtableDoctorEnvelope },
     isolation,
     commands,

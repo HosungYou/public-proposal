@@ -24,10 +24,14 @@ describe("public proposal clean installation", () => {
         longtableVersion: "0.1.72",
         workerProtocol: "1.0.0",
       },
-      plugin: {
-        name: "public-proposal",
-        marketplaceSource: "./plugin",
-      },
+        plugin: {
+          name: "public-proposal",
+          marketplaceSource: "./plugin",
+        },
+        registeredSkills: {
+          longtable: true,
+          longtableResearch: true,
+        },
     });
     expect(result.report.commands.map(({ name }) => name)).toEqual([
       "public-proposal setup",
