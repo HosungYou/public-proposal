@@ -11,6 +11,7 @@
   "pluginVersion": "0.1.0",
   "node": ">=22 <27",
   "python": ">=3.11 <3.15",
+  "runtimeRangeEnforcement": "Compatibility requirements only: current setup and doctor check executable availability but do not enforce Node or Python semver ranges.",
   "verifiedAt": "2026-08-18",
   "verificationScope": [
     "repository package metadata",

@@ -12,12 +12,12 @@ The supported Codex setup path is:
 npx @longtable/public-proposal setup --provider codex
 ```
 
-It pins `@longtable/kpp-cli@0.2.1`, `@longtable/cli@0.1.72`, and managed worker protocol `1.0.0`. Setup checks Node `>=22 <27`, Python `>=3.11 <3.15`, Codex CLI, LibreOffice, and the required Korean fonts before it writes an installation receipt.
+It pins `@longtable/kpp-cli@0.2.1`, `@longtable/cli@0.1.72`, and managed worker protocol `1.0.0`. Node `>=22 <27` and Python `>=3.11 <3.15` are compatibility requirements. The current setup and doctor commands verify that the required executables are available; they do not yet enforce those runtime version ranges.
 
 After setup, inspect the installed boundary without changing it:
 
 ```bash
-public-proposal doctor --json
+npx @longtable/public-proposal doctor --json
 ```
 
 `setup` is a change command; `doctor` is read-only. See the full [installation and recovery guide](docs/installation/INSTALL.md) and the machine-readable [compatibility matrix](docs/installation/compatibility-matrix.json).

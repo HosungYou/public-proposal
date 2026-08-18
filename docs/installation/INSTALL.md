@@ -4,7 +4,7 @@ Verified compatibility date: **2026-08-18**. The exact supported versions are `@
 
 ## Prerequisites
 
-Install a supported Node runtime (`>=22 <27`), Python (`>=3.11 <3.15`), npm, Codex CLI, LibreOffice, and the required Noto Sans CJK Korean fonts. The installer checks these independently; a setup result is not successful until its doctor checks pass.
+Use a supported Node runtime (`>=22 <27`) and Python (`>=3.11 <3.15`), plus npm, Codex CLI, LibreOffice, and the required Noto Sans CJK Korean fonts. The Node and Python ranges are compatibility requirements recorded in the matrix. The current setup and doctor implementations check executable availability, not those semver ranges; do not interpret a passing doctor as proof that the runtime range was enforced.
 
 Use a writable user or project installation location. Do not put customer RFPs, private source files, credentials, personnel records, pricing, or bid-specific evidence in the plugin package or installation directory.
 
@@ -12,10 +12,12 @@ Use a writable user or project installation location. Do not put customer RFPs, 
 
 ```bash
 npx @longtable/public-proposal setup --provider codex
-public-proposal doctor --json
+npx @longtable/public-proposal doctor --json
 ```
 
 `setup` validates the packaged marketplace and plugin, installs the bundled skill assets, verifies the pinned KPP and LongTable CLIs, installs the managed DOCX worker, and writes an installation receipt only after its preflight passes. `doctor --json` is the read-only verification command. Use `--install-scope project` only when the installation should be scoped to the current project rather than the user.
+
+The `npx` form is intentionally repeatable: setup does not install a persistent `public-proposal` executable. Use the same `npx @longtable/public-proposal` prefix for doctor, update, and uninstall unless you deliberately choose the global fallback below.
 
 The setup command uses the Codex marketplace flow internally:
 
@@ -49,7 +51,7 @@ public-proposal setup --provider codex
 public-proposal doctor --json
 ```
 
-If setup stopped before it wrote a successful installation receipt, correct the reported blocker and run setup again. Do not copy files into an existing installation root or create a receipt by hand. For an already prepared installer-owned root, the two marketplace commands shown above are the manual plugin-registration fallback; then rerun `public-proposal doctor --json`.
+This section alone assumes the globally installed `public-proposal` executable. If setup stopped before it wrote a successful installation receipt, correct the reported blocker and run setup again. Do not copy files into an existing installation root or create a receipt by hand. For an already prepared installer-owned root, the two marketplace commands shown above are the manual plugin-registration fallback; then rerun `public-proposal doctor --json`.
 
 To remove only files owned by a successful Public Proposal installation:
 
@@ -57,7 +59,7 @@ To remove only files owned by a successful Public Proposal installation:
 public-proposal uninstall
 ```
 
-Uninstall preserves existing LongTable projects, `.longtable/` research state, KPP project data, and customer material. `public-proposal update` previews compatibility changes; use `public-proposal update --apply` only after checking the preview and the compatibility matrix.
+Uninstall preserves existing LongTable projects, `.longtable/` research state, KPP project data, and customer material. `public-proposal update` previews compatibility changes; use `public-proposal update --apply` only after checking the preview and the compatibility matrix. With the ephemeral path, use `npx @longtable/public-proposal uninstall` and `npx @longtable/public-proposal update` instead.
 
 ## LongTable research lock requirements
 
@@ -81,7 +83,7 @@ The resulting LongTable research lock is rechecked before authoring export, cont
 
 | Code | Meaning | Safe recovery |
 | --- | --- | --- |
-| `PP_WORKER_PROTOCOL_MISSING` | The managed DOCX worker is absent, incompatible, or fails its protocol check. | Run `public-proposal doctor --json`, restore the supported Python runtime, then rerun setup. Do not point KPP at an unverified worker binary. |
+| `PP_WORKER_PROTOCOL_MISSING` | The managed DOCX worker is absent, incompatible, or fails its protocol check. | Run `npx @longtable/public-proposal doctor --json`, restore a runtime in the documented Python compatibility range, then rerun setup. Do not interpret doctor as semver enforcement or point KPP at an unverified worker binary. |
 | `PP_LONGTABLE_REQUIRED` | The project class needs LongTable, or the handoff no longer matches the locked project. | Prepare the required LongTable research handoff and confirm the project class before importing it with `kpp research-lock`. |
 | `PP_RESEARCH_LOCK_MISSING` | A required project has no valid KPP-bound LongTable research lock. | Complete the required LongTable artifacts and checkpoints, then import the handoff with `kpp research-lock <project-root> --handoff <handoff.json> --json`. |
 | `PP_RESEARCH_CHECKPOINT_OPEN` | A required researcher decision remains unresolved. | Resolve it with the researcher; do not bypass it in KPP. |
