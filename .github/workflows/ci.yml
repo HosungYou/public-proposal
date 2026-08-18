@@ -1,0 +1,43 @@
+name: ci
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+
+      - name: Install JavaScript dependencies
+        run: npm ci
+
+      - name: Install managed DOCX worker before KPP tests
+        run: uv sync --project workers/docx-python --locked
+
+      - name: Build workspaces
+        run: npm run build
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Run Python worker tests
+        run: uv run --project workers/docx-python pytest -q
+
+      - name: Run release verification gate
+        run: npm run verify:public-proposal
