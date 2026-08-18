@@ -72,7 +72,6 @@ describe("public proposal setup", () => {
       ownedPaths: expect.arrayContaining([
         "/home/ada/.config/public-proposal/plugin",
         "/home/ada/.config/public-proposal/marketplace",
-        "/home/ada/.config/public-proposal/codex-skills",
         "/home/ada/.config/public-proposal/worker",
       ]),
     });
@@ -94,7 +93,6 @@ describe("public proposal setup", () => {
       ownedPaths: [
         `${canonicalRoot}/plugin`,
         `${canonicalRoot}/marketplace`,
-        `${canonicalRoot}/codex-skills`,
         `${canonicalRoot}/worker`,
       ],
     });
@@ -117,11 +115,78 @@ describe("public proposal setup", () => {
       expect.arrayContaining([
         "/home/ada/.config/public-proposal/plugin",
         "/home/ada/.config/public-proposal/marketplace",
-        "/home/ada/.config/public-proposal/codex-skills",
         "/home/ada/.config/public-proposal/worker",
       ]),
     );
     expect(fake.files["/home/ada/.config/public-proposal/installation.json"]).toBeUndefined();
+  });
+
+  it("compensates only Codex registrations added by this setup when the worker fails", async () => {
+    const fake = fakeSetupDependencies({ workerFailure: new Error("worker failed") });
+
+    const result = await runSetup(
+      { provider: "codex", installScope: "user", cwd: "/work", home: "/home/ada" },
+      fake,
+    );
+
+    expect(result.ok).toBe(false);
+    expect(fake.commands).toContain("codex plugin remove public-proposal@public-proposal --json");
+    expect(fake.commands).toContain("codex plugin marketplace remove public-proposal --json");
+    expect(fake.removed).toEqual(expect.arrayContaining([
+      "/home/ada/.config/public-proposal/plugin",
+      "/home/ada/.config/public-proposal/marketplace",
+      "/home/ada/.config/public-proposal/worker",
+    ]));
+  });
+
+  it("preserves pre-existing Codex registrations when a later setup step fails", async () => {
+    const fake = fakeSetupDependencies({
+      workerFailure: new Error("worker failed"),
+      preexistingMarketplaceRegistration: true,
+      preexistingPluginRegistration: true,
+    });
+
+    const result = await runSetup(
+      { provider: "codex", installScope: "user", cwd: "/work", home: "/home/ada" },
+      fake,
+    );
+
+    expect(result.ok).toBe(false);
+    expect(fake.commands.some((command) => command.startsWith("codex plugin remove "))).toBe(false);
+    expect(fake.commands.some((command) => command.startsWith("codex plugin marketplace remove "))).toBe(false);
+  });
+
+  it("reports a failed Codex compensation instead of claiming a clean rollback", async () => {
+    const fake = fakeSetupDependencies({
+      workerFailure: new Error("worker failed"),
+      commandFailures: new Map([["codex plugin remove public-proposal@public-proposal --json", {
+        code: 1, stdout: "", stderr: "remove failed",
+      }]]),
+    });
+
+    const result = await runSetup(
+      { provider: "codex", installScope: "user", cwd: "/work", home: "/home/ada" },
+      fake,
+    );
+
+    expect(result).toMatchObject({ ok: false, error: { code: "PP_SETUP_ROLLBACK_FAILED" } });
+    expect(result.error?.message).toContain("remove failed");
+  });
+
+  it("installs both LongTable skills into the plugin-discoverable skill surface", async () => {
+    const fake = fakeSetupDependencies();
+
+    const result = await runSetup(
+      { provider: "codex", installScope: "user", cwd: "/work", home: "/home/ada" },
+      fake,
+    );
+
+    expect(result.ok).toBe(true);
+    expect(fake.commands).toContain(
+      "longtable codex install-skills --surface compact --dir /home/ada/.config/public-proposal/plugin/skills",
+    );
+    expect(fake.files["/home/ada/.config/public-proposal/plugin/skills/longtable/SKILL.md"]).toContain("LongTable");
+    expect(fake.files["/home/ada/.config/public-proposal/plugin/skills/longtable-research/SKILL.md"]).toContain("LongTable Research");
   });
 
   it("stops before mutation when an existing marketplace path is not installer-owned", async () => {
@@ -142,7 +207,7 @@ describe("public proposal setup", () => {
     expect(fake.writes).toEqual([]);
   });
 
-  it("stops before mutation when codex-skills already exists and preserves it on later failures", async () => {
+  it("leaves an unrelated legacy codex-skills directory untouched", async () => {
     const conflictFake = fakeSetupDependencies();
     conflictFake.files["/home/ada/.config/public-proposal/codex-skills/existing-skill.txt"] = "keep";
 
@@ -151,9 +216,7 @@ describe("public proposal setup", () => {
       conflictFake,
     );
 
-    expect(conflict.ok).toBe(false);
-    expect(conflict.error?.code).toBe("PP_INSTALL_TARGET_CONFLICT");
-    expect(conflictFake.commands).toEqual([]);
+    expect(conflict.ok).toBe(true);
     expect(conflictFake.files["/home/ada/.config/public-proposal/codex-skills/existing-skill.txt"]).toBe("keep");
 
     const failureFake = fakeSetupDependencies({
@@ -169,7 +232,6 @@ describe("public proposal setup", () => {
     expect(failure.ok).toBe(false);
     expect(failureFake.removed).toEqual([
       "/home/ada/.config/public-proposal/worker",
-      "/home/ada/.config/public-proposal/codex-skills",
       "/home/ada/.config/public-proposal/marketplace",
       "/home/ada/.config/public-proposal/plugin",
     ]);
@@ -271,7 +333,6 @@ describe("public proposal setup", () => {
       ownedPaths: [
         `${installRoot}/plugin`,
         `${installRoot}/marketplace`,
-        `${installRoot}/codex-skills`,
         `${installRoot}/worker`,
       ],
     });
@@ -338,7 +399,6 @@ describe("public proposal setup", () => {
       ownedPaths: [
         `${installRoot}/plugin`,
         `${installRoot}/marketplace`,
-        `${installRoot}/codex-skills`,
         `${installRoot}/worker`,
       ],
     });
@@ -393,6 +453,8 @@ function fakeSetupDependencies(input?: {
   installRoot?: string;
   realFilesystemWrites?: boolean;
   workerFailure?: Error;
+  preexistingMarketplaceRegistration?: boolean;
+  preexistingPluginRegistration?: boolean;
 }): FakeSetupDependencies {
   const installRoot = input?.installRoot ?? "/home/ada/.config/public-proposal";
   const files: Record<string, string> = {
@@ -412,7 +474,12 @@ function fakeSetupDependencies(input?: {
   const removed: string[] = [];
   const commands: string[] = [];
   const modes: Record<string, number | undefined> = {};
-  const state = { workerProtocol: WORKER_PROTOCOL_VERSION };
+  const state = {
+    workerProtocol: WORKER_PROTOCOL_VERSION,
+    marketplaceRegistered: input?.preexistingMarketplaceRegistration ?? false,
+    pluginRegistered: input?.preexistingPluginRegistration ?? false,
+    marketplacePath: `${installRoot}/marketplace`,
+  };
 
   return {
     packageRoot: "/pkg",
@@ -550,11 +617,33 @@ function fakeSetupDependencies(input?: {
       if (rendered === "longtable scholar-research doctor --json") return ok("{\"ok\":true}\n");
       if (rendered === "kpp worker doctor --json") return ok(`{"ok":true,"protocol":"${WORKER_PROTOCOL_VERSION}"}\n`);
       if (rendered.startsWith("fc-match ")) return ok("NotoSansCJKkr-Regular.otf\n");
-      if (rendered.startsWith("longtable codex install-skills ")) return ok("");
-      if (rendered.startsWith("codex plugin marketplace list")) return ok("{\"marketplaces\":[]}\n");
-      if (rendered.startsWith("codex plugin list")) return ok("{\"plugins\":[]}\n");
-      if (rendered.startsWith("codex plugin marketplace add ")) return ok("");
-      if (rendered.startsWith("codex plugin add ")) return ok("");
+      if (rendered.startsWith("longtable codex install-skills ")) {
+        const skillRoot = args[args.indexOf("--dir") + 1];
+        if (input?.realFilesystemWrites && skillRoot.startsWith(installRoot)) {
+          const { mkdir, writeFile } = await import("node:fs/promises");
+          await mkdir(join(skillRoot, "longtable"), { recursive: true });
+          await mkdir(join(skillRoot, "longtable-research"), { recursive: true });
+          await writeFile(join(skillRoot, "longtable", "SKILL.md"), "# LongTable\n", "utf8");
+          await writeFile(join(skillRoot, "longtable-research", "SKILL.md"), "# LongTable Research\n", "utf8");
+        }
+        files[`${skillRoot}/longtable/SKILL.md`] = "# LongTable\n";
+        files[`${skillRoot}/longtable-research/SKILL.md`] = "# LongTable Research\n";
+        return ok("");
+      }
+      if (rendered.startsWith("codex plugin marketplace list")) return ok(state.marketplaceRegistered || files[`${installRoot}/installation.json`] !== undefined
+        ? JSON.stringify({ marketplaces: [{ name: "public-proposal", path: state.marketplacePath }] })
+        : "{\"marketplaces\":[]}\n");
+      if (rendered.startsWith("codex plugin list")) return ok(state.pluginRegistered || files[`${installRoot}/installation.json`] !== undefined
+        ? "{\"installed\":[{\"pluginId\":\"public-proposal@public-proposal\",\"installed\":true}],\"available\":[]}\n"
+        : "{\"installed\":[],\"available\":[]}\n");
+      if (rendered.startsWith("codex plugin marketplace add ")) {
+        state.marketplaceRegistered = true;
+        state.marketplacePath = rendered.slice("codex plugin marketplace add ".length);
+        return ok("");
+      }
+      if (rendered.startsWith("codex plugin add ")) { state.pluginRegistered = true; return ok(""); }
+      if (rendered.startsWith("codex plugin remove ")) { state.pluginRegistered = false; return ok("{\"ok\":true}\n"); }
+      if (rendered.startsWith("codex plugin marketplace remove ")) { state.marketplaceRegistered = false; return ok("{\"ok\":true}\n"); }
       if (rendered === "uv sync --locked --no-dev") return ok("");
       if (rendered.endsWith("-c from kpp_docx.protocol import PROTOCOL_VERSION; print(PROTOCOL_VERSION)")) return ok(`${state.workerProtocol}\n`);
       return { code: 127, stdout: "", stderr: `unexpected host command: ${rendered}` };
@@ -605,7 +694,6 @@ function fakeManifest(input?: Partial<{
     ownedPaths: input?.ownedPaths ?? [
       `${installRoot}/plugin`,
       `${installRoot}/marketplace`,
-      `${installRoot}/codex-skills`,
       `${installRoot}/worker`,
     ],
     createdAt: "2026-08-18T00:00:00.000Z",

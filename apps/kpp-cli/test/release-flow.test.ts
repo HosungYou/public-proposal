@@ -203,7 +203,6 @@ describe("verified proposal release flow", () => {
       ownedPaths: [
         join(installRoot, "plugin"),
         join(installRoot, "marketplace"),
-        join(installRoot, "codex-skills"),
         join(installRoot, "worker"),
       ],
       createdAt: "2026-08-18T00:00:00.000Z",

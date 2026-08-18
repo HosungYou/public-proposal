@@ -80,7 +80,6 @@ function installerOwnedRoots(installRoot: string): readonly string[] {
   return [
     join(installRoot, "plugin"),
     join(installRoot, "marketplace"),
-    join(installRoot, "codex-skills"),
     join(installRoot, "worker"),
     manifestPath(installRoot),
   ].map((path) => resolve(path));

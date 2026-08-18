@@ -34,7 +34,6 @@ describe("managed DOCX worker", () => {
       ownedPaths: [
         join(root, "plugin"),
         join(root, "marketplace"),
-        join(root, "codex-skills"),
         join(root, "worker"),
       ],
       createdAt: "2026-08-18T00:00:00.000Z",
@@ -130,7 +129,6 @@ function manifestFor(root: string, worker: { executable: string; sha256: string;
     ownedPaths: [
       join(root, "plugin"),
       join(root, "marketplace"),
-      join(root, "codex-skills"),
       join(root, "worker"),
     ],
     createdAt: "2026-08-18T00:00:00.000Z",

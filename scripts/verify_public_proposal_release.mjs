@@ -294,6 +294,20 @@ export async function runReleaseVerification() {
     }
     const tarballPath = join(artifactRoot, packRecord.filename);
     const tarball = await inspectTarball(tarballPath, packRecord.integrity);
+    const registryProbe = await capture(
+      "npm registry availability",
+      "npm",
+      ["view", "@longtable/public-proposal@0.1.0", "version", "--json"],
+      { cwd: REPOSITORY_ROOT },
+    );
+    commands.push(registryProbe);
+    const registry = {
+      package: "@longtable/public-proposal@0.1.0",
+      available: registryProbe.exitCode === 0 && registryProbe.stdout.includes("0.1.0"),
+      exitCode: registryProbe.exitCode,
+      output: registryProbe.stdout.trim() || registryProbe.stderr.trim(),
+      prerequisite: "Registry publication is required before the documented npx command is release-ready.",
+    };
     const dryRunHome = join(artifactRoot, "dry-run-home");
     await mkdir(dryRunHome, { recursive: true });
     await runRequired(
@@ -356,7 +370,18 @@ export async function runReleaseVerification() {
         });
       }
     }
-    const report = { ok: true, artifactRoot, contracts, tarball, cleanInstall: install.report, matrix, commands };
+    const report = {
+      ok: true,
+      localArtifactVerified: true,
+      releaseReady: registry.available,
+      artifactRoot,
+      contracts,
+      tarball,
+      registry,
+      cleanInstall: install.report,
+      matrix,
+      commands,
+    };
     const reportPath = join(artifactRoot, "verification-report.json");
     await writeFile(reportPath, `${JSON.stringify(report, null, 2)}\n`, { mode: 0o600 });
     return { ...report, reportPath };
@@ -594,11 +619,27 @@ case "$name" in
   longtable)
     if [ "$1" = "--version" ]; then printf '@longtable/cli 0.1.72\n'
     elif printf '%s' "$*" | grep -q doctor; then printf '{"ok":true,"code":"LONGTABLE_OK"}\n'
+    elif [ "$1" = "codex" ] && [ "$2" = "install-skills" ]; then
+      while [ "$#" -gt 0 ]; do
+        if [ "$1" = "--dir" ]; then skill_root=$2; break; fi
+        shift
+      done
+      mkdir -p "$skill_root/longtable" "$skill_root/longtable-research"
+      printf '%s\n' '# LongTable' > "$skill_root/longtable/SKILL.md"
+      printf '%s\n' '# LongTable Research' > "$skill_root/longtable-research/SKILL.md"
     else printf '{"ok":true}\n'; fi
     ;;
   codex)
+    state_root=$(dirname "$PUBLIC_PROPOSAL_INSTALLATION_MANIFEST")
     if [ "$1" = "--version" ]; then printf 'codex-cli 0.144.5\n'
-    elif printf '%s' "$*" | grep -q 'list --json'; then printf '[]\n'
+    elif [ "$1 $2 $3" = "plugin marketplace list" ]; then
+      if [ -f "$state_root/.marketplace-registered" ]; then printf '{"marketplaces":[{"name":"public-proposal","path":"%s/marketplace"}]}\n' "$state_root"; else printf '{"marketplaces":[]}\n'; fi
+    elif [ "$1 $2 $3" = "plugin marketplace add" ]; then printf registered > "$state_root/.marketplace-registered"
+    elif [ "$1 $2 $3" = "plugin marketplace remove" ]; then rm -f "$state_root/.marketplace-registered"
+    elif [ "$1 $2" = "plugin list" ]; then
+      if [ -f "$state_root/.plugin-registered" ]; then printf '{"installed":[{"pluginId":"public-proposal@public-proposal","installed":true}],"available":[]}\n'; else printf '{"installed":[],"available":[]}\n'; fi
+    elif [ "$1 $2" = "plugin add" ]; then printf registered > "$state_root/.plugin-registered"
+    elif [ "$1 $2" = "plugin remove" ]; then rm -f "$state_root/.plugin-registered"
     else printf '{"ok":true}\n'; fi
     ;;
   uv)

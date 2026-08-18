@@ -120,6 +120,28 @@ describe("public proposal doctor", () => {
       }),
     );
   });
+
+  it.each(["longtable", "longtable-research"])("blocks when the plugin-discoverable %s skill is missing", async (skill) => {
+    const report = await runDoctor(fakeDoctorInput(), fakeDoctorDependencies({ missingSkill: skill }));
+
+    expect(report.ok).toBe(false);
+    expect(report.checks).toContainEqual(expect.objectContaining({
+      name: "plugin",
+      status: "blocker",
+      code: "PP_PLUGIN_NOT_INSTALLED",
+    }));
+  });
+
+  it("blocks when Codex does not report the marketplace and installed plugin", async () => {
+    const report = await runDoctor(fakeDoctorInput(), fakeDoctorDependencies({ codexRegistration: false }));
+
+    expect(report.ok).toBe(false);
+    expect(report.checks).toContainEqual(expect.objectContaining({
+      name: "plugin",
+      status: "blocker",
+      code: "PP_PLUGIN_NOT_INSTALLED",
+    }));
+  });
 });
 
 function fakeDoctorInput(input?: Partial<DoctorInput>): DoctorInput {
@@ -143,7 +165,9 @@ function fakeDoctorDependencies(input?: {
   manifestWorkerProtocol?: string;
   pluginManifestSha?: string;
   installedPluginSha?: string;
-  installedWorkerSha?: string;
+    installedWorkerSha?: string;
+    missingSkill?: string;
+    codexRegistration?: boolean;
 }): FakeDoctorDependencies {
   const kppVersion = input?.kppVersion === undefined ? SUPPORTED_KPP_VERSION : input.kppVersion;
   const longtableVersion =
@@ -190,7 +214,6 @@ function fakeDoctorDependencies(input?: {
           ownedPaths: [
             "/home/ada/.config/public-proposal/plugin",
             "/home/ada/.config/public-proposal/marketplace",
-            "/home/ada/.config/public-proposal/codex-skills",
             "/home/ada/.config/public-proposal/worker",
           ],
           createdAt: "2026-08-18T00:00:00.000Z",
@@ -212,6 +235,12 @@ function fakeDoctorDependencies(input?: {
       }
       if (path === "/home/ada/.config/public-proposal/plugin/skills/korean-public-proposal/SKILL.md") {
         return "# Korean Public Proposal\n";
+      }
+      if (path === "/home/ada/.config/public-proposal/plugin/skills/longtable/SKILL.md" && input?.missingSkill !== "longtable") {
+        return "# LongTable\n";
+      }
+      if (path === "/home/ada/.config/public-proposal/plugin/skills/longtable-research/SKILL.md" && input?.missingSkill !== "longtable-research") {
+        return "# LongTable Research\n";
       }
       if (path === "/pkg/plugin/.codex-plugin/plugin.json") {
         return JSON.stringify({ name: "public-proposal", version: "0.1.0" });
@@ -252,7 +281,12 @@ function fakeDoctorDependencies(input?: {
           ? { code: 1, stdout: "", stderr: "" }
           : ok(`${workerProtocol}\n`);
       }
-      if (rendered.startsWith("codex plugin list")) return ok("{\"plugins\":[{\"name\":\"public-proposal\"}]}\n");
+      if (rendered.startsWith("codex plugin marketplace list")) return input?.codexRegistration === false
+        ? ok("{\"marketplaces\":[]}")
+        : ok("{\"marketplaces\":[{\"name\":\"public-proposal\",\"path\":\"/home/ada/.config/public-proposal/marketplace\"}]}");
+      if (rendered.startsWith("codex plugin list")) return input?.codexRegistration === false
+        ? ok("{\"installed\":[],\"available\":[]}")
+        : ok("{\"installed\":[{\"pluginId\":\"public-proposal@public-proposal\",\"installed\":true}],\"available\":[]}\n");
       return { code: 127, stdout: "", stderr: `unexpected host command: ${rendered}` };
     },
   };

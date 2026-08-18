@@ -10,12 +10,16 @@ Use a writable user or project installation location. Do not put customer RFPs, 
 
 ## Recommended one-command setup
 
+This is the intended command once the package is published. As of 2026-08-18, registry publication is a release prerequisite and `@longtable/public-proposal@0.1.0` is not yet available from the public npm registry. Local tarball verification does not establish registry availability.
+
 ```bash
 npx @longtable/public-proposal setup --provider codex
 npx @longtable/public-proposal doctor --json
 ```
 
-`setup` validates the packaged marketplace and plugin, installs the bundled skill assets, verifies the pinned KPP and LongTable CLIs, installs the managed DOCX worker, and writes an installation receipt only after its preflight passes. `doctor --json` is the read-only verification command. Use `--install-scope project` only when the installation should be scoped to the current project rather than the user.
+`setup` validates the packaged marketplace and plugin, installs `$longtable` and `$longtable-research` under the installer-owned plugin `skills/` surface, verifies the pinned KPP and LongTable CLIs, installs the managed DOCX worker, and writes an installation receipt only after its preflight passes. `doctor --json` verifies both LongTable skill files and the Codex marketplace/plugin registration; it is read-only. Use `--install-scope project` only when the installation should be scoped to the current project rather than the user.
+
+If a later setup step fails, setup removes only marketplace/plugin registrations added by that invocation and then removes its owned files. Pre-existing Codex registrations are preserved. A failed compensation is reported as `PP_SETUP_ROLLBACK_FAILED` and requires inspection before retrying.
 
 The `npx` form is intentionally repeatable: setup does not install a persistent `public-proposal` executable. Use the same `npx @longtable/public-proposal` prefix for doctor, update, and uninstall unless you deliberately choose the global fallback below.
 

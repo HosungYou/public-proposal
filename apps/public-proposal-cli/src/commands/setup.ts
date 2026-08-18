@@ -106,9 +106,10 @@ export async function runSetup(
   const ownedPaths = [
     join(installRoot, "plugin"),
     join(installRoot, "marketplace"),
-    join(installRoot, "codex-skills"),
     join(installRoot, "worker"),
   ];
+  let marketplaceAdded = false;
+  let pluginAdded = false;
 
   try {
     await dependencies.mkdir(installRoot);
@@ -131,22 +132,19 @@ export async function runSetup(
       join(ownedPaths[1], "marketplace.json"),
       dependencies,
     );
-    await dependencies.mkdir(ownedPaths[2]);
-    writes.push(ownedPaths[2]);
-
     await runRequired(dependencies.spawn, "longtable", [
       "codex",
       "install-skills",
       "--surface",
       "compact",
       "--dir",
-      ownedPaths[2],
+      join(ownedPaths[0], "skills"),
     ]);
-    await ensureMarketplaceRegistered(dependencies.spawn, join(installRoot, "marketplace"));
-    await ensurePluginInstalled(dependencies.spawn);
+    marketplaceAdded = await ensureMarketplaceRegistered(dependencies.spawn, join(installRoot, "marketplace"));
+    pluginAdded = await ensurePluginInstalled(dependencies.spawn);
 
     const worker = await installWorker(installRoot, dependencies.spawn);
-    writes.push(ownedPaths[3]);
+    writes.push(ownedPaths[2]);
 
     const installManifest = await buildManifest(installRoot, ownedPaths, worker, dependencies);
     const manifestContents = serializeManifest(installManifest);
@@ -184,10 +182,23 @@ export async function runSetup(
       manifest: installManifest,
     };
   } catch (error) {
-    await Promise.all([...ownedPaths].reverse().map((path) => remove(path)));
+    const rollbackFailures: string[] = [];
+    if (pluginAdded) {
+      await compensate(dependencies.spawn, "codex", ["plugin", "remove", "public-proposal@public-proposal", "--json"], rollbackFailures);
+    }
+    if (marketplaceAdded) {
+      await compensate(dependencies.spawn, "codex", ["plugin", "marketplace", "remove", "public-proposal", "--json"], rollbackFailures);
+    }
+    for (const path of [...ownedPaths].reverse()) {
+      try { await remove(path); } catch (rollbackError) {
+        rollbackFailures.push(`remove ${path}: ${rollbackError instanceof Error ? rollbackError.message : String(rollbackError)}`);
+      }
+    }
     const code = error instanceof SetupCommandError ? error.code : "PP_SETUP_COMMAND_FAILED";
     const message = error instanceof Error ? error.message : String(error);
-    return failed(code, message, writes);
+    return rollbackFailures.length === 0
+      ? failed(code, message, writes)
+      : failed("PP_SETUP_ROLLBACK_FAILED", `${message}; rollback failed: ${rollbackFailures.join("; ")}`, writes);
   }
 }
 
@@ -272,7 +283,6 @@ async function findConflict(installRoot: string, exists: (path: string) => Promi
   for (const path of [
     join(installRoot, "plugin"),
     join(installRoot, "marketplace"),
-    join(installRoot, "codex-skills"),
     join(installRoot, "worker"),
   ]) {
     if (await exists(path)) {
@@ -331,7 +341,11 @@ async function migrateLegacyManifest(
 ): Promise<SetupResult> {
   const requestedRoot = resolve(installRoot);
   const manifest = manifestPath(requestedRoot);
-  const expectedLegacyPaths = installerOwnedRoots(requestedRoot).filter((path) => !path.endsWith("/worker"));
+  const expectedLegacyPaths = [
+    join(requestedRoot, "plugin"),
+    join(requestedRoot, "marketplace"),
+    join(requestedRoot, "codex-skills"),
+  ].map((path) => resolve(path));
   const normalizedOwnedPaths = legacyManifest.ownedPaths.map((ownedPath) => resolve(ownedPath));
   const uniqueOwnedPaths = new Set(normalizedOwnedPaths);
   if (
@@ -366,7 +380,10 @@ async function migrateLegacyManifest(
   try {
     const worker = await installWorker(requestedRoot, dependencies.spawn, { updateManifest: false });
     writes.push(workerRoot);
-    const ownedPaths = [...expectedLegacyPaths, workerRoot];
+    await runRequired(dependencies.spawn, "longtable", [
+      "codex", "install-skills", "--surface", "compact", "--dir", join(requestedRoot, "plugin", "skills"),
+    ]);
+    const ownedPaths = installerOwnedRoots(requestedRoot);
     const installManifest = await buildManifest(requestedRoot, ownedPaths, worker, dependencies);
     const manifestContents = serializeManifest(installManifest);
     const doctor = await runDoctor(
@@ -415,7 +432,6 @@ function installerOwnedRoots(installRoot: string): readonly string[] {
   return [
     join(installRoot, "plugin"),
     join(installRoot, "marketplace"),
-    join(installRoot, "codex-skills"),
     join(installRoot, "worker"),
   ].map((path) => resolve(path));
 }
@@ -530,20 +546,47 @@ async function runRequired(spawn: ProcessRunner, command: string, args: readonly
   }
 }
 
-async function ensureMarketplaceRegistered(spawn: ProcessRunner, marketplacePath: string): Promise<void> {
+async function ensureMarketplaceRegistered(spawn: ProcessRunner, marketplacePath: string): Promise<boolean> {
   const list = await spawn("codex", ["plugin", "marketplace", "list", "--json"]);
-  if (list.code === 0 && list.stdout.includes(marketplacePath)) {
-    return;
+  if (list.code === 0 && marketplaceListContains(list.stdout, marketplacePath)) {
+    return false;
   }
   await runRequired(spawn, "codex", ["plugin", "marketplace", "add", marketplacePath]);
+  return true;
 }
 
-async function ensurePluginInstalled(spawn: ProcessRunner): Promise<void> {
+async function ensurePluginInstalled(spawn: ProcessRunner): Promise<boolean> {
   const list = await spawn("codex", ["plugin", "list", "--json"]);
-  if (list.code === 0 && list.stdout.includes("public-proposal")) {
-    return;
+  if (list.code === 0 && pluginListContains(list.stdout)) {
+    return false;
   }
   await runRequired(spawn, "codex", ["plugin", "add", "public-proposal@public-proposal"]);
+  return true;
+}
+
+function marketplaceListContains(stdout: string, marketplacePath: string): boolean {
+  try {
+    const parsed = JSON.parse(stdout) as { marketplaces?: Array<{ name?: string; root?: string; path?: string; marketplaceSource?: { source?: string } }> };
+    return parsed.marketplaces?.some((entry) => entry.name === "public-proposal" && [entry.root, entry.path, entry.marketplaceSource?.source].includes(marketplacePath)) ?? false;
+  } catch { return false; }
+}
+
+function pluginListContains(stdout: string): boolean {
+  try {
+    const parsed = JSON.parse(stdout) as { installed?: Array<{ pluginId?: string; installed?: boolean }>; plugins?: Array<{ name?: string; marketplace?: string }> };
+    return (parsed.installed?.some((entry) => entry.pluginId === "public-proposal@public-proposal" && entry.installed === true) ?? false)
+      || (parsed.plugins?.some((entry) => entry.name === "public-proposal" && entry.marketplace === "public-proposal") ?? false);
+  } catch { return false; }
+}
+
+async function compensate(
+  spawn: ProcessRunner,
+  command: string,
+  args: readonly string[],
+  failures: string[],
+): Promise<void> {
+  const result = await spawn(command, args);
+  if (result.code !== 0) failures.push(`${command} ${args.join(" ")}: ${result.stderr || result.stdout || `exit ${result.code}`}`);
 }
 
 async function buildManifest(

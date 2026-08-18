@@ -16,7 +16,6 @@
   "ownedPaths": [
     "/fixture/.public-proposal/plugin",
     "/fixture/.public-proposal/marketplace",
-    "/fixture/.public-proposal/codex-skills",
     "/fixture/.public-proposal/worker"
   ],
   "createdAt": "2026-08-18T00:00:00.000Z"

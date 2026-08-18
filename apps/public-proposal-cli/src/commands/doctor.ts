@@ -114,6 +114,8 @@ async function pluginCheck(
   const marketplacePath = join(packageRoot, "marketplace", "marketplace.json");
   const installedPluginPath = join(installRoot, "plugin", ".codex-plugin", "plugin.json");
   const installedBundlePath = join(installRoot, "plugin", "skills", "korean-public-proposal", "BUNDLE-MANIFEST.json");
+  const longtableSkillPath = join(installRoot, "plugin", "skills", "longtable", "SKILL.md");
+  const longtableResearchSkillPath = join(installRoot, "plugin", "skills", "longtable-research", "SKILL.md");
   try {
     const [pluginRaw, bundleRaw, marketplaceRaw, packagePluginSha] = await Promise.all([
       dependencies.readFile(pluginManifestPath),
@@ -190,11 +192,41 @@ async function pluginCheck(
     if (bundleCheck) {
       return bundleCheck;
     }
+    const [longtableSkill, longtableResearchSkill, marketplaces, plugins] = await Promise.all([
+      dependencies.readFile(longtableSkillPath).catch(() => ""),
+      dependencies.readFile(longtableResearchSkillPath).catch(() => ""),
+      dependencies.spawn("codex", ["plugin", "marketplace", "list", "--json"]),
+      dependencies.spawn("codex", ["plugin", "list", "--json"]),
+    ]);
+    const marketplaceRegistered = marketplaces.code === 0
+      && marketplaceListContains(marketplaces.stdout, join(installRoot, "marketplace"));
+    const pluginRegistered = plugins.code === 0 && pluginListContains(plugins.stdout);
+    if (!longtableSkill.trim() || !longtableResearchSkill.trim() || !marketplaceRegistered || !pluginRegistered) {
+      return {
+        name: "plugin",
+        status: "blocker",
+        code: "PP_PLUGIN_NOT_INSTALLED",
+        detected: {
+          longtableSkill: Boolean(longtableSkill.trim()),
+          longtableResearchSkill: Boolean(longtableResearchSkill.trim()),
+          marketplaceRegistered,
+          pluginRegistered,
+        },
+        message: "Public Proposal and both LongTable skills must be discoverable through the registered Codex plugin.",
+      };
+    }
     return {
       name: "plugin",
       status: "pass",
-      detected: { version: installedPlugin.version, pluginSha: installedPluginSha, bundleSha: installedBundleSha },
-      message: "Public Proposal plugin integrity is valid.",
+      detected: {
+        version: installedPlugin.version,
+        pluginSha: installedPluginSha,
+        bundleSha: installedBundleSha,
+        skills: ["longtable", "longtable-research"],
+        marketplaceRegistered,
+        pluginRegistered,
+      },
+      message: "Public Proposal and LongTable skills are discoverable through the registered Codex plugin.",
     };
   } catch (error) {
     return {
@@ -249,6 +281,21 @@ async function validateBundleFiles(
 
 function normalizeHash(hash: string): string {
   return hash.startsWith("sha256:") ? hash.slice("sha256:".length) : hash;
+}
+
+function marketplaceListContains(stdout: string, marketplacePath: string): boolean {
+  try {
+    const parsed = JSON.parse(stdout) as { marketplaces?: Array<{ name?: string; root?: string; path?: string; marketplaceSource?: { source?: string } }> };
+    return parsed.marketplaces?.some((entry) => entry.name === "public-proposal" && [entry.root, entry.path, entry.marketplaceSource?.source].includes(marketplacePath)) ?? false;
+  } catch { return false; }
+}
+
+function pluginListContains(stdout: string): boolean {
+  try {
+    const parsed = JSON.parse(stdout) as { installed?: Array<{ pluginId?: string; installed?: boolean }>; plugins?: Array<{ name?: string; marketplace?: string }> };
+    return (parsed.installed?.some((entry) => entry.pluginId === "public-proposal@public-proposal" && entry.installed === true) ?? false)
+      || (parsed.plugins?.some((entry) => entry.name === "public-proposal" && entry.marketplace === "public-proposal") ?? false);
+  } catch { return false; }
 }
 
 async function kppCheck(spawn: ProcessRunner, expectedVersion: string): Promise<DoctorCheck> {

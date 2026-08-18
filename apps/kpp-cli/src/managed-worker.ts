@@ -114,7 +114,6 @@ function validateManifest(manifest: Record<string, unknown> | null): string | nu
   const expectedOwned = new Set([
     join(installRoot, "plugin"),
     join(installRoot, "marketplace"),
-    join(installRoot, "codex-skills"),
     join(installRoot, "worker"),
   ]);
   if (

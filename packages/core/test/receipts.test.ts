@@ -4,6 +4,7 @@ import { basename, join } from "node:path";
 import { afterEach, beforeAll, describe, expect, it } from "vitest";
 import { sha256File } from "../src/hash.js";
 import { verifyReceipt, writeReceipt } from "../src/receipts.js";
+import { withReceiptPathLock } from "../src/receipt-lock.js";
 
 let setReceiptLockTestHooks: (hooks: Record<string, unknown>) => void;
 
@@ -108,6 +109,48 @@ describe("receipts", () => {
 
     expect(receipts).toHaveLength(16);
     expect((await verifyReceipt(receiptPath)).valid).toBe(true);
+  });
+
+  it("keeps operations mutually exclusive when one creator pauses before publishing its lock", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "kpp-receipt-"));
+    temporaryDirectories.push(directory);
+    const input = join(directory, "source.txt");
+    const receiptPath = join(directory, "receipts", "source-lock.json");
+    let releasePublication!: () => void;
+    const publicationPaused = new Promise<void>((resolve) => { releasePublication = resolve; });
+    let hookEntered!: () => void;
+    const entered = new Promise<void>((resolve) => { hookEntered = resolve; });
+    let hookCalls = 0;
+    let active = 0;
+    let maximumActive = 0;
+    let operationEntered!: () => void;
+    const secondCreatorAcquired = new Promise<void>((resolve) => { operationEntered = resolve; });
+    await writeFile(input, "alpha");
+    setReceiptLockTestHooks({
+      beforeLockPublished: async () => {
+        hookCalls += 1;
+        if (hookCalls === 1) {
+          hookEntered();
+          await publicationPaused;
+        }
+      },
+    });
+
+    const operation = async () => {
+      active += 1;
+      maximumActive = Math.max(maximumActive, active);
+      operationEntered();
+      await new Promise((resolve) => setTimeout(resolve, 5));
+      active -= 1;
+    };
+    const first = withReceiptPathLock(receiptPath, operation);
+    await entered;
+    const second = withReceiptPathLock(receiptPath, operation);
+    await secondCreatorAcquired;
+    releasePublication();
+    await Promise.all([first, second]);
+
+    expect(maximumActive).toBe(1);
   });
 
   it("removes its temporary file when the final rename fails", async () => {
@@ -317,6 +360,30 @@ describe("receipts", () => {
     setReceiptLockTestHooks({
       orphanGraceMs: 1_000,
     });
+
+    await expect(writeReceipt({
+      stage: "SOURCE_LOCKED",
+      files: [input],
+      output: receiptPath,
+    })).resolves.toMatchObject({ stage: "SOURCE_LOCKED" });
+
+    await expect(stat(lockPath)).rejects.toMatchObject({ code: "ENOENT" });
+    expect((await verifyReceipt(receiptPath)).valid).toBe(true);
+  });
+
+  it("quarantines a legacy lock with a malformed partial recovery claim instead of poisoning receipt creation", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "kpp-receipt-"));
+    temporaryDirectories.push(directory);
+    const input = join(directory, "source.txt");
+    const receiptPath = join(directory, "receipts", "source-lock.json");
+    const lockPath = join(directory, "receipts", `.${basename(receiptPath)}.lock`);
+    const recoveryClaimPath = join(lockPath, ".recovery-claim.json");
+    const oldTime = new Date(Date.now() - 120_000);
+    await writeFile(input, "alpha");
+    await mkdir(lockPath, { recursive: true });
+    await writeFile(recoveryClaimPath, "{partial-json", "utf8");
+    await utimes(lockPath, oldTime, oldTime);
+    setReceiptLockTestHooks({ orphanGraceMs: 1_000 });
 
     await expect(writeReceipt({
       stage: "SOURCE_LOCKED",

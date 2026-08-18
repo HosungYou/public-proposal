@@ -6,13 +6,15 @@ This repository is the canonical GitHub home for the English `$public-proposal` 
 
 ## Install and run
 
-The supported Codex setup path is:
+The intended Codex setup path after publication is:
 
 ```bash
 npx @longtable/public-proposal setup --provider codex
 ```
 
-It pins `@longtable/kpp-cli@0.2.1`, `@longtable/cli@0.1.72`, and managed worker protocol `1.0.0`. Node `>=22 <27` and Python `>=3.11 <3.15` are compatibility requirements. The current setup and doctor commands verify that the required executables are available; they do not yet enforce those runtime version ranges.
+As of 2026-08-18 the package is not yet available from the public npm registry; registry publication is a release prerequisite. The command above must not be treated as currently runnable from npm until `npm view @longtable/public-proposal@0.1.0 version` succeeds. The repository release gate verifies the exact local tarball without publishing it.
+
+It pins `@longtable/kpp-cli@0.2.1`, `@longtable/cli@0.1.72`, and managed worker protocol `1.0.0`. LongTable installs `$longtable` and `$longtable-research` into the registered Public Proposal plugin's `skills/` surface, and doctor verifies those files plus Codex marketplace/plugin registration. Node `>=22 <27` and Python `>=3.11 <3.15` are compatibility requirements. The current setup and doctor commands verify that the required executables are available; they do not yet enforce those runtime version ranges.
 
 After setup, inspect the installed boundary without changing it:
 

@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { mkdir, open, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
+import { link, lstat, mkdir, open, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { setTimeout } from "node:timers/promises";
 import { basename, dirname, join } from "node:path";
 import { KppError } from "./errors.js";
@@ -7,16 +7,12 @@ import { KppError } from "./errors.js";
 const LOCK_ATTEMPTS = 200;
 const LOCK_RETRY_MS = 5;
 const LOCK_ORPHAN_GRACE_MS = 30_000;
-const LOCK_OWNER_FILE = "owner.json";
-const RECOVERY_CLAIM_FILE = ".recovery-claim.json";
+const LEGACY_OWNER_FILE = "owner.json";
+const RECOVERY_CLAIM_SUFFIX = ".recovery-claim";
 
-interface ReceiptLockOwner {
-  readonly pid: number;
-  readonly token: string;
-  readonly createdAt: string;
-}
-
+interface ReceiptLockOwner { readonly pid: number; readonly token: string; readonly createdAt: string }
 interface ReceiptLockTestHooks {
+  readonly beforeLockPublished?: () => Promise<void>;
   readonly failAfterLockDirectoryCreated?: boolean;
   readonly failAfterOwnerMetadataWritten?: boolean;
   readonly lockAttempts?: number;
@@ -25,331 +21,157 @@ interface ReceiptLockTestHooks {
   readonly afterRecoverableLockObserved?: (lockPath: string) => Promise<void>;
   readonly afterStaleLockQuarantined?: (lockPath: string, quarantinePath: string) => Promise<void>;
 }
-
-type ReceiptLockState =
-  | { readonly kind: "valid"; readonly owner: ReceiptLockOwner; readonly dev: number; readonly ino: number; readonly mtimeMs: number }
-  | { readonly kind: "missingOwner"; readonly dev: number; readonly ino: number; readonly mtimeMs: number }
-  | { readonly kind: "malformedOwner"; readonly dev: number; readonly ino: number; readonly mtimeMs: number };
-
-let testHooks: ReceiptLockTestHooks = {};
-
-export function __setReceiptLockTestHooks(hooks: ReceiptLockTestHooks): void {
-  testHooks = hooks;
+interface LockState {
+  readonly owner: ReceiptLockOwner | null;
+  readonly dev: number;
+  readonly ino: number;
+  readonly mtimeMs: number;
 }
 
-export async function withReceiptPathLock<T>(
-  receiptPath: string,
-  operation: () => Promise<T>,
-): Promise<T> {
+let testHooks: ReceiptLockTestHooks = {};
+export function __setReceiptLockTestHooks(hooks: ReceiptLockTestHooks): void { testHooks = hooks; }
+
+export async function withReceiptPathLock<T>(receiptPath: string, operation: () => Promise<T>): Promise<T> {
   const directory = dirname(receiptPath);
   await mkdir(directory, { recursive: true });
   const lockPath = join(directory, `.${basename(receiptPath)}.lock`);
   const owner = await acquireLock(lockPath);
-  try {
-    return await operation();
-  } finally {
-    await releaseLock(lockPath, owner);
-  }
+  try { return await operation(); } finally { await releaseOwnedToken(lockPath, owner); }
 }
 
 async function acquireLock(lockPath: string): Promise<ReceiptLockOwner> {
   const attempts = testHooks.lockAttempts ?? LOCK_ATTEMPTS;
   const retryMs = testHooks.lockRetryMs ?? LOCK_RETRY_MS;
-  const owner = {
-    pid: process.pid,
-    token: randomUUID(),
-    createdAt: new Date().toISOString(),
-  };
-
+  const owner = createOwner();
+  await testHooks.beforeLockPublished?.();
   for (let attempt = 0; attempt < attempts; attempt += 1) {
+    const claimPath = recoveryClaimPath(lockPath);
+    await recoverStaleRecoveryClaim(claimPath);
+    if (await pathExists(claimPath)) {
+      if (attempt === attempts - 1) throw timeoutError(lockPath);
+      await setTimeout(retryMs);
+      continue;
+    }
     try {
-      await mkdir(lockPath);
-      try {
-        if (testHooks.failAfterLockDirectoryCreated === true) {
-          throw new Error("injected receipt lock owner write failure");
-        }
-        await writeFile(ownerPath(lockPath), `${JSON.stringify(owner)}\n`, { flag: "wx", mode: 0o600 });
-        if (testHooks.failAfterOwnerMetadataWritten === true) {
-          throw new Error("injected receipt lock owner sync failure");
-        }
-        await syncDirectory(lockPath);
-        await syncDirectory(dirname(lockPath));
-        return owner;
-      } catch (error) {
-        await rm(lockPath, { force: true, recursive: true });
-        await syncDirectory(dirname(lockPath));
-        throw new KppError("KPP_RECEIPT_LOCK_SETUP", "영수증 잠금 owner 메타데이터를 기록할 수 없습니다.", {
-          path: lockPath,
-          actual: error instanceof Error ? error.message : error,
-        });
+      // A complete ownership record becomes visible in one atomic filesystem operation.
+      await publishToken(lockPath, owner);
+      if (testHooks.failAfterLockDirectoryCreated === true || testHooks.failAfterOwnerMetadataWritten === true) {
+        await releaseOwnedToken(lockPath, owner);
+        throw new KppError("KPP_RECEIPT_LOCK_SETUP", "영수증 잠금 owner 메타데이터를 기록할 수 없습니다.", { path: lockPath });
       }
+      await syncDirectory(dirname(lockPath));
+      return owner;
     } catch (error) {
-      if (!isFileExistsError(error)) {
-        if (error instanceof KppError) {
-          throw error;
-        }
-        throw new KppError("KPP_RECEIPT_LOCK_SETUP", "영수증 잠금을 생성할 수 없습니다.", {
-          path: lockPath,
-          actual: error instanceof Error ? error.message : error,
-        });
+      if (!isCode(error, "EEXIST")) {
+        if (error instanceof KppError) throw error;
+        throw new KppError("KPP_RECEIPT_LOCK_SETUP", "영수증 잠금을 생성할 수 없습니다.", { path: lockPath, actual: error instanceof Error ? error.message : error });
       }
-
-      if (await recoverStaleLock(lockPath)) {
-        continue;
-      }
-
-      if (attempt === attempts - 1) {
-        throw new KppError("KPP_RECEIPT_LOCK_TIMEOUT", "영수증 잠금을 획득하지 못했습니다.", {
-          path: lockPath,
-          rule: "receipt_lock_timeout",
-        });
-      }
+      if (await recoverStaleLock(lockPath)) continue;
+      if (attempt === attempts - 1) throw timeoutError(lockPath);
       await setTimeout(retryMs);
     }
   }
-
-  throw new KppError("KPP_RECEIPT_LOCK_TIMEOUT", "영수증 잠금을 획득하지 못했습니다.", {
-    path: lockPath,
-    rule: "receipt_lock_timeout",
-  });
+  throw timeoutError(lockPath);
 }
 
-async function releaseLock(lockPath: string, owner: ReceiptLockOwner): Promise<void> {
-  if (await ownerMatches(lockPath, owner)) {
-    await rm(lockPath, { force: true, recursive: true });
-    await syncDirectory(dirname(lockPath));
+async function releaseOwnedToken(path: string, owner: ReceiptLockOwner): Promise<void> {
+  try {
+    if (await readFile(path, "utf8") !== serializeOwner(owner)) return;
+    await rm(path, { force: true });
+    await syncDirectory(dirname(path));
+  } catch (error) {
+    if (!isCode(error, "ENOENT") && !isCode(error, "EISDIR")) throw error;
   }
 }
 
 async function recoverStaleLock(lockPath: string): Promise<boolean> {
-  const state = await readLockState(lockPath);
-  if (state === null || !isRecoverableLockState(state)) {
-    return false;
-  }
+  const observed = await readLockState(lockPath);
+  if (observed === null || !isRecoverable(observed)) return false;
   await testHooks.afterRecoverableLockObserved?.(lockPath);
-  return claimAndQuarantineRecoverableLock(lockPath, state);
+  return claimAndQuarantine(lockPath, observed);
 }
 
-async function ownerMatches(lockPath: string, expected: ReceiptLockOwner): Promise<boolean> {
-  const actual = await readOwnerFile(ownerPath(lockPath));
-  return actual?.pid === expected.pid && actual.token === expected.token;
-}
-
-async function claimAndQuarantineRecoverableLock(
-  lockPath: string,
-  observedState: ReceiptLockState,
-): Promise<boolean> {
-  const claimPath = join(lockPath, RECOVERY_CLAIM_FILE);
+async function claimAndQuarantine(lockPath: string, observed: LockState): Promise<boolean> {
+  const claimPath = recoveryClaimPath(lockPath);
   const claim = createOwner();
-  let quarantinePath: string | null = null;
-
   try {
-    await writeFile(claimPath, `${JSON.stringify(claim)}\n`, { flag: "wx", mode: 0o600 });
-    await syncDirectory(lockPath);
+    await publishToken(claimPath, claim);
+    await syncDirectory(dirname(lockPath));
   } catch (error) {
-    if (isFileExistsError(error)) {
-      await recoverStaleRecoveryClaim(claimPath);
-      return false;
-    }
-    if (isNotFoundError(error)) {
-      return true;
-    }
-    throw new KppError("KPP_RECEIPT_LOCK_SETUP", "영수증 잠금 복구 claim을 생성할 수 없습니다.", {
-      path: lockPath,
-      actual: error instanceof Error ? error.message : error,
-    });
+    if (isCode(error, "EEXIST")) { await recoverStaleRecoveryClaim(claimPath); return false; }
+    if (isCode(error, "ENOENT")) return true;
+    throw new KppError("KPP_RECEIPT_LOCK_SETUP", "영수증 잠금 복구 claim을 생성할 수 없습니다.", { path: lockPath });
   }
-
+  let quarantinePath: string | null = null;
   try {
-    const state = await readLockState(lockPath);
-    if (
-      state === null
-      || !sameLockDirectory(observedState, state)
-      || !isRecoverableLockStateAfterClaim(state)
-    ) {
-      return false;
-    }
-
+    const current = await readLockState(lockPath);
+    if (current === null || !sameObject(observed, current) || !isRecoverable(current)) return false;
     quarantinePath = join(dirname(lockPath), `.${basename(lockPath)}.recovered-${process.pid}-${randomUUID()}`);
-    try {
-      await rename(lockPath, quarantinePath);
-      await syncDirectory(dirname(lockPath));
-    } catch (error) {
-      if (isNotFoundError(error)) {
-        return true;
-      }
-      throw new KppError("KPP_RECEIPT_LOCK_SETUP", "영수증 잠금 복구 quarantine을 생성할 수 없습니다.", {
-        path: lockPath,
-        actual: error instanceof Error ? error.message : error,
-      });
+    try { await rename(lockPath, quarantinePath); } catch (error) {
+      if (isCode(error, "ENOENT")) return true;
+      throw new KppError("KPP_RECEIPT_LOCK_SETUP", "영수증 잠금 복구 quarantine을 생성할 수 없습니다.", { path: lockPath });
     }
-
+    await syncDirectory(dirname(lockPath));
     await testHooks.afterStaleLockQuarantined?.(lockPath, quarantinePath);
     return true;
   } finally {
-    if (quarantinePath === null) {
-      await rm(claimPath, { force: true });
-      await syncDirectory(lockPath).catch(() => undefined);
-    } else {
-      await rm(quarantinePath, { force: true, recursive: true });
-      await syncDirectory(dirname(lockPath));
-    }
+    if (quarantinePath !== null) await rm(quarantinePath, { force: true, recursive: true });
+    await releaseOwnedToken(claimPath, claim);
   }
 }
 
 async function recoverStaleRecoveryClaim(claimPath: string): Promise<void> {
-  const claim = await readOwnerFile(claimPath);
-  if (claim !== null && !isProcessAlive(claim.pid)) {
-    await rm(claimPath, { force: true });
-    await syncDirectory(dirname(claimPath)).catch(() => undefined);
-  }
+  const state = await readLockState(claimPath);
+  if (state === null || !isRecoverable(state)) return;
+  const quarantinePath = `${claimPath}.recovered-${process.pid}-${randomUUID()}`;
+  try { await rename(claimPath, quarantinePath); } catch (error) { if (isCode(error, "ENOENT")) return; throw error; }
+  await rm(quarantinePath, { force: true, recursive: true });
+  await syncDirectory(dirname(claimPath));
 }
 
-async function readLockState(lockPath: string): Promise<ReceiptLockState | null> {
-  let lockStat: { readonly dev: number; readonly ino: number; readonly mtimeMs: number };
-  try {
-    lockStat = await stat(lockPath);
-  } catch {
-    return null;
+async function readLockState(path: string): Promise<LockState | null> {
+  let metadata: Awaited<ReturnType<typeof lstat>>;
+  try { metadata = await lstat(path); } catch { return null; }
+  let raw: string | null = null;
+  if (metadata.isDirectory()) {
+    try { raw = await readFile(join(path, LEGACY_OWNER_FILE), "utf8"); } catch { raw = null; }
+  } else {
+    try { raw = await readFile(path, "utf8"); } catch { raw = null; }
   }
-
-  const raw = await readTextFile(ownerPath(lockPath));
-  if (raw === null) {
-    return {
-      kind: "missingOwner",
-      dev: lockStat.dev,
-      ino: lockStat.ino,
-      mtimeMs: lockStat.mtimeMs,
-    };
-  }
-
-  const owner = parseOwner(raw);
-  if (owner === null) {
-    return {
-      kind: "malformedOwner",
-      dev: lockStat.dev,
-      ino: lockStat.ino,
-      mtimeMs: lockStat.mtimeMs,
-    };
-  }
-
-  return {
-    kind: "valid",
-    owner,
-    dev: lockStat.dev,
-    ino: lockStat.ino,
-    mtimeMs: lockStat.mtimeMs,
-  };
+  return { owner: raw === null ? null : parseOwner(raw), dev: metadata.dev, ino: metadata.ino, mtimeMs: metadata.mtimeMs };
 }
 
-async function readOwnerFile(path: string): Promise<ReceiptLockOwner | null> {
-  const raw = await readTextFile(path);
-  if (raw === null) {
-    return null;
-  }
-  return parseOwner(raw);
+function isRecoverable(state: LockState): boolean {
+  if (state.owner !== null) return !isProcessAlive(state.owner.pid);
+  return Date.now() - state.mtimeMs >= (testHooks.orphanGraceMs ?? LOCK_ORPHAN_GRACE_MS);
 }
-
-async function readTextFile(path: string): Promise<string | null> {
-  let raw: string;
-  try {
-    raw = await readFile(path, "utf8");
-  } catch {
-    return null;
-  }
-  return raw;
-}
-
+function sameObject(left: LockState, right: LockState): boolean { return left.dev === right.dev && left.ino === right.ino; }
+function createOwner(): ReceiptLockOwner { return { pid: process.pid, token: randomUUID(), createdAt: new Date().toISOString() }; }
+function serializeOwner(owner: ReceiptLockOwner): string { return JSON.stringify(owner); }
 function parseOwner(raw: string): ReceiptLockOwner | null {
   try {
     const parsed = JSON.parse(raw) as Partial<ReceiptLockOwner>;
-    if (
-      typeof parsed.pid !== "number"
-      || !Number.isInteger(parsed.pid)
-      || parsed.pid <= 0
-      || typeof parsed.token !== "string"
-      || parsed.token.length === 0
-      || typeof parsed.createdAt !== "string"
-    ) {
-      return null;
-    }
-    return {
-      pid: parsed.pid,
-      token: parsed.token,
-      createdAt: parsed.createdAt,
-    };
-  } catch {
-    return null;
-  }
+    if (!Number.isInteger(parsed.pid) || (parsed.pid ?? 0) <= 0 || typeof parsed.token !== "string" || parsed.token.length === 0 || typeof parsed.createdAt !== "string") return null;
+    return { pid: parsed.pid as number, token: parsed.token, createdAt: parsed.createdAt };
+  } catch { return null; }
 }
-
-function createOwner(): ReceiptLockOwner {
-  return {
-    pid: process.pid,
-    token: randomUUID(),
-    createdAt: new Date().toISOString(),
-  };
-}
-
-function isRecoverableLockState(state: ReceiptLockState): boolean {
-  if (state.kind === "valid") {
-    return !isProcessAlive(state.owner.pid);
-  }
-  return Date.now() - state.mtimeMs >= (testHooks.orphanGraceMs ?? LOCK_ORPHAN_GRACE_MS);
-}
-
-function isRecoverableLockStateAfterClaim(state: ReceiptLockState): boolean {
-  return state.kind !== "valid" || !isProcessAlive(state.owner.pid);
-}
-
-function sameLockDirectory(left: ReceiptLockState, right: ReceiptLockState): boolean {
-  return left.dev === right.dev && left.ino === right.ino;
-}
-
-function ownerPath(lockPath: string): string {
-  return join(lockPath, LOCK_OWNER_FILE);
-}
-
-function isProcessAlive(pid: number): boolean {
-  if (!Number.isInteger(pid) || pid <= 0) {
-    return false;
-  }
+function recoveryClaimPath(lockPath: string): string { return `${lockPath}${RECOVERY_CLAIM_SUFFIX}`; }
+async function publishToken(path: string, owner: ReceiptLockOwner): Promise<void> {
+  const temporaryPath = `${path}.publish-${process.pid}-${owner.token}`;
   try {
-    process.kill(pid, 0);
-    return true;
-  } catch (error) {
-    return !(
-      typeof error === "object"
-      && error !== null
-      && "code" in error
-      && (error as { code?: unknown }).code === "ESRCH"
-    );
-  }
-}
-
-function isFileExistsError(error: unknown): boolean {
-  return (
-    typeof error === "object"
-    && error !== null
-    && "code" in error
-    && (error as { code?: unknown }).code === "EEXIST"
-  );
-}
-
-function isNotFoundError(error: unknown): boolean {
-  return (
-    typeof error === "object"
-    && error !== null
-    && "code" in error
-    && (error as { code?: unknown }).code === "ENOENT"
-  );
-}
-
-async function syncDirectory(directory: string): Promise<void> {
-  const handle = await open(directory, "r");
-  try {
-    await handle.sync();
+    await writeFile(temporaryPath, serializeOwner(owner), { flag: "wx", mode: 0o600 });
+    const handle = await open(temporaryPath, "r");
+    try { await handle.sync(); } finally { await handle.close(); }
+    await link(temporaryPath, path);
+    await syncDirectory(dirname(path));
   } finally {
-    await handle.close();
+    await rm(temporaryPath, { force: true });
   }
 }
+async function pathExists(path: string): Promise<boolean> { try { await lstat(path); return true; } catch { return false; } }
+function isProcessAlive(pid: number): boolean {
+  try { process.kill(pid, 0); return true; } catch (error) { return !isCode(error, "ESRCH"); }
+}
+function timeoutError(path: string): KppError { return new KppError("KPP_RECEIPT_LOCK_TIMEOUT", "영수증 잠금을 획득하지 못했습니다.", { path, rule: "receipt_lock_timeout" }); }
+function isCode(error: unknown, code: string): boolean { return typeof error === "object" && error !== null && "code" in error && (error as { code?: unknown }).code === code; }
+async function syncDirectory(directory: string): Promise<void> { const handle = await open(directory, "r"); try { await handle.sync(); } finally { await handle.close(); } }

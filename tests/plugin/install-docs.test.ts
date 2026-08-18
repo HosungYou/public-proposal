@@ -26,6 +26,7 @@ test("documentation exposes a runnable ephemeral install and doctor path", async
   for (const document of [readme, install, packageReadme]) {
     expect(document).toContain(EPHEMERAL_SETUP);
     expect(document).toContain(EPHEMERAL_DOCTOR);
+    expect(document).toContain("registry publication is a release prerequisite");
   }
 
   const [primaryGuide] = install.split("## Manual fallback");

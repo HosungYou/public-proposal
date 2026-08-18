@@ -287,7 +287,6 @@ function resolveManagedWorkerFromManifest(
   const expectedOwned = new Set([
     join(installRoot, "plugin"),
     join(installRoot, "marketplace"),
-    join(installRoot, "codex-skills"),
     join(installRoot, "worker"),
   ]);
   if (
