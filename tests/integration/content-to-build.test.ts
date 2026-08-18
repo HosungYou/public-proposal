@@ -236,7 +236,15 @@ async function runContentFixture(
   const designProfilePath = join(fixture, "figures", "design-profile.json");
   const pendingBlankRegisterPath = join(fixture, "content", "pending-blank-register.json");
 
-  expect(await runCli(["init", root, "--project-id", "synthetic-research-proposal", "--json"])).toMatchObject({ code: 0, stderr: "" });
+  expect(await runCli([
+    "init",
+    root,
+    "--project-id",
+    "synthetic-research-proposal",
+    "--proposal-class",
+    "research_service",
+    "--json",
+  ])).toMatchObject({ code: 0, stderr: "" });
   expect(await runCli(["ingest", root, rfpPath, "--json"])).toMatchObject({ code: 0, stderr: "" });
   const candidates = await materializeTemplate<ContentFixtureResult["candidates"]>(candidatesTemplatePath, candidatesPath, {
     "__ISSUER_RFP_PATH__": rfpPath,

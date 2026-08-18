@@ -110,8 +110,10 @@ export {
 } from "./figure-spec.js";
 export {
   ApprovalPolicySchema,
+  ProposalClassSchema,
   ProjectSchema,
   ProjectStateSchema,
+  type ProposalClass,
   type ProjectRecord,
   type ProjectState,
 } from "./project.js";

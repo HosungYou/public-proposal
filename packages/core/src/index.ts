@@ -20,6 +20,7 @@ export {
   PROJECT_FILE_NAME,
   type ProjectInitialization,
 } from "./project-store.js";
+export { type ProposalClass } from "@longtable/kpp-schemas";
 export {
   advanceProject,
   allowedNext,

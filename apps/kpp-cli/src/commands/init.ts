@@ -1,11 +1,17 @@
 import { access } from "node:fs/promises";
 import { basename, resolve } from "node:path";
-import { initializeProject, KppError, projectPath } from "@longtable/kpp-core";
+import {
+  initializeProject,
+  KppError,
+  projectPath,
+  type ProposalClass,
+} from "@longtable/kpp-core";
 import { success, type CliEnvelope } from "../output.js";
 
 export interface InitOptions {
   readonly issuerPack?: string;
   readonly projectId?: string;
+  readonly proposalClass?: ProposalClass;
 }
 
 export async function initializeCommand(rootInput: string, options: InitOptions): Promise<CliEnvelope> {
@@ -34,6 +40,7 @@ export async function initializeCommand(rootInput: string, options: InitOptions)
   const project = await initializeProject(root, {
     projectId,
     issuerPack: options.issuerPack,
+    proposalClass: options.proposalClass,
   });
   return success("프로젝트를 초기화했습니다.", project);
 }

@@ -76,6 +76,34 @@ describe("kpp CLI", () => {
     await expect(readdir(root)).resolves.not.toContain("release");
   });
 
+  it("persists an explicit proposal class during init", async () => {
+    const root = await mkdtemp(join(tmpdir(), "kpp-cli-"));
+    temporaryDirectories.push(root);
+
+    const initialized = await run([
+      "init",
+      root,
+      "--project-id",
+      "r1",
+      "--proposal-class",
+      "research_service",
+      "--json",
+    ]);
+
+    expect(initialized).toMatchObject({ code: 0, stderr: "" });
+    expect(parseEnvelope(initialized.stdout)).toMatchObject({
+      ok: true,
+      code: "KPP_OK",
+      data: {
+        projectId: "r1",
+        proposalClass: "research_service",
+      },
+    });
+    await expect(readFile(join(root, "kpp.project.yaml"), "utf8")).resolves.toContain(
+      "proposalClass: research_service",
+    );
+  });
+
   it("returns a stable JSON input error when status has no project", async () => {
     const root = await mkdtemp(join(tmpdir(), "kpp-cli-"));
     temporaryDirectories.push(root);

@@ -2,7 +2,11 @@ import { randomUUID } from "node:crypto";
 import { mkdir, open, readFile, rename, rm } from "node:fs/promises";
 import { basename, dirname, join } from "node:path";
 import { parse, stringify } from "yaml";
-import { ProjectSchema, type ProjectRecord } from "@longtable/kpp-schemas";
+import {
+  ProjectSchema,
+  type ProjectRecord,
+  type ProposalClass,
+} from "@longtable/kpp-schemas";
 import { KppError } from "./errors.js";
 
 export const PROJECT_FILE_NAME = "kpp.project.yaml";
@@ -24,6 +28,7 @@ export const PROJECT_DIRECTORIES = [
 export interface ProjectInitialization {
   readonly projectId: string;
   readonly issuerPack?: string | null;
+  readonly proposalClass?: ProposalClass;
   readonly schemaVersion?: string;
 }
 
@@ -38,6 +43,7 @@ export async function initializeProject(
   const project = parseProject({
     schemaVersion: input.schemaVersion ?? "1.0.0",
     projectId: input.projectId,
+    proposalClass: input.proposalClass ?? "general_procurement",
     state: "INIT",
     issuerPack: input.issuerPack ?? null,
     approvalPolicy: "single_owner",
