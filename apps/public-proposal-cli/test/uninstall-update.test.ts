@@ -17,6 +17,7 @@ describe("public proposal uninstall and update", () => {
         "/home/ada/.config/public-proposal/.longtable",
         "/work/customer-evidence",
       ],
+      codexRegistrations: { pluginAdded: false, marketplaceAdded: false },
     });
 
     const result = await runUninstall("/home/ada/.config/public-proposal", {
@@ -49,6 +50,8 @@ describe("public proposal uninstall and update", () => {
     );
 
     expect(commands).toEqual([
+      "codex plugin marketplace list --json",
+      "codex plugin list --json",
       "codex plugin remove public-proposal@public-proposal --json",
       "codex plugin marketplace remove public-proposal --json",
     ]);
@@ -74,6 +77,126 @@ describe("public proposal uninstall and update", () => {
     expect(commands).toEqual([]);
   });
 
+  it("uninstall refuses to remove a Codex marketplace that now points at another installation", async () => {
+    const commands: string[] = [];
+    const removed: string[] = [];
+
+    await expect(
+      runUninstall(
+        "/home/ada/.config/public-proposal",
+        uninstallDependencies({
+          manifest: manifestWithCodexRegistrations({ pluginAdded: true, marketplaceAdded: true }),
+          commands,
+          removed,
+          marketplacePath: "/workspace/other-public-proposal/marketplace",
+        }),
+      ),
+    ).rejects.toMatchObject({ code: "PP_UNINSTALL_REGISTRATION_CONFLICT" });
+
+    expect(commands).toEqual([
+      "codex plugin marketplace list --json",
+      "codex plugin list --json",
+    ]);
+    expect(removed).toEqual([]);
+  });
+
+  it("uninstall reconstructs ownership for a receipt that predates Codex registration tracking", async () => {
+    const commands: string[] = [];
+
+    await runUninstall(
+      "/home/ada/.config/public-proposal",
+      uninstallDependencies({
+        manifest: legacyManifestWithoutCodexRegistrations(),
+        commands,
+      }),
+    );
+
+    expect(commands).toEqual([
+      "codex plugin marketplace list --json",
+      "codex plugin list --json",
+      "codex plugin remove public-proposal@public-proposal --json",
+      "codex plugin marketplace remove public-proposal --json",
+    ]);
+  });
+
+  it("uninstall preserves a legacy receipt when Codex registration ownership cannot be proven", async () => {
+    const commands: string[] = [];
+    const removed: string[] = [];
+
+    await expect(
+      runUninstall(
+        "/home/ada/.config/public-proposal",
+        uninstallDependencies({
+          manifest: legacyManifestWithoutCodexRegistrations(),
+          commands,
+          removed,
+          marketplacePath: null,
+          pluginInstalled: true,
+        }),
+      ),
+    ).rejects.toMatchObject({ code: "PP_UNINSTALL_REGISTRATION_OWNERSHIP_UNKNOWN" });
+
+    expect(commands).toEqual([
+      "codex plugin marketplace list --json",
+      "codex plugin list --json",
+    ]);
+    expect(removed).toEqual([]);
+  });
+
+  it("uninstall resumes cleanup when a legacy receipt's Codex registrations are already absent", async () => {
+    const commands: string[] = [];
+    const removed: string[] = [];
+
+    await runUninstall(
+      "/home/ada/.config/public-proposal",
+      uninstallDependencies({
+        manifest: legacyManifestWithoutCodexRegistrations(),
+        commands,
+        removed,
+        marketplacePath: null,
+        pluginInstalled: false,
+      }),
+    );
+
+    expect(commands).toEqual([
+      "codex plugin marketplace list --json",
+      "codex plugin list --json",
+    ]);
+    expect(removed).toEqual([
+      "/home/ada/.config/public-proposal/plugin",
+      "/home/ada/.config/public-proposal/marketplace",
+      "/home/ada/.config/public-proposal/worker",
+      "/home/ada/.config/public-proposal/installation.json",
+    ]);
+  });
+
+  it("uninstall resumes cleanup when recorded Codex registrations were already removed", async () => {
+    const commands: string[] = [];
+    const removed: string[] = [];
+
+    await runUninstall(
+      "/home/ada/.config/public-proposal",
+      uninstallDependencies({
+        manifest: manifestWithCodexRegistrations({ pluginAdded: true, marketplaceAdded: true }),
+        commands,
+        removed,
+        marketplacePath: null,
+        pluginInstalled: false,
+      }),
+    );
+
+    expect(commands).toEqual([
+      "codex plugin marketplace list --json",
+      "codex plugin list --json",
+    ]);
+    expect(removed).toEqual([
+      "/home/ada/.config/public-proposal/plugin",
+      "/home/ada/.config/public-proposal/marketplace",
+      "/home/ada/.config/public-proposal/worker",
+      "/home/ada/.config/public-proposal/installation.json",
+    ]);
+  });
+
   it("uninstall restores an already-deregistered plugin and preserves files when marketplace deregistration fails", async () => {
     const commands: string[] = [];
     const removed: string[] = [];
@@ -95,6 +218,8 @@ describe("public proposal uninstall and update", () => {
     ).rejects.toMatchObject({ code: "PP_UNINSTALL_DEREGISTRATION_FAILED" });
 
     expect(commands).toEqual([
+      "codex plugin marketplace list --json",
+      "codex plugin list --json",
       "codex plugin remove public-proposal@public-proposal --json",
       "codex plugin marketplace remove public-proposal --json",
       "codex plugin add public-proposal@public-proposal",
@@ -154,8 +279,39 @@ describe("public proposal uninstall and update", () => {
     ).rejects.toMatchObject({ code: "PP_UNINSTALL_PARTIAL_FAILED" });
 
     expect(commands).toEqual([
+      "codex plugin marketplace list --json",
+      "codex plugin list --json",
       "codex plugin remove public-proposal@public-proposal --json",
       "codex plugin marketplace remove public-proposal --json",
+      "codex plugin marketplace add /home/ada/.config/public-proposal/marketplace",
+      "codex plugin add public-proposal@public-proposal",
+    ]);
+  });
+
+  it("uninstall reports a rollback failure when cleanup recovery cannot restore the marketplace", async () => {
+    const commands: string[] = [];
+
+    await expect(
+      runUninstall(
+        "/home/ada/.config/public-proposal",
+        uninstallDependencies({
+          manifest: manifestWithCodexRegistrations({ pluginAdded: true, marketplaceAdded: true }),
+          commands,
+          removeFailure: new Error("disk is read-only"),
+          failures: new Map([[
+            "codex plugin marketplace add /home/ada/.config/public-proposal/marketplace",
+            { code: 1, stdout: "", stderr: "marketplace restore failed" },
+          ]]),
+        }),
+      ),
+    ).rejects.toMatchObject({ code: "PP_UNINSTALL_ROLLBACK_FAILED" });
+
+    expect(commands).toEqual([
+      "codex plugin marketplace list --json",
+      "codex plugin list --json",
+      "codex plugin remove public-proposal@public-proposal --json",
+      "codex plugin marketplace remove public-proposal --json",
+      "codex plugin marketplace add /home/ada/.config/public-proposal/marketplace",
     ]);
   });
 
@@ -348,12 +504,20 @@ function manifestWithCodexRegistrations(
   } as InstallManifest;
 }
 
+function legacyManifestWithoutCodexRegistrations(): InstallManifest {
+  const manifest = manifestWithCodexRegistrations({ pluginAdded: true, marketplaceAdded: true });
+  delete (manifest as Partial<InstallManifest>).codexRegistrations;
+  return manifest;
+}
+
 function uninstallDependencies(input: {
   manifest: InstallManifest;
   commands: string[];
   removed?: string[];
   failures?: Map<string, { code: number; stdout: string; stderr: string }>;
   removeFailure?: Error;
+  marketplacePath?: string | null;
+  pluginInstalled?: boolean;
 }): UninstallDependencies {
   return {
     readManifest: async () => input.manifest,
@@ -365,6 +529,30 @@ function uninstallDependencies(input: {
     spawn: async (command, args) => {
       const rendered = [command, ...args].join(" ");
       input.commands.push(rendered);
+      if (rendered === "codex plugin marketplace list --json") {
+        return {
+          code: 0,
+          stdout: JSON.stringify({
+            marketplaces: input.marketplacePath === null ? [] : [{
+              name: "public-proposal",
+              path: input.marketplacePath ?? "/home/ada/.config/public-proposal/marketplace",
+            }],
+          }),
+          stderr: "",
+        };
+      }
+      if (rendered === "codex plugin list --json") {
+        return {
+          code: 0,
+          stdout: JSON.stringify({
+            installed: input.pluginInstalled === false ? [] : [{
+              pluginId: "public-proposal@public-proposal",
+              installed: true,
+            }],
+          }),
+          stderr: "",
+        };
+      }
       return input.failures?.get(rendered) ?? { code: 0, stdout: "", stderr: "" };
     },
   } as UninstallDependencies;

@@ -103,6 +103,46 @@ describe("public proposal setup", () => {
     });
   });
 
+  it("refuses a global Codex marketplace selector that already names another installation", async () => {
+    const fake = fakeSetupDependencies({
+      preexistingMarketplaceRegistration: true,
+      preexistingMarketplacePath: "/workspace/other-public-proposal/marketplace",
+    });
+
+    const result = await runSetup(
+      { provider: "codex", installScope: "user", cwd: "/work", home: "/home/ada" },
+      fake,
+    );
+
+    expect(result).toMatchObject({ ok: false, error: { code: "PP_MARKETPLACE_CONFLICT" } });
+    expect(fake.commands).toContain("codex plugin marketplace list --json");
+    expect(fake.commands.some((command) => command.startsWith("codex plugin marketplace add "))).toBe(false);
+  });
+
+  it("reconciles a current receipt that predates Codex registration tracking before returning idempotently", async () => {
+    const fake = fakeSetupDependencies();
+    const installRoot = "/home/ada/.config/public-proposal";
+    seedInstalledPlugin(fake, installRoot);
+    fake.files[`${installRoot}/marketplace/marketplace.json`] = JSON.stringify({ name: "public-proposal" });
+    fake.files[`${installRoot}/worker/bin/python`] = "#!/usr/bin/env sh\n";
+    fake.files[`${installRoot}/installation.json`] = JSON.stringify(fakeManifest());
+
+    const result = await runSetup(
+      { provider: "codex", installScope: "user", cwd: "/work", home: "/home/ada" },
+      fake,
+    );
+
+    expect(result).toMatchObject({
+      ok: true,
+      manifest: {
+        codexRegistrations: { pluginAdded: true, marketplaceAdded: true },
+      },
+    });
+    expect(JSON.parse(fake.files[`${installRoot}/installation.json`])).toMatchObject({
+      codexRegistrations: { pluginAdded: true, marketplaceAdded: true },
+    });
+  });
+
   it("persists a canonical receipt and remains idempotent when setup receives a relative install root", async () => {
     const fake = fakeSetupDependencies();
     const relativeRoot = `.public-proposal-relative-${process.pid}`;
@@ -480,6 +520,7 @@ function fakeSetupDependencies(input?: {
   realFilesystemWrites?: boolean;
   workerFailure?: Error;
   preexistingMarketplaceRegistration?: boolean;
+  preexistingMarketplacePath?: string;
   preexistingPluginRegistration?: boolean;
 }): FakeSetupDependencies {
   const installRoot = input?.installRoot ?? "/home/ada/.config/public-proposal";
@@ -504,7 +545,7 @@ function fakeSetupDependencies(input?: {
     workerProtocol: WORKER_PROTOCOL_VERSION,
     marketplaceRegistered: input?.preexistingMarketplaceRegistration ?? false,
     pluginRegistered: input?.preexistingPluginRegistration ?? false,
-    marketplacePath: `${installRoot}/marketplace`,
+    marketplacePath: input?.preexistingMarketplacePath ?? `${installRoot}/marketplace`,
   };
 
   return {

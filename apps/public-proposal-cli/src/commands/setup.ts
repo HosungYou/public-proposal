@@ -68,6 +68,26 @@ export async function runSetup(
     if (existingValidation) {
       return failed(existingValidation.code, existingValidation.message, []);
     }
+    if (!existingManifest.codexRegistrations) {
+      const reconciled = await reconcileUntrackedCodexRegistrations(installRoot, dependencies.spawn);
+      if (reconciled.error) return failed(reconciled.error.code, reconciled.error.message, []);
+      const upgradedManifest = { ...existingManifest, codexRegistrations: reconciled.registrations };
+      const tempManifest = manifestTempPath(installRoot);
+      try {
+        await dependencies.writeFile(tempManifest, serializeManifest(upgradedManifest), 0o600);
+        await dependencies.rename(tempManifest, manifest);
+      } catch (error) {
+        return failed("PP_SETUP_COMMAND_FAILED", error instanceof Error ? error.message : String(error), []);
+      }
+      return {
+        ok: true,
+        plan: PLAN,
+        writes: [manifest],
+        manifestPath: manifest,
+        checks: [],
+        manifest: upgradedManifest,
+      };
+    }
     return {
       ok: true,
       plan: PLAN,
@@ -382,6 +402,11 @@ async function migrateLegacyManifest(
     return { ok: false, plan: PLAN, writes: [], checks: preflight, error: { code: blocker.code ?? "PP_PREFLIGHT_BLOCKED", message: blocker.message } };
   }
 
+  const registrationReconciliation = await reconcileUntrackedCodexRegistrations(requestedRoot, dependencies.spawn);
+  if (registrationReconciliation.error) {
+    return failed(registrationReconciliation.error.code, registrationReconciliation.error.message, []);
+  }
+
   const writes: string[] = [];
   try {
     const worker = await installWorker(requestedRoot, dependencies.spawn, { updateManifest: false });
@@ -394,7 +419,7 @@ async function migrateLegacyManifest(
       requestedRoot,
       ownedPaths,
       worker,
-      { pluginAdded: false, marketplaceAdded: false },
+      registrationReconciliation.registrations,
       dependencies,
     );
     const manifestContents = serializeManifest(installManifest);
@@ -560,8 +585,15 @@ async function runRequired(spawn: ProcessRunner, command: string, args: readonly
 
 async function ensureMarketplaceRegistered(spawn: ProcessRunner, marketplacePath: string): Promise<boolean> {
   const list = await spawn("codex", ["plugin", "marketplace", "list", "--json"]);
-  if (list.code === 0 && marketplaceListContains(list.stdout, marketplacePath)) {
-    return false;
+  if (list.code === 0) {
+    const registeredSource = marketplaceRegistrationSource(list.stdout);
+    if (registeredSource !== undefined) {
+      if (registeredSource === marketplacePath) return false;
+      throw new SetupCommandError(
+        "PP_MARKETPLACE_CONFLICT",
+        `Codex marketplace public-proposal is already registered at ${registeredSource}; it cannot be redirected to ${marketplacePath}.`,
+      );
+    }
   }
   await runRequired(spawn, "codex", ["plugin", "marketplace", "add", marketplacePath]);
   return true;
@@ -576,11 +608,13 @@ async function ensurePluginInstalled(spawn: ProcessRunner): Promise<boolean> {
   return true;
 }
 
-function marketplaceListContains(stdout: string, marketplacePath: string): boolean {
+function marketplaceRegistrationSource(stdout: string): string | undefined {
   try {
     const parsed = JSON.parse(stdout) as { marketplaces?: Array<{ name?: string; root?: string; path?: string; marketplaceSource?: { source?: string } }> };
-    return parsed.marketplaces?.some((entry) => entry.name === "public-proposal" && [entry.root, entry.path, entry.marketplaceSource?.source].includes(marketplacePath)) ?? false;
-  } catch { return false; }
+    const entry = parsed.marketplaces?.find((candidate) => candidate.name === "public-proposal");
+    if (!entry) return undefined;
+    return entry.root ?? entry.path ?? entry.marketplaceSource?.source ?? "<unknown source>";
+  } catch { return undefined; }
 }
 
 function pluginListContains(stdout: string): boolean {
@@ -589,6 +623,41 @@ function pluginListContains(stdout: string): boolean {
     return (parsed.installed?.some((entry) => entry.pluginId === "public-proposal@public-proposal" && entry.installed === true) ?? false)
       || (parsed.plugins?.some((entry) => entry.name === "public-proposal" && entry.marketplace === "public-proposal") ?? false);
   } catch { return false; }
+}
+
+async function reconcileUntrackedCodexRegistrations(
+  installRoot: string,
+  spawn: ProcessRunner,
+): Promise<
+  | { registrations: { pluginAdded: boolean; marketplaceAdded: boolean }; error?: undefined }
+  | { registrations?: undefined; error: { code: string; message: string } }
+> {
+  const marketplacePath = join(resolve(installRoot), "marketplace");
+  const marketplaceList = await spawn("codex", ["plugin", "marketplace", "list", "--json"]);
+  const pluginList = await spawn("codex", ["plugin", "list", "--json"]);
+  const source = marketplaceList.code === 0 ? marketplaceRegistrationSource(marketplaceList.stdout) : undefined;
+  const pluginInstalled = pluginList.code === 0 && pluginListContains(pluginList.stdout);
+
+  if (source && source !== marketplacePath) {
+    return {
+      error: {
+        code: "PP_MARKETPLACE_CONFLICT",
+        message: `Codex marketplace public-proposal is already registered at ${source}; it cannot be reconciled with ${marketplacePath}.`,
+      },
+    };
+  }
+  if (source === undefined && !pluginInstalled && marketplaceList.code === 0 && pluginList.code === 0) {
+    return { registrations: { pluginAdded: false, marketplaceAdded: false } };
+  }
+  if (source !== marketplacePath) {
+    return {
+      error: {
+        code: "PP_INSTALL_REGISTRATION_OWNERSHIP_UNKNOWN",
+        message: "Codex plugin state cannot be attributed to this installation; resolve marketplace ownership before retrying setup.",
+      },
+    };
+  }
+  return { registrations: { pluginAdded: pluginInstalled, marketplaceAdded: true } };
 }
 
 async function compensate(
@@ -605,7 +674,7 @@ async function buildManifest(
   installRoot: string,
   ownedPaths: readonly string[],
   worker: WorkerInstallation,
-  codexRegistrations: { pluginAdded: boolean; marketplaceAdded: boolean },
+  codexRegistrations: { pluginAdded: boolean; marketplaceAdded: boolean } | undefined,
   dependencies: SetupDependencies,
 ): Promise<InstallManifest> {
   const pluginManifestPath = join(installRoot, "plugin", ".codex-plugin", "plugin.json");
@@ -622,7 +691,7 @@ async function buildManifest(
     pluginManifestSha256: await dependencies.sha256(pluginManifestPath),
     bundleManifestSha256: await dependencies.sha256(bundleManifestPath),
     worker,
-    codexRegistrations,
+    ...(codexRegistrations ? { codexRegistrations } : {}),
     ownedPaths,
     createdAt: dependencies.now(),
   };
