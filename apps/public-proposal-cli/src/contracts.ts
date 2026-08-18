@@ -61,6 +61,9 @@ const setupOptionsSchema = z.object({
   provider: z.literal("codex"),
   installScope: z.enum(["user", "project"]).default("user"),
   dryRun: z.boolean().default(false),
+  cwd: z.string().min(1).optional(),
+  home: z.string().min(1).optional(),
+  installRoot: z.string().min(1).optional(),
 });
 
 const installManifestSchema = z.object({
@@ -95,6 +98,7 @@ const doctorCheckNameSchema = z.enum([
 const doctorCheckSchema = z.object({
   name: doctorCheckNameSchema,
   status: z.enum(["pass", "warning", "blocker"]),
+  code: z.string().min(1).optional(),
   detected: z.unknown(),
   message: z.string().min(1),
   action: z.string().min(1).optional(),
@@ -120,6 +124,11 @@ const setupResultSchema = z.object({
   writes: z.array(z.string()).readonly(),
   manifestPath: z.string().min(1).optional(),
   checks: z.array(doctorCheckSchema).readonly(),
+  error: z.object({
+    code: z.string().min(1),
+    message: z.string().min(1),
+  }).optional(),
+  manifest: installManifestSchema.optional(),
 });
 
 const updateOptionsSchema = z.object({
@@ -127,7 +136,7 @@ const updateOptionsSchema = z.object({
   apply: z.boolean(),
 });
 
-export type SetupOptions = z.infer<typeof setupOptionsSchema>;
+export type SetupOptions = z.input<typeof setupOptionsSchema>;
 export type InstallManifest = z.infer<typeof installManifestSchema>;
 export type DoctorCheck = z.infer<typeof doctorCheckSchema>;
 export type DoctorInput = z.infer<typeof doctorInputSchema>;

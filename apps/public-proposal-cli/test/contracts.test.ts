@@ -64,7 +64,7 @@ describe("public proposal installer contracts", () => {
   });
 });
 
-describe("public proposal installer CLI scaffold", () => {
+describe("public proposal installer CLI", () => {
   const temporaryDirectories: string[] = [];
 
   afterEach(async () => {
@@ -73,8 +73,29 @@ describe("public proposal installer CLI scaffold", () => {
     );
   });
 
-  it("reports setup as not implemented and does not advertise writes", async () => {
+  it("supports the approved no-positional setup command in dry-run mode", async () => {
     const installRoot = await mkdtemp(join(tmpdir(), "public-proposal-setup-"));
+    temporaryDirectories.push(installRoot);
+
+    const result = await runCli(["setup", "--install-root", installRoot, "--dry-run", "--json"]);
+    const envelope = parseEnvelope(result.stdout);
+
+    expect(result.code).toBe(0);
+    expect(envelope).toMatchObject({
+      ok: true,
+      code: "PP_OK",
+      data: expect.objectContaining({
+        ok: true,
+        writes: [],
+        plan: expect.arrayContaining(["public-proposal plugin"]),
+      }),
+    });
+    expect("manifestPath" in (envelope.data as Record<string, unknown>)).toBe(false);
+    await expect(readFile(join(installRoot, "installation.json"), "utf8")).rejects.toThrow();
+  });
+
+  it("rejects the retired positional setup root", async () => {
+    const installRoot = await mkdtemp(join(tmpdir(), "public-proposal-doctor-"));
     temporaryDirectories.push(installRoot);
 
     const result = await runCli(["setup", installRoot, "--json"]);
@@ -83,37 +104,7 @@ describe("public proposal installer CLI scaffold", () => {
     expect(result.code).toBe(1);
     expect(envelope).toMatchObject({
       ok: false,
-      code: "PP_INSTALLER_NOT_IMPLEMENTED",
-      data: expect.objectContaining({
-        installRoot,
-        ok: false,
-        writes: [],
-      }),
-    });
-    expect("manifestPath" in (envelope.data as Record<string, unknown>)).toBe(false);
-    await expect(readFile(join(installRoot, "install-manifest.json"), "utf8")).rejects.toThrow();
-  });
-
-  it("reports doctor as not implemented with a blocking envelope", async () => {
-    const installRoot = await mkdtemp(join(tmpdir(), "public-proposal-doctor-"));
-    temporaryDirectories.push(installRoot);
-
-    const result = await runCli(["doctor", installRoot, "--json"]);
-    const envelope = parseEnvelope(result.stdout);
-
-    expect(result.code).toBe(1);
-    expect(envelope).toMatchObject({
-      ok: false,
-      code: "PP_INSTALLER_NOT_IMPLEMENTED",
-      data: {
-        ok: false,
-        checks: [
-          expect.objectContaining({
-            name: "authority",
-            status: "blocker",
-          }),
-        ],
-      },
+      code: "commander.excessArguments",
     });
   });
 });
