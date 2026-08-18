@@ -1,4 +1,4 @@
-import { readFile, realpath, stat } from "node:fs/promises";
+import { readFile, realpath, rm, stat } from "node:fs/promises";
 import { isAbsolute, join, normalize, relative, resolve } from "node:path";
 import {
   ResearchLockSchema,
@@ -41,8 +41,13 @@ export interface ResearchLockImportResult {
   readonly state: "PASS";
 }
 
+export interface ResearchLockImportDependencies {
+  readonly afterArtifactsVerified?: () => Promise<void>;
+}
+
 interface VerifiedResearchArtifact {
   readonly path: string;
+  readonly realPath: string;
   readonly sha256: string;
 }
 
@@ -50,6 +55,7 @@ export async function importResearchLock(
   rootInput: string,
   handoffPathInput: string,
   expectedLongtableVersion: string,
+  dependencies: ResearchLockImportDependencies = {},
 ): Promise<ResearchLockImportResult> {
   const root = resolve(rootInput);
   const handoffPath = resolve(handoffPathInput);
@@ -57,28 +63,38 @@ export async function importResearchLock(
   const handoff = await readResearchLockHandoff(handoffPath);
 
   validateIdentity(project.projectId, project.proposalClass, handoff, expectedLongtableVersion);
-  const artifacts = await verifyArtifacts(root, handoff);
+  const artifacts = await resolveArtifacts(root, handoff);
+  validateDistinctArtifacts(artifacts);
   const receiptPath = join(root, "receipts", "research-lock.json");
   const files = [handoffPath, ...artifacts.map((artifact) => artifact.path)];
   const inputReceiptHashes = artifacts.map((artifact) => artifact.sha256);
 
-  const existing = await readExistingValidReceipt(receiptPath);
-  if (existing !== null) {
-    if (receiptMatches(existing, files, inputReceiptHashes)) {
-      return { receiptPath, state: "PASS" };
+  const existing = await readExistingReceiptState(receiptPath);
+  if (existing.state === "valid") {
+    if (!receiptMatches(existing.receipt, files, inputReceiptHashes)) {
+      throw new KppError("PP_RESEARCH_LOCK_EXISTS", "이미 다른 연구 잠금 영수증이 있습니다.", {
+        path: receiptPath,
+        rule: "valid_research_receipt_exists",
+      });
     }
-    throw new KppError("PP_RESEARCH_LOCK_EXISTS", "이미 유효한 연구 잠금 영수증이 있습니다.", {
+    return { receiptPath, state: "PASS" };
+  }
+  if (existing.state === "invalid") {
+    throw new KppError("PP_RESEARCH_LOCK_INVALID", "기존 연구 잠금 영수증이 유효하지 않아 자동으로 덮어쓸 수 없습니다.", {
       path: receiptPath,
-      rule: "valid_research_receipt_exists",
+      rule: existing.rule,
     });
   }
 
+  await verifyArtifactHashes(artifacts);
+  await dependencies.afterArtifactsVerified?.();
   await writeReceipt({
     stage: "EVIDENCE_LOCKED",
     files,
     inputReceiptHashes,
     output: receiptPath,
   });
+  await verifyEmittedReceipt(receiptPath, files, inputReceiptHashes);
   return { receiptPath, state: "PASS" };
 }
 
@@ -152,7 +168,7 @@ function validateIdentity(
   }
 }
 
-async function verifyArtifacts(
+async function resolveArtifacts(
   root: string,
   handoff: ResearchLock,
 ): Promise<readonly VerifiedResearchArtifact[]> {
@@ -170,7 +186,7 @@ async function verifyArtifacts(
   const artifacts = await Promise.all(ARTIFACT_BINDINGS.map(async (binding) => {
     const projectRelativePath = handoff[binding.pathKey];
     const expectedSha256 = handoff[binding.hashKey];
-    const path = await resolveResearchArtifact(root, researchRootReal, projectRelativePath);
+    const { path, realPath } = await resolveResearchArtifact(root, researchRootReal, projectRelativePath);
     let metadata;
     try {
       metadata = await stat(path);
@@ -188,25 +204,54 @@ async function verifyArtifacts(
       });
     }
 
-    const actualSha256 = await sha256File(path);
-    if (actualSha256 !== expectedSha256) {
-      throw new KppError("PP_RESEARCH_ARTIFACT_HASH", "연구 산출물 해시가 LongTable handoff와 일치하지 않습니다.", {
-        path,
-        expected: expectedSha256,
-        actual: actualSha256,
-      });
-    }
-    return { path, sha256: expectedSha256 };
+    return { path, realPath, sha256: expectedSha256 };
   }));
 
   return artifacts;
+}
+
+function validateDistinctArtifacts(artifacts: readonly VerifiedResearchArtifact[]): void {
+  const duplicatePath = firstDuplicate(artifacts.map((artifact) => artifact.path));
+  if (duplicatePath !== null) {
+    throw new KppError("PP_RESEARCH_ARTIFACT_DUPLICATE", "LongTable 연구 handoff의 네 산출물 경로는 서로 달라야 합니다.", {
+      path: duplicatePath,
+      rule: "artifact_path_duplicate",
+    });
+  }
+  const duplicateRealPath = firstDuplicate(artifacts.map((artifact) => artifact.realPath));
+  if (duplicateRealPath !== null) {
+    throw new KppError("PP_RESEARCH_ARTIFACT_DUPLICATE", "LongTable 연구 handoff의 네 산출물 실제 파일은 서로 달라야 합니다.", {
+      path: duplicateRealPath,
+      rule: "artifact_realpath_duplicate",
+    });
+  }
+  const duplicateHash = firstDuplicate(artifacts.map((artifact) => artifact.sha256));
+  if (duplicateHash !== null) {
+    throw new KppError("PP_RESEARCH_ARTIFACT_DUPLICATE", "LongTable 연구 handoff의 네 산출물 해시는 서로 달라야 합니다.", {
+      actual: duplicateHash,
+      rule: "artifact_sha256_duplicate",
+    });
+  }
+}
+
+async function verifyArtifactHashes(artifacts: readonly VerifiedResearchArtifact[]): Promise<void> {
+  await Promise.all(artifacts.map(async (artifact) => {
+    const actualSha256 = await sha256File(artifact.path);
+    if (actualSha256 !== artifact.sha256) {
+      throw new KppError("PP_RESEARCH_ARTIFACT_HASH", "연구 산출물 해시가 LongTable handoff와 일치하지 않습니다.", {
+        path: artifact.path,
+        expected: artifact.sha256,
+        actual: actualSha256,
+      });
+    }
+  }));
 }
 
 async function resolveResearchArtifact(
   root: string,
   researchRootReal: string,
   projectRelativePath: string,
-): Promise<string> {
+): Promise<{ path: string; realPath: string }> {
   if (isAbsolute(projectRelativePath)) {
     throw artifactPathError(projectRelativePath, "artifact_path_absolute");
   }
@@ -225,7 +270,7 @@ async function resolveResearchArtifact(
   if (!isSubpath(researchRootReal, artifactReal)) {
     throw artifactPathError(projectRelativePath, "artifact_symlink_escape");
   }
-  return resolvedPath;
+  return { path: resolvedPath, realPath: artifactReal };
 }
 
 async function stableRealpath(path: string, rule: string): Promise<string> {
@@ -247,16 +292,25 @@ function artifactPathError(path: string, rule: string): KppError {
   });
 }
 
-async function readExistingValidReceipt(path: string): Promise<Receipt | null> {
+type ExistingReceiptState =
+  | { readonly state: "absent" }
+  | { readonly state: "invalid"; readonly rule: string }
+  | { readonly state: "valid"; readonly receipt: Receipt };
+
+async function readExistingReceiptState(path: string): Promise<ExistingReceiptState> {
   try {
     const verification = await verifyReceipt(path);
-    return verification.valid ? verification.receipt : null;
+    return verification.valid
+      ? { state: "valid", receipt: verification.receipt }
+      : { state: "invalid", rule: "receipt_file_mismatch" };
   } catch (error) {
-    if (error instanceof KppError && (
-      error.code === "KPP_INPUT_RECEIPT_READ"
-      || error.code === "KPP_INPUT_RECEIPT_INVALID"
-    )) {
-      return null;
+    if (error instanceof KppError && error.code === "KPP_INPUT_RECEIPT_READ") {
+      return await fileExists(path)
+        ? { state: "invalid", rule: "receipt_unreadable" }
+        : { state: "absent" };
+    }
+    if (error instanceof KppError && error.code === "KPP_INPUT_RECEIPT_INVALID") {
+      return { state: "invalid", rule: "receipt_malformed" };
     }
     throw error;
   }
@@ -268,10 +322,43 @@ function receiptMatches(
   inputReceiptHashes: readonly string[],
 ): boolean {
   return (
+    receipt.stage === "EVIDENCE_LOCKED"
+    &&
     receipt.result === "PASS"
     && sorted(receipt.files.map((file) => file.path)).join("\n") === sorted(files).join("\n")
     && sorted(receipt.inputReceiptHashes).join("\n") === sorted(inputReceiptHashes).join("\n")
   );
+}
+
+async function verifyEmittedReceipt(
+  receiptPath: string,
+  files: readonly string[],
+  inputReceiptHashes: readonly string[],
+): Promise<void> {
+  const verification = await verifyReceipt(receiptPath);
+  if (!verification.valid || !receiptMatches(verification.receipt, files, inputReceiptHashes)) {
+    await rm(receiptPath, { force: true });
+    throw new KppError("PP_RESEARCH_LOCK_WRITE_MISMATCH", "발급된 연구 잠금 영수증이 검증된 LongTable handoff와 일치하지 않습니다.", {
+      path: receiptPath,
+      rule: "emitted_receipt_mismatch",
+      actual: verification,
+    });
+  }
+
+  const artifactShaByPath = new Map(
+    files.slice(1).map((file, index) => [file, inputReceiptHashes[index]!]),
+  );
+  const mismatchedFiles = verification.receipt.files
+    .filter((file) => artifactShaByPath.has(file.path))
+    .filter((file) => artifactShaByPath.get(file.path) !== file.sha256);
+  if (mismatchedFiles.length > 0) {
+    await rm(receiptPath, { force: true });
+    throw new KppError("PP_RESEARCH_LOCK_WRITE_MISMATCH", "발급된 연구 잠금 영수증의 산출물 해시가 LongTable handoff와 일치하지 않습니다.", {
+      path: receiptPath,
+      rule: "emitted_artifact_sha256_mismatch",
+      actual: mismatchedFiles,
+    });
+  }
 }
 
 function isSubpath(parent: string, child: string): boolean {
@@ -281,4 +368,24 @@ function isSubpath(parent: string, child: string): boolean {
 
 function sorted(values: readonly string[]): string[] {
   return [...values].sort();
+}
+
+function firstDuplicate(values: readonly string[]): string | null {
+  const seen = new Set<string>();
+  for (const value of values) {
+    if (seen.has(value)) {
+      return value;
+    }
+    seen.add(value);
+  }
+  return null;
+}
+
+async function fileExists(path: string): Promise<boolean> {
+  try {
+    await stat(path);
+    return true;
+  } catch {
+    return false;
+  }
 }
