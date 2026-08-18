@@ -67,16 +67,19 @@ export async function runCli(argv: readonly string[]): Promise<number> {
         dryRun: options.dryRun,
       });
       const result: SetupResult = {
-        ok: true,
+        ok: false,
         plan: [
           `Prepare installer root at ${installRoot}`,
           "Validate plugin, worker, and marketplace bundle inputs",
         ],
-        writes: parsed.dryRun ? [] : [`${installRoot}/install-manifest.json`],
-        manifestPath: parsed.dryRun ? undefined : `${installRoot}/install-manifest.json`,
-        checks: [],
+        writes: [],
+        checks: [notImplementedCheck("Setup scaffold is not implemented in Task 1.")],
       };
-      writeEnvelope(success("Setup contract parsed.", { installRoot, ...result, options: parsed }), options.json === true);
+      throw new PublicProposalCliError(
+        "PP_INSTALLER_NOT_IMPLEMENTED",
+        "Setup scaffold is not implemented in Task 1.",
+        { installRoot, ...result, options: parsed },
+      );
     });
 
   program
@@ -93,15 +96,16 @@ export async function runCli(argv: readonly string[]): Promise<number> {
       });
       const checks: readonly DoctorCheck[] = [
         {
-          name: "authority",
-          status: "warning",
+          ...notImplementedCheck("Doctor scaffold is not implemented in Task 1."),
           detected: { installRoot: input.installRoot, projectClass: input.projectClass ?? null },
-          message: "Doctor authority checks are scaffolded but not yet implemented.",
-          action: "Implement setup/doctor execution in a later task.",
         },
       ];
       const report: DoctorReport = { ok: false, checks };
-      writeEnvelope(success("Doctor contract parsed.", report), options.json === true);
+      throw new PublicProposalCliError(
+        "PP_INSTALLER_NOT_IMPLEMENTED",
+        "Doctor scaffold is not implemented in Task 1.",
+        report,
+      );
     });
 
   try {
@@ -117,7 +121,28 @@ function success(message: string, data: unknown): CliEnvelope {
   return { ok: true, code: "PP_OK", message, data };
 }
 
+class PublicProposalCliError extends Error {
+  readonly code: string;
+  readonly data: unknown;
+
+  constructor(code: string, message: string, data: unknown) {
+    super(message);
+    this.code = code;
+    this.data = data;
+    this.name = "PublicProposalCliError";
+  }
+}
+
 function failure(error: unknown): CliEnvelope {
+  if (error instanceof PublicProposalCliError) {
+    return {
+      ok: false,
+      code: error.code,
+      message: error.message,
+      data: error.data,
+    };
+  }
+
   if (error instanceof Error && "code" in error && typeof error.code === "string") {
     return {
       ok: false,
@@ -136,6 +161,16 @@ function failure(error: unknown): CliEnvelope {
     data: {
       actual: error instanceof Error ? error.message : String(error),
     },
+  };
+}
+
+function notImplementedCheck(message: string): DoctorCheck {
+  return {
+    name: "authority",
+    status: "blocker",
+    detected: null,
+    message,
+    action: "Implement setup/doctor execution in a later task.",
   };
 }
 

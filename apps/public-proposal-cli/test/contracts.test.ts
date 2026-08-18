@@ -1,4 +1,8 @@
-import { describe, expect, it } from "vitest";
+import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { spawn } from "node:child_process";
+import { afterEach, describe, expect, it } from "vitest";
 import { parseSetupOptions, type InstallManifest } from "../src/contracts.js";
 
 describe("public proposal installer contracts", () => {
@@ -59,3 +63,92 @@ describe("public proposal installer contracts", () => {
     );
   });
 });
+
+describe("public proposal installer CLI scaffold", () => {
+  const temporaryDirectories: string[] = [];
+
+  afterEach(async () => {
+    await Promise.all(
+      temporaryDirectories.splice(0).map((directory) => rm(directory, { force: true, recursive: true })),
+    );
+  });
+
+  it("reports setup as not implemented and does not advertise writes", async () => {
+    const installRoot = await mkdtemp(join(tmpdir(), "public-proposal-setup-"));
+    temporaryDirectories.push(installRoot);
+
+    const result = await runCli(["setup", installRoot, "--json"]);
+    const envelope = parseEnvelope(result.stdout);
+
+    expect(result.code).toBe(1);
+    expect(envelope).toMatchObject({
+      ok: false,
+      code: "PP_INSTALLER_NOT_IMPLEMENTED",
+      data: expect.objectContaining({
+        installRoot,
+        ok: false,
+        writes: [],
+      }),
+    });
+    expect("manifestPath" in (envelope.data as Record<string, unknown>)).toBe(false);
+    await expect(readFile(join(installRoot, "install-manifest.json"), "utf8")).rejects.toThrow();
+  });
+
+  it("reports doctor as not implemented with a blocking envelope", async () => {
+    const installRoot = await mkdtemp(join(tmpdir(), "public-proposal-doctor-"));
+    temporaryDirectories.push(installRoot);
+
+    const result = await runCli(["doctor", installRoot, "--json"]);
+    const envelope = parseEnvelope(result.stdout);
+
+    expect(result.code).toBe(1);
+    expect(envelope).toMatchObject({
+      ok: false,
+      code: "PP_INSTALLER_NOT_IMPLEMENTED",
+      data: {
+        ok: false,
+        checks: [
+          expect.objectContaining({
+            name: "authority",
+            status: "blocker",
+          }),
+        ],
+      },
+    });
+  });
+});
+
+interface CommandResult {
+  readonly code: number;
+  readonly stdout: string;
+  readonly stderr: string;
+}
+
+interface CliEnvelope {
+  readonly ok: boolean;
+  readonly code: string;
+  readonly message: string;
+  readonly data: unknown;
+}
+
+async function runCli(args: readonly string[]): Promise<CommandResult> {
+  return new Promise((resolve) => {
+    const child = spawn(process.execPath, ["--import", "tsx", "apps/public-proposal-cli/src/main.ts", ...args], {
+      cwd: process.cwd(),
+      env: process.env,
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    let stdout = "";
+    let stderr = "";
+    child.stdout.setEncoding("utf8");
+    child.stderr.setEncoding("utf8");
+    child.stdout.on("data", (chunk: string) => { stdout += chunk; });
+    child.stderr.on("data", (chunk: string) => { stderr += chunk; });
+    child.on("error", (error: Error) => resolve({ code: 1, stdout, stderr: error.message }));
+    child.on("close", (code) => resolve({ code: code ?? 1, stdout, stderr }));
+  });
+}
+
+function parseEnvelope(output: string): CliEnvelope {
+  return JSON.parse(output) as CliEnvelope;
+}
