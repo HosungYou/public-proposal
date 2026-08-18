@@ -7,16 +7,17 @@ import argparse
 import hashlib
 import json
 import re
-from pathlib import Path, PurePosixPath
+from pathlib import Path, PurePosixPath, PureWindowsPath
 from typing import Any
 
 
 ALLOWED_CLASSIFICATIONS = {"skill", "reference", "script", "asset"}
 EXPECTED_TOP_LEVEL = {"SKILL.md", "references", "scripts", "assets", "BUNDLE-MANIFEST.json"}
 HEX64_RE = re.compile(r"^[0-9a-f]{64}$")
-ABSOLUTE_SOURCE_MARKERS = (
-    "/Users/hosung/.codex/skills/korean-public-proposal",
-    "/Users/hosung/.codex/skills",
+TEXT_ABSOLUTE_PATH_PATTERNS = (
+    re.compile(r"(?:(?<=^)|(?<=[\s\"'`(=,\[]))(?P<path>/(?!/)[^/\s\"'`<>|]+(?:/[^\s\"'`<>|]+)+)"),
+    re.compile(r"(?:(?<=^)|(?<=[\s\"'`(=,\[]))(?P<path>[A-Za-z]:[\\/][^\s\"'`<>|]+)"),
+    re.compile(r"(?:(?<=^)|(?<=[\s\"'`(=,\[]))(?P<path>\\\\[^\s\"'`<>|]+)"),
 )
 
 
@@ -67,6 +68,9 @@ def validate_bundle(plugin_root: Path) -> list[str]:
         if not isinstance(relative_path, str) or not relative_path.strip():
             errors.append(f"BUNDLE-MANIFEST.json field `{label}.path` must be a non-empty string")
             continue
+        if is_absolute_path_like(relative_path):
+            errors.append(f"BUNDLE-MANIFEST.json field `{label}.path` must not contain an absolute source path")
+            continue
         normalized_path = normalize_relative_path(relative_path)
         if normalized_path is None:
             errors.append(f"BUNDLE-MANIFEST.json field `{label}.path` must be a relative path inside the bundle")
@@ -93,7 +97,8 @@ def validate_bundle(plugin_root: Path) -> list[str]:
 
     validate_manifest_metadata(manifest, errors)
     validate_top_level_shape(bundle_root, errors)
-    check_for_absolute_source_markers(manifest_path, errors)
+    reject_absolute_manifest_strings(manifest, "$", errors)
+    check_file_for_absolute_source_paths(manifest_path, errors)
 
     for relative_path, entry in declared_paths.items():
         file_path = bundle_root / relative_path
@@ -110,13 +115,16 @@ def validate_bundle(plugin_root: Path) -> list[str]:
             errors.append(
                 f"bundle manifest SHA-256 mismatch for `{relative_path}`: expected {entry['sha256']}, found {actual_sha}"
             )
-        check_for_absolute_source_markers(file_path, errors)
+        check_file_for_absolute_source_paths(file_path, errors)
 
     actual_paths = {
         path.relative_to(bundle_root).as_posix()
         for path in bundle_root.rglob("*")
         if path.is_file() and path.name != "BUNDLE-MANIFEST.json"
     }
+    for relative_path in sorted(actual_paths):
+        if is_absolute_path_like(relative_path):
+            errors.append(f"bundle contains an absolute-looking file path `{relative_path}`")
     undeclared_paths = sorted(actual_paths - declared_paths.keys())
     for relative_path in undeclared_paths:
         errors.append(f"bundle contains undeclared file `{relative_path}`")
@@ -167,11 +175,63 @@ def normalize_relative_path(raw_path: str) -> str | None:
     return pure_path.as_posix()
 
 
-def check_for_absolute_source_markers(path: Path, errors: list[str]) -> None:
+def reject_absolute_manifest_strings(value: Any, label: str, errors: list[str]) -> None:
+    if isinstance(value, str):
+        if is_absolute_path_like(value):
+            errors.append(f"absolute source path `{value}` found in manifest field `{label}`")
+        for absolute_path in extract_absolute_path_tokens(value):
+            if absolute_path != value:
+                errors.append(f"absolute source path `{absolute_path}` found in manifest field `{label}`")
+        return
+    if isinstance(value, list):
+        for index, item in enumerate(value):
+            reject_absolute_manifest_strings(item, f"{label}[{index}]", errors)
+        return
+    if isinstance(value, dict):
+        for key, item in value.items():
+            reject_absolute_manifest_strings(item, f"{label}.{key}", errors)
+
+
+def check_file_for_absolute_source_paths(path: Path, errors: list[str]) -> None:
     payload = path.read_bytes()
-    for marker in ABSOLUTE_SOURCE_MARKERS:
-        if marker.encode("utf-8") in payload:
-            errors.append(f"absolute source path marker `{marker}` found in `{path}`")
+    try:
+        text = payload.decode("utf-8")
+    except UnicodeDecodeError:
+        return
+    for absolute_path in extract_absolute_path_tokens(text):
+        errors.append(f"absolute source path `{absolute_path}` found in `{path}`")
+
+
+def extract_absolute_path_tokens(text: str) -> list[str]:
+    matches: list[str] = []
+    for pattern in TEXT_ABSOLUTE_PATH_PATTERNS:
+        for match in pattern.finditer(text):
+            candidate = match.group("path")
+            if is_absolute_path_like(candidate):
+                matches.append(candidate)
+    return dedupe(matches)
+
+
+def is_absolute_path_like(value: str) -> bool:
+    stripped = value.strip()
+    if not stripped:
+        return False
+    if PurePosixPath(stripped).is_absolute():
+        return True
+    if PureWindowsPath(stripped).is_absolute():
+        return True
+    return stripped.startswith("\\\\")
+
+
+def dedupe(values: list[str]) -> list[str]:
+    seen: set[str] = set()
+    ordered: list[str] = []
+    for value in values:
+        if value in seen:
+            continue
+        seen.add(value)
+        ordered.append(value)
+    return ordered
 
 
 if __name__ == "__main__":

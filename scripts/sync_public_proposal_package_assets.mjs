@@ -1,5 +1,5 @@
 import { cpSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
-import { dirname, join, resolve } from "node:path";
+import { dirname, extname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { spawnSync } from "node:child_process";
 
@@ -10,9 +10,10 @@ const sourcePluginRoot = join(repositoryRoot, "plugins", "public-proposal");
 const packagedPluginRoot = join(repositoryRoot, "apps", "public-proposal-cli", "plugin");
 const packagedMarketplaceRoot = join(repositoryRoot, "apps", "public-proposal-cli", "marketplace");
 const packagedMarketplacePath = join(packagedMarketplaceRoot, "marketplace.json");
-const absoluteSourceMarkers = [
-  "/Users/hosung/.codex/skills/korean-public-proposal",
-  "/Users/hosung/.codex/skills",
+const absolutePathPatterns = [
+  /(?:(?<=^)|(?<=[\s"'`(=,\[]))\/(?!\/)[^/\s"'`<>|]+(?:\/[^\s"'`<>|]+)+/g,
+  /(?:(?<=^)|(?<=[\s"'`(=,\[]))[A-Za-z]:[\\/][^\s"'`<>|]+/g,
+  /(?:(?<=^)|(?<=[\s"'`(=,\[]))\\\\[^\s"'`<>|]+/g,
 ];
 
 runValidator(sourcePluginRoot);
@@ -80,10 +81,17 @@ function assertRelativePluginSource(marketplacePath, expectedPath) {
 }
 
 function assertNoAbsoluteSourceMarkers(filePath) {
+  if (!isTextFilePath(filePath)) {
+    return;
+  }
   const payload = readFileSync(filePath);
-  for (const marker of absoluteSourceMarkers) {
-    if (payload.includes(marker)) {
-      throw new Error(`Absolute source path marker ${marker} found in ${filePath}`);
+  const text = payload.toString("utf8");
+  for (const pattern of absolutePathPatterns) {
+    const matches = text.match(pattern) ?? [];
+    for (const match of matches) {
+      if (isAbsolutePathLike(match)) {
+        throw new Error(`Absolute source path ${match} found in ${filePath}`);
+      }
     }
   }
 }
@@ -100,4 +108,24 @@ function walkFiles(root, visit) {
       visit(entryPath);
     }
   }
+}
+
+function isAbsolutePathLike(value) {
+  if (!value) {
+    return false;
+  }
+  if (/^[A-Za-z]:[\\/]/.test(value)) {
+    return true;
+  }
+  if (value.startsWith("\\\\")) {
+    return true;
+  }
+  if (!value.startsWith("/")) {
+    return false;
+  }
+  return !value.startsWith("//");
+}
+
+function isTextFilePath(filePath) {
+  return new Set([".css", ".json", ".md", ".mjs", ".py", ".txt"]).has(extname(filePath));
 }
