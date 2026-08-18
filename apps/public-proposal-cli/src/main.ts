@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 
 import { Command } from "commander";
+import { resolve } from "node:path";
 import {
   parseDoctorInput,
   parseSetupOptions,
@@ -166,7 +167,7 @@ export async function runCli(argv: readonly string[]): Promise<number> {
 }
 
 function resolveRoot(scope: "user" | "project", override?: string): string {
-  return override ?? installationRoot(scope, process.cwd(), process.env.HOME ?? process.cwd());
+  return resolve(override ?? installationRoot(scope, process.cwd(), process.env.HOME ?? process.cwd()));
 }
 
 function success(message: string, data: unknown): CliEnvelope {

@@ -1,6 +1,6 @@
 import { mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { dirname, join } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 import { SUPPORTED_KPP_VERSION, SUPPORTED_LONGTABLE_VERSION, WORKER_PROTOCOL_VERSION, type ProcessResult } from "../src/contracts.js";
 import { installationRoot } from "../src/paths.js";
@@ -70,6 +70,28 @@ describe("public proposal setup", () => {
         "/home/ada/.config/public-proposal/codex-skills",
       ]),
     });
+  });
+
+  it("persists a canonical receipt and remains idempotent when setup receives a relative install root", async () => {
+    const fake = fakeSetupDependencies();
+    const relativeRoot = `.public-proposal-relative-${process.pid}`;
+    const canonicalRoot = resolve(relativeRoot);
+
+    const first = await runSetup({ provider: "codex", installRoot: relativeRoot }, fake);
+    const second = await runSetup({ provider: "codex", installRoot: relativeRoot }, fake);
+
+    expect(first.ok).toBe(true);
+    expect(second.ok).toBe(true);
+    expect(second.writes).toEqual([]);
+    expect(JSON.parse(fake.files[`${canonicalRoot}/installation.json`])).toMatchObject({
+      installRoot: canonicalRoot,
+      ownedPaths: [
+        `${canonicalRoot}/plugin`,
+        `${canonicalRoot}/marketplace`,
+        `${canonicalRoot}/codex-skills`,
+      ],
+    });
+    expect(fake.commands.filter((command) => command.includes("plugin marketplace add"))).toHaveLength(1);
   });
 
   it("rolls back owned setup paths and does not publish a manifest when a post-mutation step fails", async () => {

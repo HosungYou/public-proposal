@@ -43,11 +43,11 @@ export async function runSetup(
   dependencies: SetupDependencies = defaultSetupDependencies(),
 ): Promise<SetupResult> {
   const packageRoot = dependencies.packageRoot ?? defaultPackageRoot();
-  const installRoot = options.installRoot ?? installationRoot(
+  const installRoot = resolve(options.installRoot ?? installationRoot(
     options.installScope ?? "user",
     options.cwd ?? process.cwd(),
     options.home ?? process.env.HOME ?? process.cwd(),
-  );
+  ));
   const manifest = manifestPath(installRoot);
   const exists = dependencies.exists ?? defaultExists(dependencies);
   const copyDir = dependencies.copyDir ?? nodeFs.copyDir;
