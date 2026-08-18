@@ -22,6 +22,7 @@ import {
   renderFigureArtifact,
   type GanttFigureSpec,
 } from "@longtable/kpp-renderers";
+import { resolveTool } from "../../../tests/support/tool-paths.js";
 
 const roots: string[] = [];
 
@@ -187,7 +188,7 @@ describe("artifact-backed proposal audits", () => {
 
     const result = await auditRenderArtifacts(fixture.manifestPath, {
       trustedPdftotextPath: fixture.extractorPath,
-      trustedPdfinfoPath: "/opt/homebrew/bin/pdfinfo",
+      trustedPdfinfoPath: await resolveTool("pdfinfo"),
     });
 
     expect(result.status).toBe("BLOCKED");
@@ -415,13 +416,17 @@ async function renderFixture(docxInput?: string): Promise<{
   const pdfPath = join(root, "proposal.pdf");
   const pagePath = join(root, "page-0001.png");
   const manifestPath = join(root, "render.json");
+  const soffice = await resolveTool("soffice");
+  const pdftoppm = await resolveTool("pdftoppm");
+  const pdftotext = await resolveTool("pdftotext");
+  const pdfinfo = await resolveTool("pdfinfo");
   if (docxInput === undefined) {
     const docx = await docxFixture();
     await copyFile(docx.docxPath, docxPath);
   }
   const profile = join(root, "libreoffice-profile");
   await mkdir(profile);
-  await executeFile("/Applications/LibreOffice.app/Contents/MacOS/soffice", [
+  await executeFile(soffice, [
     `-env:UserInstallation=file://${profile}`,
     "--headless",
     "--convert-to",
@@ -432,14 +437,14 @@ async function renderFixture(docxInput?: string): Promise<{
   ]);
   const converted = join(root, `${docxPath.split("/").at(-1)?.replace(/\.docx$/u, "")}.pdf`);
   if (converted !== pdfPath) await rename(converted, pdfPath);
-  await executeFile("/opt/homebrew/bin/pdftoppm", ["-f", "1", "-singlefile", "-png", pdfPath, join(root, "page-0001")]);
-  const extracted = await executeFile("/opt/homebrew/bin/pdftotext", [pdfPath, "-"]);
+  await executeFile(pdftoppm, ["-f", "1", "-singlefile", "-png", pdfPath, join(root, "page-0001")]);
+  const extracted = await executeFile(pdftotext, [pdfPath, "-"]);
   const searchableText = extracted.stdout.normalize("NFC").trim();
-  const pdfInfo = await executeFile("/opt/homebrew/bin/pdfinfo", [pdfPath]);
-  const pageCount = Number(/^Pages:\s+(\d+)$/mu.exec(pdfInfo.stdout)?.[1]);
+  const pdfInfoResult = await executeFile(pdfinfo, [pdfPath]);
+  const pageCount = Number(/^Pages:\s+(\d+)$/mu.exec(pdfInfoResult.stdout)?.[1]);
   const pdfBytes = (await stat(pdfPath)).size;
   const pageBytes = (await stat(pagePath)).size;
-  const extractorPath = "/opt/homebrew/bin/pdftotext";
+  const extractorPath = pdftotext;
   const extractorIdentity = await executeFile(extractorPath, ["-v"]);
   const extractorVersion = `${extractorIdentity.stdout}${extractorIdentity.stderr}`.trim();
   await writeFile(manifestPath, `${JSON.stringify({
@@ -534,8 +539,9 @@ async function figureFixture(): Promise<{
   await writeFile(svgPath, artifact.svg, "utf8");
   await writeFile(manifestPath, `${JSON.stringify(artifact.manifest, null, 2)}\n`, "utf8");
   const profile = await mkdtemp(join(tmpdir(), "kpp-audit-figure-profile-"));
+  const soffice = await resolveTool("soffice");
   try {
-    await executeFile("/Applications/LibreOffice.app/Contents/MacOS/soffice", [
+    await executeFile(soffice, [
       `-env:UserInstallation=file://${profile}`,
       "--headless",
       "--convert-to",

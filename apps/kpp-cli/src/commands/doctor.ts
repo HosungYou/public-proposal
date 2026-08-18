@@ -5,15 +5,16 @@ import { constants } from "node:fs";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { success, type CliEnvelope } from "../output.js";
+import { EXPECTED_WORKER_PROTOCOL, ManagedWorkerError, WORKER_PROTOCOL_PROBE, resolveExplicitWorker, resolveManagedWorker } from "../managed-worker.js";
 
 const execFileAsync = promisify(execFile);
-const EXPECTED_WORKER_PROTOCOL = "1.0.0";
 
 type CheckStatus = "pass" | "warn";
 
 interface DoctorCheck {
   readonly name: string;
   readonly status: CheckStatus;
+  readonly code?: string;
   readonly detected: unknown;
   readonly message: string;
   readonly action?: string;
@@ -191,16 +192,44 @@ async function temporaryStorageCheck(): Promise<DoctorCheck> {
 }
 
 async function workerProtocolCheck(): Promise<DoctorCheck> {
-  const worker = process.env.KPP_WORKER_PATH;
-  const actual = worker === undefined ? null : await executableVersion(worker, ["--protocol-version"]);
+  let worker: string | null;
+  try {
+    worker = resolveExplicitWorker() ?? await resolveManagedWorker();
+  } catch (error) {
+    if (error instanceof ManagedWorkerError) {
+      return {
+        name: "worker_protocol",
+        status: "warn",
+        code: error.code,
+        detected: { expected: EXPECTED_WORKER_PROTOCOL, actual: error.actual, worker: null },
+        message: "호환되는 Python 워커 프로토콜을 확인하지 못했습니다.",
+        action: "Public Proposal managed worker 설치 영수증을 복구한 뒤 다시 진단하세요.",
+      };
+    }
+    return {
+      name: "worker_protocol",
+      status: "warn",
+      code: "PP_WORKER_PROTOCOL_MISSING",
+      detected: { expected: EXPECTED_WORKER_PROTOCOL, actual: null, worker: null },
+      message: "호환되는 Python 워커 프로토콜을 확인하지 못했습니다.",
+      action: "KPP_WORKER_PATH에 프로토콜 1.0.0 워커 실행 파일을 지정한 뒤 다시 진단하세요.",
+    };
+  }
+  const actual = worker === null ? null : await workerProtocolVersion(worker);
   const status: CheckStatus = actual === EXPECTED_WORKER_PROTOCOL ? "pass" : "warn";
   return {
     name: "worker_protocol",
     status,
+    ...(status === "warn" ? { code: actual === null ? "PP_WORKER_PROTOCOL_MISSING" : "PP_WORKER_PROTOCOL_MISMATCH" } : {}),
     detected: { expected: EXPECTED_WORKER_PROTOCOL, actual, worker: worker ?? null },
     message: status === "pass" ? "Python 워커 프로토콜이 호환됩니다." : "호환되는 Python 워커 프로토콜을 확인하지 못했습니다.",
     ...(status === "warn" ? { action: "KPP_WORKER_PATH에 프로토콜 1.0.0 워커 실행 파일을 지정한 뒤 다시 진단하세요." } : {}),
   };
+}
+
+async function workerProtocolVersion(command: string): Promise<string | null> {
+  return await executableVersion(command, ["--protocol-version"])
+    ?? await executableVersion(command, ["-c", WORKER_PROTOCOL_PROBE]);
 }
 
 function filterDefined(candidates: readonly (string | undefined)[]): string[] {

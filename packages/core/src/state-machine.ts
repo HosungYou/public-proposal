@@ -3,6 +3,7 @@ import { ProjectStateSchema, type ProjectRecord, type ProjectState } from "@long
 import { KppError } from "./errors.js";
 import { sha256File } from "./hash.js";
 import { persistProjectState, readProject } from "./project-store.js";
+import { getResearchLockReceiptHash } from "./research-requirement.js";
 import { verifyReceipt } from "./receipts.js";
 
 export const PROJECT_STATES: readonly ProjectState[] = [
@@ -89,10 +90,14 @@ function assertAdjacentTransition(current: ProjectState, target: ProjectState): 
 
 async function verifyReceiptChain(root: string, target: ProjectState): Promise<void> {
   const targetIndex = PROJECT_STATES.indexOf(target);
+  let researchReceiptHash: string | null = null;
   for (let index = 1; index <= targetIndex; index += 1) {
     const stage = PROJECT_STATES[index];
     if (stage === undefined) {
       continue;
+    }
+    if (stage === "CONTENT_APPROVED") {
+      researchReceiptHash = await getResearchLockReceiptHash(root);
     }
     const receipt = await verifyStageReceipt(root, stage);
     const predecessor = PROJECT_STATES[index - 1];
@@ -116,6 +121,18 @@ async function verifyReceiptChain(root: string, target: ProjectState): Promise<v
           actual: receipt.inputReceiptHashes,
         });
       }
+    }
+    if (
+      stage === "CONTENT_APPROVED"
+      && researchReceiptHash !== null
+      && !receipt.inputReceiptHashes.includes(researchReceiptHash)
+    ) {
+      throw new KppError("KPP_INPUT_RECEIPT_MISSING", "콘텐츠 승인 영수증에 연구 잠금 해시가 누락되었습니다.", {
+        path: receiptPath(root, stage),
+        stage,
+        expected: researchReceiptHash,
+        actual: receipt.inputReceiptHashes,
+      });
     }
   }
 }

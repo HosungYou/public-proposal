@@ -20,6 +20,7 @@ export {
   PROJECT_FILE_NAME,
   type ProjectInitialization,
 } from "./project-store.js";
+export { type ProposalClass } from "@longtable/kpp-schemas";
 export {
   advanceProject,
   allowedNext,
@@ -55,6 +56,15 @@ export {
   type TopologyStudyInput,
   type ValidatedVisualSourcePacket,
 } from "./visual-source-gate.js";
+export {
+  importResearchLock,
+  type ResearchLockImportResult,
+} from "./research-lock.js";
+export {
+  getResearchLockReceiptHash,
+  requiresResearchLock,
+  verifyResearchRequirement,
+} from "./research-requirement.js";
 export {
   executeFile,
   resolveVerifiedExecutable,

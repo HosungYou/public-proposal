@@ -1,14 +1,25 @@
-import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, readdir, rm, stat, utimes, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { basename, join } from "node:path";
+import { afterEach, beforeAll, describe, expect, it } from "vitest";
 import { sha256File } from "../src/hash.js";
 import { verifyReceipt, writeReceipt } from "../src/receipts.js";
+import { withReceiptPathLock } from "../src/receipt-lock.js";
+
+let setReceiptLockTestHooks: (hooks: Record<string, unknown>) => void;
 
 describe("receipts", () => {
   const temporaryDirectories: string[] = [];
 
+  beforeAll(async () => {
+    const lockModule = await import("../src/receipt-lock.js") as unknown as {
+      __setReceiptLockTestHooks: (hooks: Record<string, unknown>) => void;
+    };
+    setReceiptLockTestHooks = lockModule.__setReceiptLockTestHooks;
+  });
+
   afterEach(async () => {
+    setReceiptLockTestHooks({});
     await Promise.all(
       temporaryDirectories.splice(0).map((directory) =>
         rm(directory, { force: true, recursive: true }),
@@ -100,6 +111,48 @@ describe("receipts", () => {
     expect((await verifyReceipt(receiptPath)).valid).toBe(true);
   });
 
+  it("keeps operations mutually exclusive when one creator pauses before publishing its lock", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "kpp-receipt-"));
+    temporaryDirectories.push(directory);
+    const input = join(directory, "source.txt");
+    const receiptPath = join(directory, "receipts", "source-lock.json");
+    let releasePublication!: () => void;
+    const publicationPaused = new Promise<void>((resolve) => { releasePublication = resolve; });
+    let hookEntered!: () => void;
+    const entered = new Promise<void>((resolve) => { hookEntered = resolve; });
+    let hookCalls = 0;
+    let active = 0;
+    let maximumActive = 0;
+    let operationEntered!: () => void;
+    const secondCreatorAcquired = new Promise<void>((resolve) => { operationEntered = resolve; });
+    await writeFile(input, "alpha");
+    setReceiptLockTestHooks({
+      beforeLockPublished: async () => {
+        hookCalls += 1;
+        if (hookCalls === 1) {
+          hookEntered();
+          await publicationPaused;
+        }
+      },
+    });
+
+    const operation = async () => {
+      active += 1;
+      maximumActive = Math.max(maximumActive, active);
+      operationEntered();
+      await new Promise((resolve) => setTimeout(resolve, 5));
+      active -= 1;
+    };
+    const first = withReceiptPathLock(receiptPath, operation);
+    await entered;
+    const second = withReceiptPathLock(receiptPath, operation);
+    await secondCreatorAcquired;
+    releasePublication();
+    await Promise.all([first, second]);
+
+    expect(maximumActive).toBe(1);
+  });
+
   it("removes its temporary file when the final rename fails", async () => {
     const directory = await mkdtemp(join(tmpdir(), "kpp-receipt-"));
     temporaryDirectories.push(directory);
@@ -117,5 +170,289 @@ describe("receipts", () => {
     })).rejects.toThrow();
 
     expect((await readdir(directory)).filter((entry) => entry.endsWith(".tmp"))).toEqual([]);
+  });
+
+  it("recovers an orphaned receipt lock whose owner process is dead", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "kpp-receipt-"));
+    temporaryDirectories.push(directory);
+    const input = join(directory, "source.txt");
+    const receiptPath = join(directory, "receipts", "source-lock.json");
+    const lockPath = join(directory, "receipts", `.${basename(receiptPath)}.lock`);
+
+    await writeFile(input, "alpha");
+    await mkdir(lockPath, { recursive: true });
+    await writeFile(join(lockPath, "owner.json"), `${JSON.stringify({
+      pid: 999999,
+      token: "orphaned",
+      createdAt: "2026-08-18T00:00:00.000Z",
+    })}\n`);
+
+    await expect(writeReceipt({
+      stage: "SOURCE_LOCKED",
+      files: [input],
+      output: receiptPath,
+    })).resolves.toMatchObject({ stage: "SOURCE_LOCKED" });
+
+    await expect(stat(lockPath)).rejects.toMatchObject({ code: "ENOENT" });
+    expect((await verifyReceipt(receiptPath)).valid).toBe(true);
+  });
+
+  it("cleans up a newly-created lock when owner metadata write fails", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "kpp-receipt-"));
+    temporaryDirectories.push(directory);
+    const input = join(directory, "source.txt");
+    const receiptPath = join(directory, "receipts", "source-lock.json");
+    const lockPath = join(directory, "receipts", `.${basename(receiptPath)}.lock`);
+    await writeFile(input, "alpha");
+    setReceiptLockTestHooks({
+      failAfterLockDirectoryCreated: true,
+    });
+
+    await expect(writeReceipt({
+      stage: "SOURCE_LOCKED",
+      files: [input],
+      output: receiptPath,
+    })).rejects.toMatchObject({ code: "KPP_RECEIPT_LOCK_SETUP" });
+
+    await expect(stat(lockPath)).rejects.toMatchObject({ code: "ENOENT" });
+    await expect(readFile(receiptPath, "utf8")).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
+  it("cleans up a newly-created lock when owner metadata sync fails", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "kpp-receipt-"));
+    temporaryDirectories.push(directory);
+    const input = join(directory, "source.txt");
+    const receiptPath = join(directory, "receipts", "source-lock.json");
+    const lockPath = join(directory, "receipts", `.${basename(receiptPath)}.lock`);
+    await writeFile(input, "alpha");
+    setReceiptLockTestHooks({
+      failAfterOwnerMetadataWritten: true,
+    });
+
+    await expect(writeReceipt({
+      stage: "SOURCE_LOCKED",
+      files: [input],
+      output: receiptPath,
+    })).rejects.toMatchObject({ code: "KPP_RECEIPT_LOCK_SETUP" });
+
+    await expect(stat(lockPath)).rejects.toMatchObject({ code: "ENOENT" });
+    await expect(readFile(receiptPath, "utf8")).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
+  it("returns a stable lock timeout error for a live owner lock", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "kpp-receipt-"));
+    temporaryDirectories.push(directory);
+    const input = join(directory, "source.txt");
+    const receiptPath = join(directory, "receipts", "source-lock.json");
+    const lockPath = join(directory, "receipts", `.${basename(receiptPath)}.lock`);
+
+    await writeFile(input, "alpha");
+    await mkdir(lockPath, { recursive: true });
+    await writeFile(join(lockPath, "owner.json"), `${JSON.stringify({
+      pid: process.pid,
+      token: "live-owner",
+      createdAt: new Date().toISOString(),
+    })}\n`);
+    setReceiptLockTestHooks({
+      lockAttempts: 2,
+      lockRetryMs: 0,
+    });
+
+    await expect(writeReceipt({
+      stage: "SOURCE_LOCKED",
+      files: [input],
+      output: receiptPath,
+    })).rejects.toMatchObject({ code: "KPP_RECEIPT_LOCK_TIMEOUT" });
+
+    await expect(stat(lockPath)).resolves.toMatchObject({ isDirectory: expect.any(Function) });
+  });
+
+  it("does not recover a malformed receipt lock owner as stale", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "kpp-receipt-"));
+    temporaryDirectories.push(directory);
+    const input = join(directory, "source.txt");
+    const receiptPath = join(directory, "receipts", "source-lock.json");
+    const lockPath = join(directory, "receipts", `.${basename(receiptPath)}.lock`);
+
+    await writeFile(input, "alpha");
+    await mkdir(lockPath, { recursive: true });
+    await writeFile(join(lockPath, "owner.json"), `${JSON.stringify({
+      pid: -1,
+      token: "malformed-owner",
+      createdAt: new Date().toISOString(),
+    })}\n`);
+    setReceiptLockTestHooks({
+      lockAttempts: 2,
+      lockRetryMs: 0,
+    });
+
+    await expect(writeReceipt({
+      stage: "SOURCE_LOCKED",
+      files: [input],
+      output: receiptPath,
+    })).rejects.toMatchObject({ code: "KPP_RECEIPT_LOCK_TIMEOUT" });
+
+    await expect(readFile(join(lockPath, "owner.json"), "utf8")).resolves.toContain("malformed-owner");
+  });
+
+  it("does not recover a fresh ownerless receipt lock", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "kpp-receipt-"));
+    temporaryDirectories.push(directory);
+    const input = join(directory, "source.txt");
+    const receiptPath = join(directory, "receipts", "source-lock.json");
+    const lockPath = join(directory, "receipts", `.${basename(receiptPath)}.lock`);
+
+    await writeFile(input, "alpha");
+    await mkdir(lockPath, { recursive: true });
+    setReceiptLockTestHooks({
+      lockAttempts: 2,
+      lockRetryMs: 0,
+      orphanGraceMs: 60_000,
+    });
+
+    await expect(writeReceipt({
+      stage: "SOURCE_LOCKED",
+      files: [input],
+      output: receiptPath,
+    })).rejects.toMatchObject({ code: "KPP_RECEIPT_LOCK_TIMEOUT" });
+
+    await expect(stat(lockPath)).resolves.toMatchObject({ isDirectory: expect.any(Function) });
+    await expect(readFile(receiptPath, "utf8")).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
+  it("recovers an aged ownerless receipt lock", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "kpp-receipt-"));
+    temporaryDirectories.push(directory);
+    const input = join(directory, "source.txt");
+    const receiptPath = join(directory, "receipts", "source-lock.json");
+    const lockPath = join(directory, "receipts", `.${basename(receiptPath)}.lock`);
+    const oldTime = new Date(Date.now() - 120_000);
+
+    await writeFile(input, "alpha");
+    await mkdir(lockPath, { recursive: true });
+    await utimes(lockPath, oldTime, oldTime);
+    setReceiptLockTestHooks({
+      orphanGraceMs: 1_000,
+    });
+
+    await expect(writeReceipt({
+      stage: "SOURCE_LOCKED",
+      files: [input],
+      output: receiptPath,
+    })).resolves.toMatchObject({ stage: "SOURCE_LOCKED" });
+
+    await expect(stat(lockPath)).rejects.toMatchObject({ code: "ENOENT" });
+    expect((await verifyReceipt(receiptPath)).valid).toBe(true);
+  });
+
+  it("recovers an aged malformed receipt lock owner", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "kpp-receipt-"));
+    temporaryDirectories.push(directory);
+    const input = join(directory, "source.txt");
+    const receiptPath = join(directory, "receipts", "source-lock.json");
+    const lockPath = join(directory, "receipts", `.${basename(receiptPath)}.lock`);
+    const oldTime = new Date(Date.now() - 120_000);
+
+    await writeFile(input, "alpha");
+    await mkdir(lockPath, { recursive: true });
+    await writeFile(join(lockPath, "owner.json"), "{not-json");
+    await utimes(lockPath, oldTime, oldTime);
+    setReceiptLockTestHooks({
+      orphanGraceMs: 1_000,
+    });
+
+    await expect(writeReceipt({
+      stage: "SOURCE_LOCKED",
+      files: [input],
+      output: receiptPath,
+    })).resolves.toMatchObject({ stage: "SOURCE_LOCKED" });
+
+    await expect(stat(lockPath)).rejects.toMatchObject({ code: "ENOENT" });
+    expect((await verifyReceipt(receiptPath)).valid).toBe(true);
+  });
+
+  it("quarantines a legacy lock with a malformed partial recovery claim instead of poisoning receipt creation", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "kpp-receipt-"));
+    temporaryDirectories.push(directory);
+    const input = join(directory, "source.txt");
+    const receiptPath = join(directory, "receipts", "source-lock.json");
+    const lockPath = join(directory, "receipts", `.${basename(receiptPath)}.lock`);
+    const recoveryClaimPath = join(lockPath, ".recovery-claim.json");
+    const oldTime = new Date(Date.now() - 120_000);
+    await writeFile(input, "alpha");
+    await mkdir(lockPath, { recursive: true });
+    await writeFile(recoveryClaimPath, "{partial-json", "utf8");
+    await utimes(lockPath, oldTime, oldTime);
+    setReceiptLockTestHooks({ orphanGraceMs: 1_000 });
+
+    await expect(writeReceipt({
+      stage: "SOURCE_LOCKED",
+      files: [input],
+      output: receiptPath,
+    })).resolves.toMatchObject({ stage: "SOURCE_LOCKED" });
+
+    await expect(stat(lockPath)).rejects.toMatchObject({ code: "ENOENT" });
+    expect((await verifyReceipt(receiptPath)).valid).toBe(true);
+  });
+
+  it("does not let concurrent stale-lock recovery remove a later live lock", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "kpp-receipt-"));
+    temporaryDirectories.push(directory);
+    const input = join(directory, "source.txt");
+    const receiptPath = join(directory, "receipts", "source-lock.json");
+    const lockPath = join(directory, "receipts", `.${basename(receiptPath)}.lock`);
+    let observedRecoverable = 0;
+    let quarantined = 0;
+
+    await writeFile(input, "alpha");
+    await mkdir(lockPath, { recursive: true });
+    await writeFile(join(lockPath, "owner.json"), `${JSON.stringify({
+      pid: 999999,
+      token: "dead-owner",
+      createdAt: "2026-08-18T00:00:00.000Z",
+    })}\n`);
+    setReceiptLockTestHooks({
+      lockAttempts: 2,
+      lockRetryMs: 0,
+      afterRecoverableLockObserved: async () => {
+        observedRecoverable += 1;
+      },
+      afterStaleLockQuarantined: async () => {
+        quarantined += 1;
+        await mkdir(lockPath, { recursive: true });
+        await writeFile(join(lockPath, "owner.json"), `${JSON.stringify({
+          pid: process.pid,
+          token: "late-live-owner",
+          createdAt: new Date().toISOString(),
+        })}\n`, { flag: "wx" });
+      },
+    });
+
+    const results = await Promise.allSettled([
+      writeReceipt({
+        stage: "SOURCE_LOCKED",
+        files: [input],
+        output: receiptPath,
+      }),
+      writeReceipt({
+        stage: "SOURCE_LOCKED",
+        files: [input],
+        output: receiptPath,
+      }),
+    ]);
+
+    expect(results).toEqual([
+      expect.objectContaining({ status: "rejected" }),
+      expect.objectContaining({ status: "rejected" }),
+    ]);
+    for (const result of results) {
+      expect(result).toMatchObject({
+        reason: expect.objectContaining({ code: "KPP_RECEIPT_LOCK_TIMEOUT" }),
+      });
+    }
+    expect(observedRecoverable).toBeGreaterThanOrEqual(1);
+    expect(quarantined).toBe(1);
+    await expect(readFile(join(lockPath, "owner.json"), "utf8")).resolves.toContain("late-live-owner");
+    await expect(readFile(receiptPath, "utf8")).rejects.toMatchObject({ code: "ENOENT" });
   });
 });

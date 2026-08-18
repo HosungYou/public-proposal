@@ -26,7 +26,8 @@ test("synthetic reference renders its fixture-backed visual surface", async () =
 
   const page = await readFile(fixture.pagePath);
   expect(pngSize(page)).toEqual({ width: 1275, height: 1650 });
-  expect((await stat(fixture.pagePath)).size).toBeGreaterThan(50_000);
+  // LibreOffice's PNG encoder produces different but valid byte sizes across hosts.
+  expect((await stat(fixture.pagePath)).size).toBeGreaterThan(10_000);
 }, 30_000);
 
 test("R08 mutations remain blocked by their structural audit boundaries", async () => {

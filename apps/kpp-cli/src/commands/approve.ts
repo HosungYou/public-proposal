@@ -6,6 +6,7 @@ import {
   advanceProject,
   sha256File,
   verifyProjectState,
+  verifyResearchRequirement,
   verifyReceipt,
   writeReceipt,
 } from "@longtable/kpp-core";
@@ -52,6 +53,7 @@ export async function approveCommand(
 /** Record a named human decision; technical audit PASS alone cannot reach this state. */
 export async function approveProject(rootInput: string, options: ApproveProjectOptions): Promise<ApproveProjectResult> {
   const root = await realpath(resolve(rootInput));
+  await verifyResearchRequirement(root);
   const project = await verifyProjectState(root);
   if (project.state !== "AUDITED") {
     throw new KppError("KPP_APPROVAL_STATE", "AUDITED 상태에서만 사람이 제출을 승인할 수 있습니다.", {

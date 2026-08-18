@@ -1,5 +1,15 @@
 import { z } from "zod";
 
+export const ProposalClassSchema = z.enum([
+  "academic_research",
+  "research_service",
+  "policy_research",
+  "general_procurement",
+  "document_restyle",
+]);
+
+export type ProposalClass = z.infer<typeof ProposalClassSchema>;
+
 export const ProjectStateSchema = z.enum([
   "INIT",
   "SOURCE_LOCKED",
@@ -21,6 +31,7 @@ export const ApprovalPolicySchema = z.literal("single_owner");
 export const ProjectSchema = z.object({
   schemaVersion: z.string().min(1),
   projectId: z.string().min(1),
+  proposalClass: ProposalClassSchema,
   state: ProjectStateSchema,
   issuerPack: z.string().min(1).nullable(),
   approvalPolicy: ApprovalPolicySchema,

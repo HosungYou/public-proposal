@@ -1,0 +1,175 @@
+{
+  "schemaVersion": "1.0.0",
+  "sourceSkillName": "korean-public-proposal",
+  "sourceSnapshotDate": "2026-08-18",
+  "files": [
+    {
+      "path": "SKILL.md",
+      "bytes": 10992,
+      "sha256": "143aa3bec2a1051055057b162a797cb530fddfd6cf39f6067ac800ace753a57b",
+      "classification": "skill"
+    },
+    {
+      "path": "assets/Korean Public Proposal A4 v1.docx",
+      "bytes": 38307,
+      "sha256": "74d9a83b73edad25a4d0e679a7a3b73b9acc147dbeca8360230f57256102111b",
+      "classification": "asset"
+    },
+    {
+      "path": "assets/fonts/NotoSansCJKkr-Bold.otf",
+      "bytes": 16997996,
+      "sha256": "26d0c6748500a0444844280b308f5b62c7ae92ac6c6ac88148e502dd211eb52a",
+      "classification": "asset"
+    },
+    {
+      "path": "assets/fonts/NotoSansCJKkr-Regular.otf",
+      "bytes": 16433112,
+      "sha256": "6bcb2a0703aa137e874fc2dffa85f6c21ba9a67fa329e81b8c801663af7e992a",
+      "classification": "asset"
+    },
+    {
+      "path": "assets/fonts/OFL.txt",
+      "bytes": 4387,
+      "sha256": "babcfe66c8a098b2fa279bc724a3a342f8124f77ce18941fbcc1bbb39823cded",
+      "classification": "asset"
+    },
+    {
+      "path": "assets/vector-surface-system/a4-vector-surface.css",
+      "bytes": 4976,
+      "sha256": "c9b7341b2df9259999c3991ff846abb1fcce8d29dddf6d4c3742121dcda2b94c",
+      "classification": "asset"
+    },
+    {
+      "path": "assets/vector-surface-system/figma-variable-map.json",
+      "bytes": 2490,
+      "sha256": "e4d2f6499055e94d53ba9bfc0eafb1bd37a5967bf6696044d235f2c2453ffd3c",
+      "classification": "asset"
+    },
+    {
+      "path": "assets/vector-surface-system/surface-tokens.json",
+      "bytes": 5763,
+      "sha256": "90d69adc8966c838c4f7aa570af505fa2b00542ceece7ebb42caf16f9874b78c",
+      "classification": "asset"
+    },
+    {
+      "path": "references/academic-framework-grammar.md",
+      "bytes": 2627,
+      "sha256": "0635d04a7e85a4b94b636f0d1bb3ae099b30f14ca93037ff6036e49a5d3f1313",
+      "classification": "reference"
+    },
+    {
+      "path": "references/corpus-benchmark-protocol.md",
+      "bytes": 4024,
+      "sha256": "b596ced20fdcc60807236f3b597e3855077ac51245611f8814a4eb674bc0e87a",
+      "classification": "reference"
+    },
+    {
+      "path": "references/figure-grammar.md",
+      "bytes": 2656,
+      "sha256": "e2afb23fcd8899c2cffd82df0df7002a513ccd67796d50dfdc38014832062927",
+      "classification": "reference"
+    },
+    {
+      "path": "references/incident-learning-protocol.md",
+      "bytes": 1735,
+      "sha256": "4ec46e6d378d070d1f58de7265ab1854529f6f9141199db7107ff838b5725396",
+      "classification": "reference"
+    },
+    {
+      "path": "references/korean-report-visual-system.md",
+      "bytes": 4543,
+      "sha256": "8ac9f9814d87ca7ea717f2c05c15d8150b52cc559afcbfe174d62c034d1b8d8c",
+      "classification": "reference"
+    },
+    {
+      "path": "references/learning-protocol.md",
+      "bytes": 5152,
+      "sha256": "c4159e39c5066f7d2a28ef35bb5f362b4621cba442e0e46f90afcaf2d5288b4d",
+      "classification": "reference"
+    },
+    {
+      "path": "references/page-contract.md",
+      "bytes": 1735,
+      "sha256": "d44b9c0e39e0bb3638e475d155f75abc9f60fb7ec5cb7d76295efbe81ca609a7",
+      "classification": "reference"
+    },
+    {
+      "path": "references/product-design-bridge.md",
+      "bytes": 2503,
+      "sha256": "8bd93918282b7ee24139ba2d63eabc2601ab4aad90b5ed7ab8d97f8225598e5d",
+      "classification": "reference"
+    },
+    {
+      "path": "references/public-document-grammar.md",
+      "bytes": 3287,
+      "sha256": "1c0aea52aa8d048433467ccdbf8903fa32a41ecc344d5abe0ad5ed1078411360",
+      "classification": "reference"
+    },
+    {
+      "path": "references/qa-gates.md",
+      "bytes": 4317,
+      "sha256": "88a3dc1a34933f9945a86c43bb01234257ee0ad09f761234e5ba37a1cd02a4ee",
+      "classification": "reference"
+    },
+    {
+      "path": "references/surface-system-spec.md",
+      "bytes": 7545,
+      "sha256": "c7246c56f1c1521bcee96612784140909101a75faa1a48d9d663fd6fbd57976d",
+      "classification": "reference"
+    },
+    {
+      "path": "references/table-grammar.md",
+      "bytes": 1459,
+      "sha256": "4c5636b4ddb85931e40e5180ffa5f7c2d18b7607a137dc32a94b1c40bce15d7b",
+      "classification": "reference"
+    },
+    {
+      "path": "scripts/audit_docx_integrity.py",
+      "bytes": 8027,
+      "sha256": "94df046d9e64ad8776d477dddc61d5c688611de68c26127a5c8209d3ca6c411b",
+      "classification": "script"
+    },
+    {
+      "path": "scripts/audit_public_proposal.py",
+      "bytes": 3698,
+      "sha256": "aeabeb44ac22a08c8a9af7a0548024df9955e3266c947f5879f35db7145cdce8",
+      "classification": "script"
+    },
+    {
+      "path": "scripts/proposal_learning.py",
+      "bytes": 21014,
+      "sha256": "89afeba865f60e34bb5232c1a6b22f76b36f7aa3dc4abe01b0253cdea3dedd72",
+      "classification": "script"
+    },
+    {
+      "path": "scripts/proposal_slop_lint.py",
+      "bytes": 3331,
+      "sha256": "80deefabefdb505bc114c2f8ff8038d73cd781e0b4fb3f6b197e2c2b26a4c505",
+      "classification": "script"
+    },
+    {
+      "path": "scripts/render_flow_figure.py",
+      "bytes": 2173,
+      "sha256": "dd18ca3724d34e25a687e80a52931b24a1178c0bd700c63a36389ace9b8d3e63",
+      "classification": "script"
+    },
+    {
+      "path": "scripts/validate_submission_gate.py",
+      "bytes": 2538,
+      "sha256": "9882d73424ea050bd9f35ad7a9aa0a243bf5de0225bcf900471fd9b5ec67f238",
+      "classification": "script"
+    },
+    {
+      "path": "scripts/validate_surface_system.py",
+      "bytes": 4505,
+      "sha256": "bf19a80fbfa2a3ac4a3f8b37c42710a4e0d21ac7ffef121e57624c92404a9449",
+      "classification": "script"
+    },
+    {
+      "path": "scripts/validate_visual_source_packet.py",
+      "bytes": 4295,
+      "sha256": "1e0596ae862f703127406b0c22aaddf853bffe79057c56f3dee61c0e2c9f5b42",
+      "classification": "script"
+    }
+  ]
+}

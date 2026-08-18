@@ -1,5 +1,5 @@
 import { resolve } from "node:path";
-import { exportAuthoring } from "@longtable/kpp-core";
+import { exportAuthoring, verifyResearchRequirement } from "@longtable/kpp-core";
 import { success, type CliEnvelope } from "../output.js";
 import { readJsonFile } from "./ingest.js";
 
@@ -8,6 +8,7 @@ export async function exportAuthoringCommand(
   options: { readonly issuerProfile?: string; readonly terminology?: string },
 ): Promise<CliEnvelope> {
   const root = resolve(rootInput);
+  await verifyResearchRequirement(root);
   const issuerProfilePath = options.issuerProfile === undefined ? undefined : resolve(options.issuerProfile);
   const terminologyPath = options.terminology === undefined ? undefined : resolve(options.terminology);
   const result = await exportAuthoring(root, {

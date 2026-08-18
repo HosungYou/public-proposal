@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 
-import { Command } from "commander";
+import { Command, Option } from "commander";
 import { contentApproveCommand } from "./commands/content.js";
 import { approveCommand } from "./commands/approve.js";
 import { auditCommand } from "./commands/audit.js";
@@ -12,10 +12,19 @@ import { importAuthoringCommand } from "./commands/import-authoring.js";
 import { initializeCommand } from "./commands/init.js";
 import { planCommand } from "./commands/plan.js";
 import { requirementsCommand } from "./commands/requirements.js";
+import { researchLockCommand } from "./commands/research-lock.js";
 import { renderCommand } from "./commands/render.js";
 import { releaseCommand } from "./commands/release.js";
 import { statusCommand } from "./commands/status.js";
 import { failure, writeEnvelope } from "./output.js";
+
+const PROPOSAL_CLASSES = [
+  "academic_research",
+  "research_service",
+  "policy_research",
+  "general_procurement",
+  "document_restyle",
+] as const;
 
 interface JsonOption {
   readonly json?: boolean;
@@ -48,8 +57,16 @@ export async function runCli(argv: readonly string[]): Promise<number> {
     .command("init <root>")
     .option("--project-id <projectId>", "프로젝트 식별자")
     .option("--issuer-pack <issuerPack>", "기관 팩 식별자")
+    .addOption(new Option("--proposal-class <proposalClass>", "제안서 분류").choices(PROPOSAL_CLASSES))
     .option("--json", "JSON 형식으로 출력")
-    .action(async (root: string, options: JsonOption & { projectId?: string; issuerPack?: string }) => {
+    .action(async (
+      root: string,
+      options: JsonOption & {
+        projectId?: string;
+        issuerPack?: string;
+        proposalClass?: (typeof PROPOSAL_CLASSES)[number];
+      },
+    ) => {
       writeEnvelope(await initializeCommand(root, options), options.json === true);
     });
 
@@ -77,6 +94,14 @@ export async function runCli(argv: readonly string[]): Promise<number> {
         await requirementsCommand(root, options.candidates, options.decisions),
         options.json === true,
       );
+    });
+
+  program
+    .command("research-lock <root>")
+    .requiredOption("--handoff <path>", "LongTable 연구 handoff JSON")
+    .option("--json", "JSON 형식으로 출력")
+    .action(async (root: string, options: JsonOption & { handoff: string }) => {
+      writeEnvelope(await researchLockCommand(root, options.handoff), options.json === true);
     });
 
   program

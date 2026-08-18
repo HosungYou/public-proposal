@@ -1,0 +1,22 @@
+{
+  "schemaVersion": "1.0.0",
+  "packageVersion": "0.1.0",
+  "kppVersion": "0.2.1",
+  "longtableVersion": "0.1.72",
+  "pluginVersion": "0.1.0",
+  "workerProtocol": "1.0.0",
+  "installRoot": "/fixture/.public-proposal",
+  "pluginManifestSha256": "sha256:plugin",
+  "bundleManifestSha256": "sha256:bundle",
+  "worker": {
+    "executable": "/fixture/.public-proposal/worker/bin/python",
+    "protocolVersion": "1.0.0",
+    "sha256": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+  },
+  "ownedPaths": [
+    "/fixture/.public-proposal/plugin",
+    "/fixture/.public-proposal/marketplace",
+    "/fixture/.public-proposal/worker"
+  ],
+  "createdAt": "2026-08-18T00:00:00.000Z"
+}

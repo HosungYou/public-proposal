@@ -1,0 +1,9 @@
+{
+  "transfers": [
+    {
+      "claimId": "CLAIM-001",
+      "decision": "bounded",
+      "rationale": "The claim is limited to the cited research service scope."
+    }
+  ]
+}

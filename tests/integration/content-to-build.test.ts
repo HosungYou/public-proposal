@@ -1,5 +1,5 @@
 import { spawn } from "node:child_process";
-import { cp, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { cp, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { afterEach, beforeAll, describe, expect, it } from "vitest";
@@ -210,12 +210,48 @@ describe("content-to-build integration fixture", () => {
     ]) {
       expect((await core.verifyReceipt(join(result.root, "receipts", receiptName))).valid).toBe(true);
     }
+    const contentApproval = await core.verifyReceipt(join(result.root, "receipts", "content-approval.json"));
+    expect(contentApproval.receipt.inputReceiptHashes).toContain(
+      await core.sha256File(join(result.root, "receipts", "research-lock.json")),
+    );
+  });
+
+  it("allows general procurement content approval without LongTable", async () => {
+    const result = await runContentFixture(
+      "fixtures/valid/minimal-research-proposal",
+      temporaryDirectories,
+      { proposalClass: "general_procurement", academicEvidence: false },
+    );
+
+    expect(result.state).toBe("CONTENT_APPROVED");
+    await expect(readFile(join(result.root, "receipts", "research-lock.json"), "utf8"))
+      .rejects.toMatchObject({ code: "ENOENT" });
+  });
+
+  it("allows general procurement with an academic evidence slot after a valid LongTable lock", async () => {
+    const result = await runContentFixture(
+      "fixtures/valid/minimal-research-proposal",
+      temporaryDirectories,
+      { proposalClass: "general_procurement", academicEvidence: true },
+    );
+
+    expect(result.state).toBe("CONTENT_APPROVED");
+    const researchReceiptPath = join(result.root, "receipts", "research-lock.json");
+    expect((await core.verifyReceipt(researchReceiptPath)).valid).toBe(true);
+    const contentApproval = await core.verifyReceipt(join(result.root, "receipts", "content-approval.json"));
+    expect(contentApproval.receipt.inputReceiptHashes).toContain(
+      await core.sha256File(researchReceiptPath),
+    );
   });
 });
 
 async function runContentFixture(
   fixtureInput: string,
   temporaryDirectories: string[],
+  options: {
+    readonly proposalClass?: "research_service" | "general_procurement";
+    readonly academicEvidence?: boolean;
+  } = {},
 ): Promise<ContentFixtureResult> {
   const fixtureSource = resolve(fixtureInput);
   const temporaryDirectory = await mkdtemp(join(tmpdir(), "kpp-content-to-build-"));
@@ -236,14 +272,33 @@ async function runContentFixture(
   const designProfilePath = join(fixture, "figures", "design-profile.json");
   const pendingBlankRegisterPath = join(fixture, "content", "pending-blank-register.json");
 
-  expect(await runCli(["init", root, "--project-id", "synthetic-research-proposal", "--json"])).toMatchObject({ code: 0, stderr: "" });
+  const proposalClass = options.proposalClass ?? "research_service";
+  expect(await runCli([
+    "init",
+    root,
+    "--project-id",
+    "synthetic-research-proposal",
+    "--proposal-class",
+    proposalClass,
+    "--json",
+  ])).toMatchObject({ code: 0, stderr: "" });
   expect(await runCli(["ingest", root, rfpPath, "--json"])).toMatchObject({ code: 0, stderr: "" });
   const candidates = await materializeTemplate<ContentFixtureResult["candidates"]>(candidatesTemplatePath, candidatesPath, {
     "__ISSUER_RFP_PATH__": rfpPath,
   });
-  await materializeTemplate(decisionsTemplatePath, decisionsPath, {
+  const decisions = await materializeTemplate<Record<string, unknown>>(decisionsTemplatePath, decisionsPath, {
     "__METHOD_EVIDENCE_PATH__": evidencePath,
   });
+  if (options.academicEvidence !== undefined) {
+    const requirementRecord = decisions.requirements as {
+      requirements: Array<{ pageRole: string }>;
+      evidenceBindings: Array<{ targetPageRole: string }>;
+    };
+    const pageRole = options.academicEvidence ? "academic_evidence" : "qualification_evidence";
+    requirementRecord.requirements[0]!.pageRole = pageRole;
+    requirementRecord.evidenceBindings[0]!.targetPageRole = pageRole;
+    await writeFile(decisionsPath, `${JSON.stringify(decisions, null, 2)}\n`, "utf8");
+  }
   const issuerSourceSha256 = await core.sha256File(rfpPath);
   expect(candidates.candidates).toHaveLength(2);
   for (const candidate of candidates.candidates) {
@@ -266,6 +321,10 @@ async function runContentFixture(
   });
   const requirementsPath = join(root, "requirements", "requirements.json");
   expect(await runCli(["plan", root, "--requirements", requirementsPath, "--json"])).toMatchObject({ code: 0, stderr: "" });
+
+  if (proposalClass === "research_service" || options.academicEvidence === true) {
+    await createResearchLock(root, proposalClass);
+  }
 
   const issuerProfile = JSON.parse(await readFile(issuerProfilePath, "utf8")) as unknown;
   const terminology = JSON.parse(await readFile(terminologyPath, "utf8")) as unknown;
@@ -316,6 +375,44 @@ async function runContentFixture(
     pendingBlankRegister: JSON.parse(await readFile(pendingBlankRegisterPath, "utf8")) as ContentFixtureResult["pendingBlankRegister"],
     finalResponse: finalResponse as ContentFixtureResult["finalResponse"],
   };
+}
+
+async function createResearchLock(
+  root: string,
+  proposalClass: "research_service" | "general_procurement",
+): Promise<void> {
+  const researchRoot = join(root, "evidence", "research-lock");
+  await mkdir(researchRoot, { recursive: true });
+  const artifacts = {
+    researchSpecification: join(researchRoot, "research-specification.json"),
+    citationSlotMatrix: join(researchRoot, "citation-slot-matrix.json"),
+    sourceLedger: join(researchRoot, "source-ledger.json"),
+    claimTransferLedger: join(researchRoot, "claim-transfer-ledger.json"),
+  };
+  await Promise.all([
+    writeFile(artifacts.researchSpecification, '{"researchQuestions":["fixture"]}\n'),
+    writeFile(artifacts.citationSlotMatrix, '{"slots":[{"slotId":"CITE-1","required":true}]}\n'),
+    writeFile(artifacts.sourceLedger, '{"sources":[{"sourceId":"SRC-1"}]}\n'),
+    writeFile(artifacts.claimTransferLedger, '{"transfers":[{"claimId":"CLAIM-METHOD","decision":"bounded"}]}\n'),
+  ]);
+  const handoffPath = join(researchRoot, "handoff.json");
+  await writeFile(handoffPath, `${JSON.stringify({
+    schemaVersion: "1.0.0",
+    longtableVersion: "0.1.72",
+    projectId: "synthetic-research-proposal",
+    proposalClass,
+    researchSpecificationPath: "evidence/research-lock/research-specification.json",
+    researchSpecificationSha256: await core.sha256File(artifacts.researchSpecification),
+    citationSlotMatrixPath: "evidence/research-lock/citation-slot-matrix.json",
+    citationSlotMatrixSha256: await core.sha256File(artifacts.citationSlotMatrix),
+    sourceLedgerPath: "evidence/research-lock/source-ledger.json",
+    sourceLedgerSha256: await core.sha256File(artifacts.sourceLedger),
+    claimTransferLedgerPath: "evidence/research-lock/claim-transfer-ledger.json",
+    claimTransferLedgerSha256: await core.sha256File(artifacts.claimTransferLedger),
+    openRequiredCheckpoints: [],
+    createdAt: "2026-08-18T00:00:00.000Z",
+  }, null, 2)}\n`);
+  await core.importResearchLock(root, handoffPath, "0.1.72");
 }
 
 async function materializeTemplate<T>(

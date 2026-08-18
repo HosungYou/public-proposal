@@ -2,6 +2,7 @@ import { access, chmod, copyFile, mkdir, mkdtemp, readFile, readdir, rm, stat, s
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
+import { resolveTool } from "../../../tests/support/tool-paths.js";
 import { advanceProject, executeFile, initializeProject, sha256File, verifyProjectState, writeReceipt } from "@longtable/kpp-core";
 import { R08_TOKEN_PROFILE_SHA256, renderFigureArtifact, type GanttFigureSpec } from "@longtable/kpp-renderers";
 import { afterEach, describe, expect, it } from "vitest";
@@ -168,6 +169,67 @@ describe("verified proposal release flow", () => {
     await expect(access(join(fixture.root, "receipts", "build.json"))).rejects.toBeDefined();
   });
 
+  it("rejects an explicit worker protocol mismatch before publishing a build receipt", async () => {
+    const fixture = await createContentApprovedProject(roots);
+    const worker = join(fixture.root, "worker-mismatch.mjs");
+    await writeFile(
+      worker,
+      "#!/usr/bin/env node\nif (process.argv[2] === '--protocol-version') process.stdout.write('2.0.0\\n'); else process.stdout.write('Python 3.13.0\\n');\n",
+    );
+    await chmod(worker, 0o755);
+
+    await expect(buildProject(fixture.root, { requestPath: fixture.requestPath, pythonPath: worker }))
+      .rejects.toMatchObject({ code: "PP_WORKER_PROTOCOL_MISMATCH" });
+    await expect(access(join(fixture.root, "receipts", "build.json"))).rejects.toBeDefined();
+  });
+
+  it("rejects a managed manifest protocol mismatch without repository worker fallback", async () => {
+    const fixture = await createContentApprovedProject(roots);
+    const installRoot = join(fixture.root, ".public-proposal");
+    const worker = join(installRoot, "worker", "bin", "python");
+    await mkdir(join(installRoot, "worker", "bin"), { recursive: true });
+    await writeFile(worker, "#!/usr/bin/env node\nprocess.stdout.write('1.0.0\\n');\n", { mode: 0o755 });
+    const manifestPath = join(installRoot, "installation.json");
+    await writeFile(manifestPath, `${JSON.stringify({
+      schemaVersion: "1.0.0",
+      packageVersion: "0.1.0",
+      kppVersion: "0.2.1",
+      longtableVersion: "0.1.72",
+      pluginVersion: "0.1.0",
+      workerProtocol: "1.0.0",
+      installRoot,
+      pluginManifestSha256: "sha256:plugin",
+      bundleManifestSha256: "sha256:bundle",
+      worker: { executable: worker, protocolVersion: "2.0.0", sha256: await sha256File(worker) },
+      ownedPaths: [
+        join(installRoot, "plugin"),
+        join(installRoot, "marketplace"),
+        join(installRoot, "worker"),
+      ],
+      createdAt: "2026-08-18T00:00:00.000Z",
+    })}\n`);
+    const previousManifest = process.env.PUBLIC_PROPOSAL_INSTALLATION_MANIFEST;
+    const previousWorker = process.env.KPP_WORKER_PATH;
+    delete process.env.KPP_WORKER_PATH;
+    process.env.PUBLIC_PROPOSAL_INSTALLATION_MANIFEST = manifestPath;
+    try {
+      await expect(buildProject(fixture.root, { requestPath: fixture.requestPath }))
+        .rejects.toMatchObject({ code: "PP_WORKER_PROTOCOL_MISMATCH" });
+      await expect(access(join(fixture.root, "receipts", "build.json"))).rejects.toBeDefined();
+    } finally {
+      if (previousManifest === undefined) {
+        delete process.env.PUBLIC_PROPOSAL_INSTALLATION_MANIFEST;
+      } else {
+        process.env.PUBLIC_PROPOSAL_INSTALLATION_MANIFEST = previousManifest;
+      }
+      if (previousWorker === undefined) {
+        delete process.env.KPP_WORKER_PATH;
+      } else {
+        process.env.KPP_WORKER_PATH = previousWorker;
+      }
+    }
+  });
+
   it("releases only approval-bound allowlisted artifacts", async () => {
     const fixture = await createAuditedProject(roots);
     const approved = await approveProject(fixture.root, { approvedBy: "제출책임자", auditPath: fixture.auditPath });
@@ -202,6 +264,31 @@ describe("verified proposal release flow", () => {
     await expect(access(output)).rejects.toBeDefined();
     const project = await readFile(join(fixture.root, "kpp.project.yaml"), "utf8");
     expect(project).toContain("state: HUMAN_APPROVED");
+  });
+
+  it("invalidating a research source ledger invalidates later approval and release", async () => {
+    const approvalFixture = await createAuditedProject(roots, true);
+    await mutateResearchSourceLedger(approvalFixture.root);
+
+    await expect(approveProject(approvalFixture.root, {
+      approvedBy: "제출책임자",
+      auditPath: approvalFixture.auditPath,
+    })).rejects.toMatchObject({ code: "KPP_INPUT_RECEIPT_INVALID" });
+    await expect(access(join(approvalFixture.root, "receipts", "approval.json"))).rejects.toBeDefined();
+
+    const releaseFixture = await createAuditedProject(roots, true);
+    const approved = await approveProject(releaseFixture.root, {
+      approvedBy: "제출책임자",
+      auditPath: releaseFixture.auditPath,
+    });
+    await mutateResearchSourceLedger(releaseFixture.root);
+    const output = join(releaseFixture.root, "release-output");
+
+    await expect(releaseProject(releaseFixture.root, {
+      approvalPath: approved.receiptPath,
+      outputParent: output,
+    })).rejects.toMatchObject({ code: "KPP_INPUT_RECEIPT_INVALID" });
+    await expect(access(output)).rejects.toBeDefined();
   });
 
   it("rejects a release output beneath a symlinked ancestor", async () => {
@@ -359,8 +446,9 @@ async function createContentApprovedProject(
 
 async function rasterizeSvg(svgPath: string, outputDirectory: string): Promise<void> {
   const profile = await mkdtemp(join(tmpdir(), "kpp-figure-raster-profile-"));
+  const soffice = await resolveTool("soffice");
   try {
-    await executeFile("/Applications/LibreOffice.app/Contents/MacOS/soffice", [
+    await executeFile(soffice, [
       `-env:UserInstallation=${pathToFileURL(profile).href}`,
       "--headless",
       "--convert-to",
@@ -374,11 +462,18 @@ async function rasterizeSvg(svgPath: string, outputDirectory: string): Promise<v
   }
 }
 
-async function createAuditedProject(roots: string[]): Promise<{ readonly root: string; readonly auditPath: string; readonly pdfPath: string }> {
+async function createAuditedProject(
+  roots: string[],
+  researchRequired = false,
+): Promise<{ readonly root: string; readonly auditPath: string; readonly pdfPath: string }> {
   const root = await mkdtemp(join(tmpdir(), "kpp-release-audited-"));
   roots.push(root);
-  await initializeProject(root, { projectId: "release-fixture" });
-  await advanceToContentApproved(root);
+  await initializeProject(root, {
+    projectId: "release-fixture",
+    proposalClass: researchRequired ? "research_service" : "general_procurement",
+  });
+  const researchReceiptPath = researchRequired ? await createResearchLock(root) : undefined;
+  await advanceToContentApproved(root, [], [], researchReceiptPath);
   const generation = join(root, ".kpp-build-0123456789abcdef", "generations", "fixture");
   await mkdir(generation, { recursive: true });
   const docxPath = join(generation, "document.docx");
@@ -408,6 +503,7 @@ async function advanceToContentApproved(
   root: string,
   contentApprovalFiles: string[] = [],
   designLockFiles: string[] = [],
+  researchReceiptPath?: string,
 ): Promise<void> {
   for (const stage of ["SOURCE_LOCKED", "REQUIREMENTS_LOCKED", "EVIDENCE_LOCKED", "DESIGN_LOCKED", "CONTENT_APPROVED"] as const) {
     const artifact = join(root, "receipt-fixtures", `${stage}.txt`);
@@ -417,17 +513,75 @@ async function advanceToContentApproved(
       ? [artifact, ...contentApprovalFiles]
       : stage === "DESIGN_LOCKED"
         ? [artifact, ...designLockFiles]
-        : [artifact]);
+        : [artifact], stage === "CONTENT_APPROVED" && researchReceiptPath !== undefined
+      ? [await sha256File(researchReceiptPath)]
+      : []);
   }
 }
 
-async function writeStage(root: string, stage: "SOURCE_LOCKED" | "REQUIREMENTS_LOCKED" | "EVIDENCE_LOCKED" | "DESIGN_LOCKED" | "CONTENT_APPROVED" | "BUILT" | "RENDERED" | "AUDITED", files: string[]): Promise<void> {
+async function writeStage(
+  root: string,
+  stage: "SOURCE_LOCKED" | "REQUIREMENTS_LOCKED" | "EVIDENCE_LOCKED" | "DESIGN_LOCKED" | "CONTENT_APPROVED" | "BUILT" | "RENDERED" | "AUDITED",
+  files: string[],
+  extraInputReceiptHashes: readonly string[] = [],
+): Promise<void> {
   const filenames = { SOURCE_LOCKED: "source-lock.json", REQUIREMENTS_LOCKED: "requirements-lock.json", EVIDENCE_LOCKED: "evidence-lock.json", DESIGN_LOCKED: "design-lock.json", CONTENT_APPROVED: "content-approval.json", BUILT: "build.json", RENDERED: "render.json", AUDITED: "audit.json" } as const;
   const ordered = ["SOURCE_LOCKED", "REQUIREMENTS_LOCKED", "EVIDENCE_LOCKED", "DESIGN_LOCKED", "CONTENT_APPROVED", "BUILT", "RENDERED", "AUDITED"] as const;
   const index = ordered.indexOf(stage);
   const predecessor = index > 0 ? join(root, "receipts", filenames[ordered[index - 1]!]) : undefined;
-  await writeReceipt({ stage, files, inputReceiptHashes: predecessor === undefined ? [] : [await sha256File(predecessor)], output: join(root, "receipts", filenames[stage]) });
+  await writeReceipt({
+    stage,
+    files,
+    inputReceiptHashes: [
+      ...(predecessor === undefined ? [] : [await sha256File(predecessor)]),
+      ...extraInputReceiptHashes,
+    ],
+    output: join(root, "receipts", filenames[stage]),
+  });
   await advanceProject(root, stage);
+}
+
+async function createResearchLock(root: string): Promise<string> {
+  const researchRoot = join(root, "evidence", "research-lock");
+  await mkdir(researchRoot, { recursive: true });
+  const artifacts = {
+    researchSpecification: join(researchRoot, "research-specification.json"),
+    citationSlotMatrix: join(researchRoot, "citation-slot-matrix.json"),
+    sourceLedger: join(researchRoot, "source-ledger.json"),
+    claimTransferLedger: join(researchRoot, "claim-transfer-ledger.json"),
+  };
+  await Promise.all([
+    writeFile(artifacts.researchSpecification, '{"researchQuestions":["fixture"]}\n'),
+    writeFile(artifacts.citationSlotMatrix, '{"slots":[{"slotId":"CITE-1","required":true}]}\n'),
+    writeFile(artifacts.sourceLedger, '{"sources":[{"sourceId":"SRC-1"}]}\n'),
+    writeFile(artifacts.claimTransferLedger, '{"transfers":[{"claimId":"CLAIM-1","decision":"bounded"}]}\n'),
+  ]);
+  const handoffPath = join(researchRoot, "handoff.json");
+  await writeFile(handoffPath, `${JSON.stringify({
+    schemaVersion: "1.0.0",
+    longtableVersion: "0.1.72",
+    projectId: "release-fixture",
+    proposalClass: "research_service",
+    researchSpecificationPath: "evidence/research-lock/research-specification.json",
+    researchSpecificationSha256: await sha256File(artifacts.researchSpecification),
+    citationSlotMatrixPath: "evidence/research-lock/citation-slot-matrix.json",
+    citationSlotMatrixSha256: await sha256File(artifacts.citationSlotMatrix),
+    sourceLedgerPath: "evidence/research-lock/source-ledger.json",
+    sourceLedgerSha256: await sha256File(artifacts.sourceLedger),
+    claimTransferLedgerPath: "evidence/research-lock/claim-transfer-ledger.json",
+    claimTransferLedgerSha256: await sha256File(artifacts.claimTransferLedger),
+    openRequiredCheckpoints: [],
+    createdAt: "2026-08-18T00:00:00.000Z",
+  }, null, 2)}\n`);
+  const result = await import("@longtable/kpp-core");
+  return (await result.importResearchLock(root, handoffPath, "0.1.72")).receiptPath;
+}
+
+async function mutateResearchSourceLedger(root: string): Promise<void> {
+  const sourceLedger = join(root, "evidence", "research-lock", "source-ledger.json");
+  const bytes = await readFile(sourceLedger);
+  bytes[0] = bytes[0] === 0x7b ? 0x5b : 0x7b;
+  await writeFile(sourceLedger, bytes);
 }
 
 function lockedProfile() {

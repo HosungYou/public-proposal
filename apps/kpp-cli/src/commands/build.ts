@@ -11,6 +11,7 @@ import {
   writeReceipt,
 } from "@longtable/kpp-core";
 import { success, type CliEnvelope } from "../output.js";
+import { EXPECTED_WORKER_PROTOCOL, ManagedWorkerError, WORKER_PROTOCOL_PROBE, resolveExplicitWorker, resolveManagedWorker } from "../managed-worker.js";
 
 const BUILDER_VERSION = "0.1.0";
 const PYTHON_BRIDGE = [
@@ -88,7 +89,7 @@ export async function buildProject(
   try {
     const result = await executeFile(pythonPath, ["-c", PYTHON_BRIDGE, requestPath], {
       cwd: root,
-      environment: pythonEnvironment(),
+      environment: pythonEnvironment(pythonPath),
       timeoutMs: 120_000,
     });
     const worker = parseWorkerResult(result.stdout);
@@ -316,20 +317,34 @@ async function boundJson(root: string, path: string, receiptNames: readonly stri
 
 async function resolveManagedPython(input: string | undefined): Promise<string> {
   const repository = repositoryRoot();
-  const expected = resolve(repository, "workers/docx-python/.venv/bin/python");
-  const requested = input === undefined ? expected : resolve(input);
-  if (requested !== expected) {
-    throw new KppError("KPP_BUILD_PYTHON_UNMANAGED", "관리된 KPP DOCX Python만 사용할 수 있습니다.", {
-      expected,
-      actual: requested,
+  const repositoryPython = resolve(repository, "workers/docx-python/.venv/bin/python");
+  let requested: string;
+  try {
+    requested = resolveExplicitWorker(input) ?? await resolveManagedWorker() ?? repositoryPython;
+  } catch (error) {
+    if (error instanceof ManagedWorkerError) {
+      throw new KppError(error.code, error.message, { actual: error.actual, stage: "CONTENT_APPROVED" });
+    }
+    throw error;
+  }
+  const canonical = await realpath(requested).catch(() => undefined);
+  if (canonical === undefined) {
+    throw new KppError("PP_WORKER_PROTOCOL_MISSING", "관리된 KPP DOCX worker를 찾을 수 없습니다.", { path: requested, stage: "CONTENT_APPROVED" });
+  }
+  const python = requested;
+  const protocol = await workerProtocolVersion(python, python === repositoryPython ? pythonEnvironment(python) : process.env);
+  if (protocol === null) {
+    throw new KppError("PP_WORKER_PROTOCOL_MISSING", "DOCX worker protocol을 확인할 수 없습니다.", { path: python, stage: "CONTENT_APPROVED" });
+  }
+  if (protocol !== EXPECTED_WORKER_PROTOCOL) {
+    throw new KppError("PP_WORKER_PROTOCOL_MISMATCH", "DOCX worker protocol이 잠긴 버전과 다릅니다.", {
+      expected: EXPECTED_WORKER_PROTOCOL,
+      actual: protocol,
+      path: python,
       stage: "CONTENT_APPROVED",
     });
   }
-  const python = await realpath(requested).catch(() => undefined);
-  if (python === undefined) {
-    throw new KppError("KPP_BUILD_PYTHON_MISSING", "관리된 KPP DOCX Python을 찾을 수 없습니다.", { path: requested, stage: "CONTENT_APPROVED" });
-  }
-  const version = await executeFile(python, ["--version"], { environment: pythonEnvironment() });
+  const version = await executeFile(python, ["--version"], { environment: pythonEnvironment(python) });
   const observed = `${version.stdout}${version.stderr}`.trim();
   const match = /^Python\s+(\d+)\.(\d+)(?:\.\d+)?$/u.exec(observed);
   if (match?.[1] !== "3" || Number(match[2]) < 11 || Number(match[2]) >= 15) {
@@ -340,6 +355,15 @@ async function resolveManagedPython(input: string | undefined): Promise<string> 
     });
   }
   return python;
+}
+
+async function workerProtocolVersion(python: string, environment: NodeJS.ProcessEnv): Promise<string | null> {
+  const direct = await executeFile(python, ["--protocol-version"], { environment }).catch(() => undefined);
+  const directOutput = direct === undefined ? "" : `${direct.stdout}${direct.stderr}`.trim();
+  if (directOutput.length > 0) return directOutput;
+  const probed = await executeFile(python, ["-c", WORKER_PROTOCOL_PROBE], { environment }).catch(() => undefined);
+  const probedOutput = probed === undefined ? "" : `${probed.stdout}${probed.stderr}`.trim();
+  return probedOutput.length > 0 ? probedOutput : null;
 }
 
 function parseWorkerResult(stdout: string): Record<string, unknown> {
@@ -527,8 +551,10 @@ function repositoryRoot(): string {
   return resolve(dirname(fileURLToPath(import.meta.url)), "../../../..");
 }
 
-function pythonEnvironment(): NodeJS.ProcessEnv {
+function pythonEnvironment(python?: string): NodeJS.ProcessEnv {
   const workerSource = join(repositoryRoot(), "workers/docx-python/src");
+  const repositoryPython = resolve(repositoryRoot(), "workers/docx-python/.venv/bin/python");
+  if (python !== undefined && resolve(python) !== repositoryPython) return { ...process.env };
   return { ...process.env, PYTHONPATH: [workerSource, process.env.PYTHONPATH].filter(Boolean).join(":") };
 }
 

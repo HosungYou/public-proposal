@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   EvidenceBindingSchema,
   EvidenceItemSchema,
+  ProposalClassSchema,
   ProjectSchema,
   ProjectStateSchema,
   ReceiptSchema,
@@ -93,11 +94,34 @@ describe("canonical persisted schemas", () => {
       ProjectSchema.parse({
         schemaVersion: "1.0.0",
         projectId: "sample",
+        proposalClass: "general_procurement",
         state: "INIT",
         issuerPack: null,
         approvalPolicy: "single_owner",
       }).state,
     ).toBe("INIT");
+  });
+
+  it("accepts only the supported proposal classes", () => {
+    const classes = [
+      "academic_research",
+      "research_service",
+      "policy_research",
+      "general_procurement",
+      "document_restyle",
+    ];
+
+    expect(classes.map((proposalClass) => ProposalClassSchema.parse(proposalClass))).toEqual(classes);
+    expect(() =>
+      ProjectSchema.parse({
+        schemaVersion: "1.0.0",
+        projectId: "sample",
+        proposalClass: "unknown",
+        state: "INIT",
+        issuerPack: null,
+        approvalPolicy: "single_owner",
+      }),
+    ).toThrow();
   });
 
   it("validates receipt records used by downstream state transitions", () => {

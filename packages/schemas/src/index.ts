@@ -110,8 +110,10 @@ export {
 } from "./figure-spec.js";
 export {
   ApprovalPolicySchema,
+  ProposalClassSchema,
   ProjectSchema,
   ProjectStateSchema,
+  type ProposalClass,
   type ProjectRecord,
   type ProjectState,
 } from "./project.js";
@@ -123,3 +125,7 @@ export {
   type ReceiptFile,
   type ReceiptResult,
 } from "./receipt.js";
+export {
+  ResearchLockSchema,
+  type ResearchLock,
+} from "./research-lock.js";
