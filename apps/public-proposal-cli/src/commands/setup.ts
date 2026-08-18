@@ -1,4 +1,4 @@
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { dirname } from "node:path";
 import {
@@ -227,13 +227,29 @@ async function validateExistingManifest(
   installRoot: string,
   exists: (path: string) => Promise<boolean>,
 ): Promise<{ code: string; message: string } | null> {
-  if (existingManifest.installRoot !== installRoot) {
+  const requestedRoot = resolve(installRoot);
+  if (resolve(existingManifest.installRoot) !== requestedRoot) {
     return {
       code: "PP_INSTALL_MANIFEST_MISMATCH",
       message: `Existing installation receipt belongs to ${existingManifest.installRoot}, not ${installRoot}.`,
     };
   }
-  for (const ownedPath of existingManifest.ownedPaths) {
+  const expectedOwnedPaths = installerOwnedRoots(requestedRoot);
+  const normalizedOwnedPaths = existingManifest.ownedPaths.map((ownedPath) => resolve(ownedPath));
+  const uniqueOwnedPaths = new Set(normalizedOwnedPaths);
+  if (
+    existingManifest.ownedPaths.length === 0 ||
+    uniqueOwnedPaths.size !== existingManifest.ownedPaths.length ||
+    uniqueOwnedPaths.size !== expectedOwnedPaths.length ||
+    !expectedOwnedPaths.every((expectedPath) => uniqueOwnedPaths.has(expectedPath)) ||
+    existingManifest.ownedPaths.some((ownedPath) => ownedPath !== resolve(ownedPath))
+  ) {
+    return {
+      code: "PP_INSTALL_MANIFEST_MISMATCH",
+      message: "Existing installation receipt does not match the installer-owned path set.",
+    };
+  }
+  for (const ownedPath of expectedOwnedPaths) {
     if (!(await exists(ownedPath))) {
       return {
         code: "PP_INSTALL_MANIFEST_STALE",
@@ -242,6 +258,14 @@ async function validateExistingManifest(
     }
   }
   return null;
+}
+
+function installerOwnedRoots(installRoot: string): readonly string[] {
+  return [
+    join(installRoot, "plugin"),
+    join(installRoot, "marketplace"),
+    join(installRoot, "codex-skills"),
+  ].map((path) => resolve(path));
 }
 
 async function packageIntegrity(packageRoot: string, dependencies: SetupDependencies): Promise<DoctorCheck> {

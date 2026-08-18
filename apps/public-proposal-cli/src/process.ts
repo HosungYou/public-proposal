@@ -26,7 +26,7 @@ export async function sha256File(path: string): Promise<string> {
 export async function writeFileWithMode(path: string, contents: string, mode?: number): Promise<void> {
   await mkdir(dirname(path), { recursive: true });
   if (mode !== undefined) {
-    const handle = await open(path, "w", mode);
+    const handle = await open(path, "wx", mode);
     try {
       await handle.writeFile(contents, "utf8");
     } finally {

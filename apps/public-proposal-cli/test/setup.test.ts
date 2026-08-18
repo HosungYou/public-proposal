@@ -1,3 +1,5 @@
+import { mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { SUPPORTED_KPP_VERSION, SUPPORTED_LONGTABLE_VERSION, WORKER_PROTOCOL_VERSION, type ProcessResult } from "../src/contracts.js";
@@ -168,6 +170,71 @@ describe("public proposal setup", () => {
     expect(result.error?.code).toBe("PP_INSTALL_MANIFEST_MISMATCH");
     expect(fake.commands).toEqual([]);
   });
+
+  it("rejects same-root receipts with empty or arbitrary owned paths", async () => {
+    const emptyFake = fakeSetupDependencies();
+    emptyFake.files["/home/ada/.config/public-proposal/installation.json"] = JSON.stringify(
+      fakeManifest({ ownedPaths: [] }),
+    );
+
+    const emptyResult = await runSetup(
+      { provider: "codex", installScope: "user", cwd: "/work", home: "/home/ada" },
+      emptyFake,
+    );
+
+    expect(emptyResult.ok).toBe(false);
+    expect(emptyResult.error?.code).toBe("PP_INSTALL_MANIFEST_MISMATCH");
+
+    const arbitraryFake = fakeSetupDependencies();
+    arbitraryFake.files["/home/ada/.config/public-proposal/installation.json"] = JSON.stringify(
+      fakeManifest({
+        ownedPaths: [
+          "/home/ada/.config/public-proposal/plugin",
+          "/home/ada/.config/public-proposal/marketplace",
+          "/home/ada/.config/public-proposal/codex-skills",
+          "/home/ada/.config/public-proposal/plugin/../../ssh",
+        ],
+      }),
+    );
+    arbitraryFake.files["/home/ada/.config/public-proposal/plugin/.dir"] = "dir";
+    arbitraryFake.files["/home/ada/.config/public-proposal/marketplace/.dir"] = "dir";
+    arbitraryFake.files["/home/ada/.config/public-proposal/codex-skills/.dir"] = "dir";
+
+    const arbitraryResult = await runSetup(
+      { provider: "codex", installScope: "user", cwd: "/work", home: "/home/ada" },
+      arbitraryFake,
+    );
+
+    expect(arbitraryResult.ok).toBe(false);
+    expect(arbitraryResult.error?.code).toBe("PP_INSTALL_MANIFEST_MISMATCH");
+  });
+
+  it("does not truncate an external file when a fixed manifest temp path is a symlink", async () => {
+    const installRoot = await mkdtemp(join(tmpdir(), "public-proposal-setup-symlink-"));
+    const externalTarget = join(tmpdir(), `public-proposal-external-${process.pid}-${Date.now()}.txt`);
+    await writeFile(externalTarget, "do-not-touch", "utf8");
+    await symlink(externalTarget, join(installRoot, "installation.json.tmp"));
+
+    try {
+      const fake = fakeSetupDependencies({
+        installRoot,
+        realFilesystemWrites: true,
+      });
+
+      const result = await runSetup(
+        { provider: "codex", installScope: "user", installRoot },
+        fake,
+      );
+
+      expect(result.ok).toBe(false);
+      expect(result.error?.code).toBe("PP_SETUP_COMMAND_FAILED");
+      await expect(readFile(externalTarget, "utf8")).resolves.toBe("do-not-touch");
+      await expect(readFile(join(installRoot, "installation.json"), "utf8")).rejects.toThrow();
+    } finally {
+      await rm(installRoot, { force: true, recursive: true });
+      await rm(externalTarget, { force: true });
+    }
+  });
 });
 
 interface FakeSetupDependencies extends SetupDependencies {
@@ -182,7 +249,10 @@ interface FakeSetupDependencies extends SetupDependencies {
 
 function fakeSetupDependencies(input?: {
   commandFailures?: Map<string, ProcessResult>;
+  installRoot?: string;
+  realFilesystemWrites?: boolean;
 }): FakeSetupDependencies {
+  const installRoot = input?.installRoot ?? "/home/ada/.config/public-proposal";
   const files: Record<string, string> = {
     "/pkg/plugin/.codex-plugin/plugin.json": JSON.stringify({ name: "public-proposal", version: "0.1.0" }),
     "/pkg/plugin/skills/korean-public-proposal/BUNDLE-MANIFEST.json": JSON.stringify({ schemaVersion: "1.0.0" }),
@@ -213,17 +283,33 @@ function fakeSetupDependencies(input?: {
       files[`${path}/.dir`] = "dir";
     },
     readFile: async (path) => {
+      if (input?.realFilesystemWrites && path.startsWith(installRoot)) {
+        return readFile(path, "utf8");
+      }
       if (!(path in files)) {
         throw Object.assign(new Error(`ENOENT ${path}`), { code: "ENOENT" });
       }
       return files[path];
     },
     writeFile: async (path, contents, mode) => {
+      if (input?.realFilesystemWrites && path.startsWith(installRoot)) {
+        const { writeFileWithMode } = await import("../src/process.js");
+        await writeFileWithMode(path, contents, mode);
+        writes.push(path);
+        modes[path] = mode;
+        return;
+      }
       files[path] = contents;
       writes.push(path);
       modes[path] = mode;
     },
     rename: async (from, to) => {
+      if (input?.realFilesystemWrites && from.startsWith(installRoot)) {
+        const { rename } = await import("node:fs/promises");
+        await rename(from, to);
+        renames.push({ from, to });
+        return;
+      }
       files[to] = files[from];
       delete files[from];
       renames.push({ from, to });
@@ -237,10 +323,40 @@ function fakeSetupDependencies(input?: {
       removed.push(path);
     },
     copyDir: async (from, to) => {
+      if (input?.realFilesystemWrites && to.startsWith(installRoot)) {
+        const { mkdir, writeFile } = await import("node:fs/promises");
+        await mkdir(to, { recursive: true });
+        if (to.endsWith("/plugin")) {
+          await mkdir(join(to, ".codex-plugin"), { recursive: true });
+          await mkdir(join(to, "skills", "korean-public-proposal"), { recursive: true });
+          await writeFile(join(to, ".codex-plugin", "plugin.json"), files["/pkg/plugin/.codex-plugin/plugin.json"], "utf8");
+          await writeFile(
+            join(to, "skills", "korean-public-proposal", "BUNDLE-MANIFEST.json"),
+            files["/pkg/plugin/skills/korean-public-proposal/BUNDLE-MANIFEST.json"],
+            "utf8",
+          );
+        }
+        if (to.endsWith("/marketplace")) {
+          await writeFile(join(to, "marketplace.json"), files["/pkg/marketplace/marketplace.json"], "utf8");
+        }
+        writes.push(to);
+        return;
+      }
       files[`${to}/.copied-from`] = from;
       writes.push(to);
     },
-    exists: async (path) => Object.keys(files).some((key) => key === path || key.startsWith(`${path}/`)),
+    exists: async (path) => {
+      if (input?.realFilesystemWrites && path.startsWith(installRoot)) {
+        const { stat } = await import("node:fs/promises");
+        try {
+          await stat(path);
+          return true;
+        } catch {
+          return false;
+        }
+      }
+      return Object.keys(files).some((key) => key === path || key.startsWith(`${path}/`));
+    },
     spawn: async (command, args) => {
       const rendered = [command, ...args].join(" ");
       commands.push(rendered);
@@ -265,6 +381,30 @@ function fakeSetupDependencies(input?: {
       if (rendered.startsWith("codex plugin add ")) return ok("");
       return { code: 127, stdout: "", stderr: `unexpected host command: ${rendered}` };
     },
+  };
+}
+
+function fakeManifest(input?: Partial<{
+  installRoot: string;
+  ownedPaths: readonly string[];
+}>): Record<string, unknown> {
+  const installRoot = input?.installRoot ?? "/home/ada/.config/public-proposal";
+  return {
+    schemaVersion: "1.0.0",
+    packageVersion: "0.1.0",
+    kppVersion: "0.2.1",
+    longtableVersion: "0.1.72",
+    pluginVersion: "0.1.0",
+    workerProtocol: "1.0.0",
+    installRoot,
+    pluginManifestSha256: `sha256:${installRoot}/plugin/.codex-plugin/plugin.json`,
+    bundleManifestSha256: `sha256:${installRoot}/plugin/skills/korean-public-proposal/BUNDLE-MANIFEST.json`,
+    ownedPaths: input?.ownedPaths ?? [
+      `${installRoot}/plugin`,
+      `${installRoot}/marketplace`,
+      `${installRoot}/codex-skills`,
+    ],
+    createdAt: "2026-08-18T00:00:00.000Z",
   };
 }
 
