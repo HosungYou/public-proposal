@@ -8,19 +8,23 @@ import {
   WORKER_PROTOCOL_VERSION,
   type DoctorCheck,
   type InstallManifest,
+  type PackageVersionResolver,
   type ProcessRunner,
   type SetupOptions,
   type SetupResult,
   type WorkerInstallation,
 } from "../contracts.js";
 import { readManifestJson, serializeManifest } from "../installation-manifest.js";
+import { readPackagedMarketplaceManifest } from "../marketplace.js";
 import { manifestPath, manifestTempPath, installationRoot } from "../paths.js";
 import { nodeFs } from "../process.js";
+import { createPackageVersionResolver } from "../package-version.js";
 import { installManagedWorker, type ManagedWorkerInstallOptions } from "../worker.js";
-import { runDoctor } from "./doctor.js";
+import { kppCheck, longtableCheck, runDoctor } from "./doctor.js";
 
 export interface SetupDependencies {
   readonly packageRoot?: string;
+  readonly packageVersion?: PackageVersionResolver;
   readonly spawn: ProcessRunner;
   readonly readFile: (path: string) => Promise<string>;
   readonly writeFile: (path: string, contents: string, mode?: number) => Promise<void>;
@@ -116,7 +120,7 @@ export async function runSetup(
     return { ok: false, plan: PLAN, writes: [], checks: [integrity], error: { code: integrity.code ?? "PP_PLUGIN_INTEGRITY_FAILED", message: integrity.message } };
   }
 
-  const preflight = await preflightChecks(dependencies.spawn);
+  const preflight = await preflightChecks(dependencies.spawn, dependencies.packageVersion);
   const blocker = preflight.find((check) => check.status === "blocker");
   if (blocker) {
     return { ok: false, plan: PLAN, writes: [], checks: preflight, error: { code: blocker.code ?? "PP_PREFLIGHT_BLOCKED", message: blocker.message } };
@@ -146,12 +150,9 @@ export async function runSetup(
       dependencies,
     );
     await copyDir(join(packageRoot, "marketplace"), ownedPaths[1]);
+    await copyDir(join(packageRoot, "plugin"), join(ownedPaths[1], "plugin"));
     writes.push(ownedPaths[1]);
-    await mirrorPackagedFile(
-      join(packageRoot, "marketplace", "marketplace.json"),
-      join(ownedPaths[1], "marketplace.json"),
-      dependencies,
-    );
+    await mirrorPackagedMarketplaceManifest(packageRoot, ownedPaths[1], dependencies);
     await runRequired(dependencies.spawn, "longtable", [
       "codex",
       "install-skills",
@@ -160,13 +161,17 @@ export async function runSetup(
       "--dir",
       join(ownedPaths[0], "skills"),
     ]);
-    marketplaceAdded = await ensureMarketplaceRegistered(dependencies.spawn, join(installRoot, "marketplace"));
+    marketplaceAdded = await ensureMarketplaceRegistered(
+      dependencies.spawn,
+      await canonicalPath(join(installRoot, "marketplace"), dependencies.realpath),
+    );
     pluginAdded = await ensurePluginInstalled(dependencies.spawn);
 
     const worker = await installWorker(installRoot, dependencies.spawn);
     writes.push(ownedPaths[2]);
 
     const installManifest = await buildManifest(
+      packageRoot,
       installRoot,
       ownedPaths,
       worker,
@@ -183,6 +188,7 @@ export async function runSetup(
       },
       {
         packageRoot,
+        packageVersion: dependencies.packageVersion,
         spawn: dependencies.spawn,
         readFile: async (path) => (path === manifest ? manifestContents : dependencies.readFile(path)),
         exists,
@@ -233,9 +239,11 @@ function defaultPackageRoot(): string {
 }
 
 export function defaultSetupDependencies(): SetupDependencies {
+  const packageRoot = defaultPackageRoot();
   return {
     ...nodeFs,
-    packageRoot: defaultPackageRoot(),
+    packageRoot,
+    packageVersion: createPackageVersionResolver(packageRoot, nodeFs.readFile),
     now: () => new Date().toISOString(),
   };
 }
@@ -396,13 +404,17 @@ async function migrateLegacyManifest(
   if (integrity.status !== "pass") {
     return { ok: false, plan: PLAN, writes: [], checks: [integrity], error: { code: integrity.code ?? "PP_PLUGIN_INTEGRITY_FAILED", message: integrity.message } };
   }
-  const preflight = await preflightChecks(dependencies.spawn);
+  const preflight = await preflightChecks(dependencies.spawn, dependencies.packageVersion);
   const blocker = preflight.find((check) => check.status === "blocker");
   if (blocker) {
     return { ok: false, plan: PLAN, writes: [], checks: preflight, error: { code: blocker.code ?? "PP_PREFLIGHT_BLOCKED", message: blocker.message } };
   }
 
-  const registrationReconciliation = await reconcileUntrackedCodexRegistrations(requestedRoot, dependencies.spawn);
+  const registrationReconciliation = await reconcileUntrackedCodexRegistrations(
+    requestedRoot,
+    dependencies.spawn,
+    dependencies.realpath,
+  );
   if (registrationReconciliation.error) {
     return failed(registrationReconciliation.error.code, registrationReconciliation.error.message, []);
   }
@@ -416,6 +428,7 @@ async function migrateLegacyManifest(
     ]);
     const ownedPaths = installerOwnedRoots(requestedRoot);
     const installManifest = await buildManifest(
+      packageRoot,
       requestedRoot,
       ownedPaths,
       worker,
@@ -432,6 +445,7 @@ async function migrateLegacyManifest(
       },
       {
         packageRoot,
+        packageVersion: dependencies.packageVersion,
         spawn: dependencies.spawn,
         readFile: async (path) => (path === manifest ? manifestContents : dependencies.readFile(path)),
         exists,
@@ -475,30 +489,41 @@ function installerOwnedRoots(installRoot: string): readonly string[] {
 
 async function packageIntegrity(packageRoot: string, dependencies: SetupDependencies): Promise<DoctorCheck> {
   const pluginManifestPath = join(packageRoot, "plugin", ".codex-plugin", "plugin.json");
-  const marketplacePath = join(packageRoot, "marketplace", "marketplace.json");
   const bundleManifestPath = join(packageRoot, "plugin", "skills", "korean-public-proposal", "BUNDLE-MANIFEST.json");
   const workerProjectPath = join(packageRoot, "worker", "pyproject.toml");
   const workerLockPath = join(packageRoot, "worker", "uv.lock");
   try {
-    const [pluginRaw, marketplaceRaw, bundleRaw, workerProject, workerLock] = await Promise.all([
+    const [pluginRaw, marketplaceManifest, bundleRaw, workerProject, workerLock] = await Promise.all([
       dependencies.readFile(pluginManifestPath),
-      dependencies.readFile(marketplacePath),
+      readPackagedMarketplaceManifest(packageRoot, dependencies.readFile),
       dependencies.readFile(bundleManifestPath),
       dependencies.readFile(workerProjectPath),
       dependencies.readFile(workerLockPath),
     ]);
+    const marketplaceRaw = marketplaceManifest.contents;
     const plugin = JSON.parse(pluginRaw) as { name?: string };
     const marketplace = JSON.parse(marketplaceRaw) as {
-      plugins?: Array<{ name?: string; source?: { path?: string } }>;
+      plugins?: Array<{ name?: string; source?: { source?: string; path?: string } }>;
     };
     JSON.parse(bundleRaw);
     const entry = marketplace.plugins?.find((pluginEntry) => pluginEntry.name === "public-proposal");
-    if (plugin.name !== "public-proposal" || entry?.source?.path !== "../plugin" || !workerProject.includes("kpp-docx-worker") || workerLock.trim().length === 0) {
+    if (
+      plugin.name !== "public-proposal" ||
+      entry?.source?.source !== "local" ||
+      entry.source.path !== "./plugin" ||
+      !workerProject.includes("kpp-docx-worker") ||
+      workerLock.trim().length === 0
+    ) {
       return {
         name: "plugin",
         status: "blocker",
         code: "PP_PLUGIN_INTEGRITY_FAILED",
-        detected: { pluginName: plugin.name, marketplaceSource: entry?.source?.path, workerProject: workerProject.includes("kpp-docx-worker") },
+        detected: {
+          pluginName: plugin.name,
+          marketplaceSource: entry?.source?.path,
+          marketplaceSourceType: entry?.source?.source,
+          workerProject: workerProject.includes("kpp-docx-worker"),
+        },
         message: "Packaged plugin, marketplace entry, and managed worker snapshot must be valid.",
       };
     }
@@ -519,7 +544,17 @@ async function packageIntegrity(packageRoot: string, dependencies: SetupDependen
   }
 }
 
-async function preflightChecks(spawn: ProcessRunner): Promise<DoctorCheck[]> {
+async function mirrorPackagedMarketplaceManifest(
+  packageRoot: string,
+  installMarketplaceRoot: string,
+  dependencies: SetupDependencies,
+): Promise<void> {
+  const packaged = await readPackagedMarketplaceManifest(packageRoot, dependencies.readFile);
+  const relative = packaged.path.slice(join(packageRoot, "marketplace").length + 1);
+  await dependencies.writeFile(join(installMarketplaceRoot, relative), packaged.contents);
+}
+
+async function preflightChecks(spawn: ProcessRunner, packageVersion?: PackageVersionResolver): Promise<DoctorCheck[]> {
   const checks: DoctorCheck[] = [];
   checks.push(await requireCommand(spawn, "node", ["--version"], "node"));
   checks.push(await requireCommand(spawn, "npm", ["--version"], "npm"));
@@ -527,17 +562,8 @@ async function preflightChecks(spawn: ProcessRunner): Promise<DoctorCheck[]> {
   checks.push(await requireCommand(spawn, "python3", ["--version"], "python"));
   checks.push(await requireCommand(spawn, "soffice", ["--version"], "libreoffice"));
   checks.push(await requireCommand(spawn, "fc-match", ["NotoSansCJKkr-Regular"], "fonts"));
-  checks.push(await exactVersion(spawn, "kpp", ["--version"], "kpp", SUPPORTED_KPP_VERSION, "PP_KPP_VERSION_MISMATCH"));
-  checks.push(
-    await exactVersion(
-      spawn,
-      "longtable",
-      ["--version"],
-      "longtable",
-      SUPPORTED_LONGTABLE_VERSION,
-      "PP_LONGTABLE_VERSION_MISMATCH",
-    ),
-  );
+  checks.push(await kppCheck(spawn, SUPPORTED_KPP_VERSION, packageVersion));
+  checks.push(await longtableCheck(spawn, SUPPORTED_LONGTABLE_VERSION, undefined, packageVersion, true));
   checks.push(await requireCommand(spawn, "longtable", ["scholar-research", "doctor", "--json"], "scholarResearch"));
   return checks;
 }
@@ -560,26 +586,19 @@ async function requireCommand(
   return { name, status: "pass", detected: result.stdout.trim(), message: `${command} is available.` };
 }
 
-async function exactVersion(
-  spawn: ProcessRunner,
-  command: string,
-  args: readonly string[],
-  name: DoctorCheck["name"],
-  expected: string,
-  code: string,
-): Promise<DoctorCheck> {
-  const result = await spawn(command, args);
-  const detected = result.stdout.match(/\d+\.\d+\.\d+/)?.[0] ?? "";
-  if (result.code !== 0 || detected !== expected) {
-    return { name, status: "blocker", code, detected: detected || null, message: `${command} must be ${expected}.` };
-  }
-  return { name, status: "pass", detected, message: `${command} version is pinned.` };
-}
-
 async function runRequired(spawn: ProcessRunner, command: string, args: readonly string[]): Promise<void> {
   const result = await spawn(command, args);
   if (result.code !== 0) {
     throw new SetupCommandError("PP_SETUP_COMMAND_FAILED", result.stderr || result.stdout || `${command} failed`);
+  }
+}
+
+async function canonicalPath(path: string, realpath?: (path: string) => Promise<string>): Promise<string> {
+  if (realpath === undefined) return path;
+  try {
+    return await realpath(path);
+  } catch {
+    return path;
   }
 }
 
@@ -628,11 +647,12 @@ function pluginListContains(stdout: string): boolean {
 async function reconcileUntrackedCodexRegistrations(
   installRoot: string,
   spawn: ProcessRunner,
+  realpath?: (path: string) => Promise<string>,
 ): Promise<
   | { registrations: { pluginAdded: boolean; marketplaceAdded: boolean }; error?: undefined }
   | { registrations?: undefined; error: { code: string; message: string } }
 > {
-  const marketplacePath = join(resolve(installRoot), "marketplace");
+  const marketplacePath = await canonicalPath(join(resolve(installRoot), "marketplace"), realpath);
   const marketplaceList = await spawn("codex", ["plugin", "marketplace", "list", "--json"]);
   const pluginList = await spawn("codex", ["plugin", "list", "--json"]);
   const source = marketplaceList.code === 0 ? marketplaceRegistrationSource(marketplaceList.stdout) : undefined;
@@ -671,6 +691,7 @@ async function compensate(
 }
 
 async function buildManifest(
+  packageRoot: string,
   installRoot: string,
   ownedPaths: readonly string[],
   worker: WorkerInstallation,
@@ -680,9 +701,16 @@ async function buildManifest(
   const pluginManifestPath = join(installRoot, "plugin", ".codex-plugin", "plugin.json");
   const bundleManifestPath = join(installRoot, "plugin", "skills", "korean-public-proposal", "BUNDLE-MANIFEST.json");
   const plugin = JSON.parse(await dependencies.readFile(pluginManifestPath)) as { version?: string };
+  let packageVersion = "0.1.0";
+  try {
+    const packageMetadata = JSON.parse(await dependencies.readFile(join(packageRoot, "package.json"))) as { version?: unknown };
+    if (typeof packageMetadata.version === "string") packageVersion = packageMetadata.version;
+  } catch {
+    // Test doubles and legacy package snapshots may not carry package metadata.
+  }
   return {
     schemaVersion: INSTALL_MANIFEST_SCHEMA_VERSION,
-    packageVersion: "0.1.0",
+    packageVersion,
     kppVersion: SUPPORTED_KPP_VERSION,
     longtableVersion: SUPPORTED_LONGTABLE_VERSION,
     pluginVersion: plugin.version ?? "0.1.0",

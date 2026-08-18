@@ -6,13 +6,13 @@ This repository is the canonical GitHub home for the English `$public-proposal` 
 
 ## Install and run
 
-The public `@longtable/public-proposal@0.1.1` package is available from npm. The Codex setup path is:
+The public `@longtable/public-proposal@0.1.2` package is available from npm. The Codex setup path is:
 
 ```bash
 npx @longtable/public-proposal setup --provider codex
 ```
 
-To reproduce this exact release, use `npx @longtable/public-proposal@0.1.1 ...`; leaving off the version resolves the current `latest` tag.
+To reproduce this exact release, use `npx @longtable/public-proposal@0.1.2 ...`; leaving off the version resolves the current `latest` tag.
 
 It pins `@longtable/kpp-cli@0.2.1`, `@longtable/cli@0.1.72`, and managed worker protocol `1.0.0`. LongTable installs `$longtable` and `$longtable-research` into the registered Public Proposal plugin's `skills/` surface, and doctor verifies those files plus Codex marketplace/plugin registration. Node `>=22 <27` and Python `>=3.11 <3.15` are compatibility requirements. The current setup and doctor commands verify that the required executables are available; they do not yet enforce those runtime version ranges.
 
@@ -50,8 +50,8 @@ The lock binds the LongTable research specification, citation-slot matrix, sourc
 Use `kpp` for proposal workflow transitions and `longtable` for research work; the setup package coordinates their pinned installation but does not merge their authority.
 
 ```bash
-kpp --version
-longtable --version
+kpp doctor --json
+longtable scholar-research doctor --json
 kpp research-lock <project-root> --handoff <longtable-handoff.json> --json
 ```
 

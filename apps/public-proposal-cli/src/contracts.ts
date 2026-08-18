@@ -28,6 +28,8 @@ export type ProcessRunner = (
   },
 ) => Promise<ProcessResult>;
 
+export type PackageVersionResolver = (packageName: string) => Promise<string | null>;
+
 export interface WorkerInstallation {
   readonly executable: string;
   readonly protocolVersion: typeof WORKER_PROTOCOL_VERSION;

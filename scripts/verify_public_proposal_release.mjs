@@ -51,7 +51,7 @@ export async function runCleanEnvironmentFixture() {
   const installationPath = join(installRoot, "installation.json");
   const manifest = await readJson(installationPath).catch(() => null);
   const pluginManifestPath = join(installRoot, "plugin", ".codex-plugin", "plugin.json");
-  const marketplacePath = join(installRoot, "marketplace", "marketplace.json");
+  const marketplacePath = join(installRoot, "marketplace", ".agents", "plugins", "marketplace.json");
   const pluginManifest = await readJson(pluginManifestPath).catch(() => null);
   const marketplace = await readJson(marketplacePath).catch(() => null);
   const marketplaceEntry = marketplace?.plugins?.find?.((entry) => entry?.name === "public-proposal");
@@ -73,7 +73,8 @@ export async function runCleanEnvironmentFixture() {
       && manifest?.longtableVersion === LONGTABLE_VERSION
       && manifest?.workerProtocol === WORKER_PROTOCOL
       && pluginManifest?.name === "public-proposal"
-      && marketplaceEntry?.source?.path === "../plugin"
+      && marketplaceEntry?.source?.source === "local"
+      && marketplaceEntry?.source?.path === "./plugin"
       && isolation.violations.length === 0
       && isolation.deniedWriteProbe.exitCode !== 0,
     fixtureRoot,
@@ -240,10 +241,16 @@ export async function verifyPackageContracts() {
     throw new Error("The meta-installer must pin the exact KPP and LongTable CLI versions.");
   }
   const plugin = await readJson(join(REPOSITORY_ROOT, "apps/public-proposal-cli/plugin/.codex-plugin/plugin.json"));
-  const marketplace = await readJson(join(REPOSITORY_ROOT, "apps/public-proposal-cli/marketplace/marketplace.json"));
+  const marketplace = await readJson(join(REPOSITORY_ROOT, "apps/public-proposal-cli/marketplace/.agents/plugins/marketplace.json"));
   const bundle = await readJson(join(REPOSITORY_ROOT, "apps/public-proposal-cli/plugin/skills/korean-public-proposal/BUNDLE-MANIFEST.json"));
   const entry = marketplace.plugins?.find?.((candidate) => candidate?.name === "public-proposal");
-  if (plugin.name !== "public-proposal" || entry?.source?.path !== "../plugin" || !Array.isArray(bundle.files) || bundle.files.length === 0) {
+  if (
+    plugin.name !== "public-proposal" ||
+    entry?.source?.source !== "local" ||
+    entry?.source?.path !== "./plugin" ||
+    !Array.isArray(bundle.files) ||
+    bundle.files.length === 0
+  ) {
     throw new Error("The packaged Codex plugin, marketplace, or Korean authority bundle is invalid.");
   }
   await verifyBundleHashes(bundle);
@@ -639,7 +646,8 @@ case "$name" in
     state_root=$(dirname "$PUBLIC_PROPOSAL_INSTALLATION_MANIFEST")
     if [ "$1" = "--version" ]; then printf 'codex-cli 0.144.5\n'
     elif [ "$1 $2 $3" = "plugin marketplace list" ]; then
-      if [ -f "$state_root/.marketplace-registered" ]; then printf '{"marketplaces":[{"name":"public-proposal","path":"%s/marketplace"}]}\n' "$state_root"; else printf '{"marketplaces":[]}\n'; fi
+      marketplace_path=$(CDPATH= cd -- "$state_root/marketplace" 2>/dev/null && pwd -P)
+      if [ -f "$state_root/.marketplace-registered" ]; then printf '{"marketplaces":[{"name":"public-proposal","path":"%s"}]}\n' "$marketplace_path"; else printf '{"marketplaces":[]}\n'; fi
     elif [ "$1 $2 $3" = "plugin marketplace add" ]; then printf registered > "$state_root/.marketplace-registered"
     elif [ "$1 $2 $3" = "plugin marketplace remove" ]; then rm -f "$state_root/.marketplace-registered"
     elif [ "$1 $2" = "plugin list" ]; then
@@ -709,7 +717,7 @@ async function inspectTarball(path, expectedIntegrity) {
     "package/dist/main.js",
     "package/plugin/.codex-plugin/plugin.json",
     "package/plugin/skills/korean-public-proposal/BUNDLE-MANIFEST.json",
-    "package/marketplace/marketplace.json",
+    "package/marketplace/.agents/plugins/marketplace.json",
     "package/worker/pyproject.toml",
     "package/worker/uv.lock",
   ]) {

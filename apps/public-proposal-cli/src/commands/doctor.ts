@@ -8,13 +8,17 @@ import {
   type DoctorCheck,
   type DoctorInput,
   type DoctorReport,
+  type PackageVersionResolver,
   type ProcessRunner,
 } from "../contracts.js";
 import { nodeFs } from "../process.js";
+import { createPackageVersionResolver } from "../package-version.js";
+import { readPackagedMarketplaceManifest } from "../marketplace.js";
 import { verifyManagedWorkerFromManifestContents, verifyWorkerProtocol } from "../worker.js";
 
 export interface DoctorDependencies {
   readonly packageRoot?: string;
+  readonly packageVersion?: PackageVersionResolver;
   readonly spawn: ProcessRunner;
   readonly readFile: (path: string) => Promise<string>;
   readonly exists: (path: string) => Promise<boolean>;
@@ -38,8 +42,13 @@ export async function runDoctor(
   checks.push(await commandCheck(dependencies.spawn, "soffice", ["--version"], "libreoffice"));
   checks.push(await fontsCheck(dependencies.spawn));
   checks.push(await pluginCheck(input.installRoot, packageRoot, dependencies));
-  checks.push(await kppCheck(dependencies.spawn, input.expectedKppVersion));
-  checks.push(await longtableCheck(dependencies.spawn, input.expectedLongtableVersion, input.projectClass));
+  checks.push(await kppCheck(dependencies.spawn, input.expectedKppVersion, dependencies.packageVersion));
+  checks.push(await longtableCheck(
+    dependencies.spawn,
+    input.expectedLongtableVersion,
+    input.projectClass,
+    dependencies.packageVersion,
+  ));
   checks.push(await scholarResearchCheck(dependencies.spawn, input.projectClass));
   checks.push(await workerCheck(input.installRoot, dependencies, input.expectedWorkerProtocol));
   checks.push(authorityCheck());
@@ -51,9 +60,11 @@ export async function runDoctor(
 }
 
 function defaultDoctorDependencies(): DoctorDependencies {
+  const packageRoot = defaultPackageRoot();
   return {
     ...nodeFs,
-    packageRoot: defaultPackageRoot(),
+    packageRoot,
+    packageVersion: createPackageVersionResolver(packageRoot, nodeFs.readFile),
   };
 }
 
@@ -111,28 +122,29 @@ async function pluginCheck(
 ): Promise<DoctorCheck> {
   const pluginManifestPath = join(packageRoot, "plugin", ".codex-plugin", "plugin.json");
   const bundleManifestPath = join(packageRoot, "plugin", "skills", "korean-public-proposal", "BUNDLE-MANIFEST.json");
-  const marketplacePath = join(packageRoot, "marketplace", "marketplace.json");
   const installedPluginPath = join(installRoot, "plugin", ".codex-plugin", "plugin.json");
   const installedBundlePath = join(installRoot, "plugin", "skills", "korean-public-proposal", "BUNDLE-MANIFEST.json");
   const longtableSkillPath = join(installRoot, "plugin", "skills", "longtable", "SKILL.md");
   const longtableResearchSkillPath = join(installRoot, "plugin", "skills", "longtable-research", "SKILL.md");
   try {
-    const [pluginRaw, bundleRaw, marketplaceRaw, packagePluginSha] = await Promise.all([
+    const [pluginRaw, bundleRaw, marketplaceManifest, packagePluginSha] = await Promise.all([
       dependencies.readFile(pluginManifestPath),
       dependencies.readFile(bundleManifestPath),
-      dependencies.readFile(marketplacePath),
+      readPackagedMarketplaceManifest(packageRoot, dependencies.readFile),
       dependencies.sha256(pluginManifestPath),
     ]);
+    const marketplaceRaw = marketplaceManifest.contents;
     const plugin = JSON.parse(pluginRaw) as { name?: string; version?: string };
     const marketplace = JSON.parse(marketplaceRaw) as {
-      plugins?: Array<{ name?: string; source?: { path?: string } }>;
+      plugins?: Array<{ name?: string; source?: { source?: string; path?: string } }>;
     };
     JSON.parse(bundleRaw);
     const marketplaceEntry = marketplace.plugins?.find((entry) => entry.name === "public-proposal");
     const installed = await dependencies.exists(installedPluginPath);
     if (
       plugin.name !== "public-proposal" ||
-      marketplaceEntry?.source?.path !== "../plugin" ||
+      marketplaceEntry?.source?.source !== "local" ||
+      marketplaceEntry?.source?.path !== "./plugin" ||
       !packagePluginSha.startsWith("sha256:")
     ) {
       return {
@@ -198,8 +210,9 @@ async function pluginCheck(
       dependencies.spawn("codex", ["plugin", "marketplace", "list", "--json"]),
       dependencies.spawn("codex", ["plugin", "list", "--json"]),
     ]);
+    const marketplacePath = await canonicalPath(join(installRoot, "marketplace"), dependencies.realpath);
     const marketplaceRegistered = marketplaces.code === 0
-      && marketplaceListContains(marketplaces.stdout, join(installRoot, "marketplace"));
+      && marketplaceListContains(marketplaces.stdout, marketplacePath);
     const pluginRegistered = plugins.code === 0 && pluginListContains(plugins.stdout);
     if (!longtableSkill.trim() || !longtableResearchSkill.trim() || !marketplaceRegistered || !pluginRegistered) {
       return {
@@ -298,29 +311,104 @@ function pluginListContains(stdout: string): boolean {
   } catch { return false; }
 }
 
-async function kppCheck(spawn: ProcessRunner, expectedVersion: string): Promise<DoctorCheck> {
+export async function kppCheck(
+  spawn: ProcessRunner,
+  expectedVersion: string,
+  packageVersion?: PackageVersionResolver,
+): Promise<DoctorCheck> {
   const result = await spawn("kpp", ["--version"]);
   const detected = normalizeVersion(result.stdout);
-  if (result.code !== 0 || detected !== expectedVersion) {
+  if (result.code === 0 && detected) {
+    if (detected !== expectedVersion) {
+      return {
+        name: "kpp",
+        status: "blocker",
+        code: "PP_KPP_VERSION_MISMATCH",
+        detected,
+        message: `@longtable/kpp-cli must be exactly ${expectedVersion}.`,
+      };
+    }
+    return { name: "kpp", status: "pass", detected, message: "Pinned KPP CLI version is installed." };
+  }
+
+  const metadataVersion = packageVersion ? await packageVersion("@longtable/kpp-cli") : null;
+  if (metadataVersion === expectedVersion) {
+    const probe = await spawn("kpp", ["doctor", "--json"]);
+    if (probe.code === 0) {
+      return {
+        name: "kpp",
+        status: "pass",
+        detected: { version: metadataVersion, source: "package.json", probe: "doctor --json" },
+        message: "Pinned KPP CLI package is installed; its supported doctor probe passed.",
+      };
+    }
+  }
+
+  if (metadataVersion !== null && metadataVersion !== expectedVersion) {
     return {
       name: "kpp",
       status: "blocker",
       code: "PP_KPP_VERSION_MISMATCH",
-      detected: detected || null,
+      detected: metadataVersion,
       message: `@longtable/kpp-cli must be exactly ${expectedVersion}.`,
     };
   }
-  return { name: "kpp", status: "pass", detected, message: "Pinned KPP CLI version is installed." };
+
+  return {
+    name: "kpp",
+    status: "blocker",
+    code: "PP_KPP_VERSION_MISMATCH",
+    detected: detected || null,
+    message: `@longtable/kpp-cli must be exactly ${expectedVersion}.`,
+  };
 }
 
-async function longtableCheck(
+export async function longtableCheck(
   spawn: ProcessRunner,
   expectedVersion: string,
   projectClass: DoctorInput["projectClass"],
+  packageVersion?: PackageVersionResolver,
+  forceRequired = false,
 ): Promise<DoctorCheck> {
   const result = await spawn("longtable", ["--version"]);
   const detected = normalizeVersion(result.stdout);
-  const required = projectClass !== undefined && RESEARCH_CLASSES.has(projectClass);
+  const required = forceRequired || (projectClass !== undefined && RESEARCH_CLASSES.has(projectClass));
+  if (result.code === 0 && detected) {
+    if (detected !== expectedVersion) {
+      return {
+        name: "longtable",
+        status: "blocker",
+        code: "PP_LONGTABLE_VERSION_MISMATCH",
+        detected,
+        message: `@longtable/cli must be exactly ${expectedVersion}.`,
+      };
+    }
+    return { name: "longtable", status: "pass", detected, message: "Pinned LongTable CLI version is installed." };
+  }
+
+  const metadataVersion = packageVersion ? await packageVersion("@longtable/cli") : null;
+  if (metadataVersion === expectedVersion) {
+    const probe = await spawn("longtable", ["scholar-research", "doctor", "--json"]);
+    if (probe.code === 0) {
+      return {
+        name: "longtable",
+        status: "pass",
+        detected: { version: metadataVersion, source: "package.json", probe: "scholar-research doctor" },
+        message: "Pinned LongTable CLI package is installed; its supported doctor probe passed.",
+      };
+    }
+  }
+
+  if (metadataVersion !== null && metadataVersion !== expectedVersion) {
+    return {
+      name: "longtable",
+      status: "blocker",
+      code: "PP_LONGTABLE_VERSION_MISMATCH",
+      detected: metadataVersion,
+      message: `@longtable/cli must be exactly ${expectedVersion}.`,
+    };
+  }
+
   if (result.code !== 0 || !detected) {
     return {
       name: "longtable",
@@ -328,15 +416,6 @@ async function longtableCheck(
       code: "PP_LONGTABLE_REQUIRED",
       detected: null,
       message: "LongTable CLI is required for academic, research-service, and policy-research proposals.",
-    };
-  }
-  if (detected !== expectedVersion) {
-    return {
-      name: "longtable",
-      status: "blocker",
-      code: "PP_LONGTABLE_VERSION_MISMATCH",
-      detected,
-      message: `@longtable/cli must be exactly ${expectedVersion}.`,
     };
   }
   return { name: "longtable", status: "pass", detected, message: "Pinned LongTable CLI version is installed." };
@@ -416,6 +495,15 @@ function authorityCheck(): DoctorCheck {
 function normalizeVersion(stdout: string): string {
   const match = stdout.match(/\d+\.\d+\.\d+/);
   return match?.[0] ?? "";
+}
+
+async function canonicalPath(path: string, realpath?: (path: string) => Promise<string>): Promise<string> {
+  if (realpath === undefined) return path;
+  try {
+    return await realpath(path);
+  } catch {
+    return path;
+  }
 }
 
 function parseJsonOrText(stdout: string): unknown {

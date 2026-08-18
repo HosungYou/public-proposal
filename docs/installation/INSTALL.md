@@ -1,6 +1,6 @@
 # Public Proposal installation and recovery
 
-Verified compatibility date: **2026-08-18**. The exact supported versions are `@longtable/public-proposal@0.1.1`, `@longtable/kpp-cli@0.2.1`, `@longtable/cli@0.1.72`, and managed worker protocol `1.0.0`. See [compatibility-matrix.json](compatibility-matrix.json) for the machine-readable contract.
+Verified compatibility date: **2026-08-18**. The exact supported versions are `@longtable/public-proposal@0.1.2`, `@longtable/kpp-cli@0.2.1`, `@longtable/cli@0.1.72`, and managed worker protocol `1.0.0`. See [compatibility-matrix.json](compatibility-matrix.json) for the machine-readable contract.
 
 ## Prerequisites
 
@@ -10,7 +10,7 @@ Use a writable user or project installation location. Do not put customer RFPs, 
 
 ## Recommended one-command setup
 
-The package is published on npm as `@longtable/public-proposal@0.1.1`. Leaving off the version below resolves the current `latest` tag; pin `@0.1.1` when reproducibility is required.
+The package is published on npm as `@longtable/public-proposal@0.1.2`. Leaving off the version below resolves the current `latest` tag; pin `@0.1.2` when reproducibility is required.
 
 ```bash
 npx @longtable/public-proposal setup --provider codex
@@ -64,7 +64,7 @@ Installing a plugin provides the skills and packaged resources to Codex. **Plugi
 Use this only when `npx` is unavailable or a controlled environment requires global installation:
 
 ```bash
-npm install --global @longtable/public-proposal@0.1.1 @longtable/kpp-cli@0.2.1 @longtable/cli@0.1.72
+npm install --global @longtable/public-proposal@0.1.2 @longtable/kpp-cli@0.2.1 @longtable/cli@0.1.72
 public-proposal setup --provider codex
 public-proposal doctor --json
 ```

@@ -61,7 +61,7 @@ export async function runUninstall(
   }
 
   const spawn = dependencies.spawn ?? nodeFs.spawn;
-  const marketplacePath = join(requestedRoot, "marketplace");
+  const marketplacePath = resolve(await realpath(join(requestedRoot, "marketplace")).catch(() => join(requestedRoot, "marketplace")));
   const registrations = await resolveCodexRegistrationOwnership(manifest, marketplacePath, spawn);
   const deregistered = await deregisterCodexEntries(registrations, marketplacePath, spawn);
 

@@ -51,6 +51,49 @@ describe("public proposal doctor", () => {
     );
   });
 
+  it("accepts LongTable when the CLI has no --version command but its pinned package metadata is available", async () => {
+    const base = fakeDoctorDependencies();
+    const report = await runDoctor(fakeDoctorInput(), {
+      ...base,
+      packageVersion: async (packageName: string) => packageName === "@longtable/cli" ? SUPPORTED_LONGTABLE_VERSION : null,
+      spawn: async (command, args, options) => {
+        if (command === "longtable" && args.join(" ") === "--version") {
+          return { code: 1, stdout: "", stderr: "Unknown command: --version" };
+        }
+        return base.spawn(command, args, options);
+      },
+    } as DoctorDependencies);
+
+    expect(report.checks).toContainEqual(expect.objectContaining({
+      name: "longtable",
+      status: "pass",
+      detected: expect.objectContaining({ version: SUPPORTED_LONGTABLE_VERSION, source: "package.json" }),
+    }));
+  });
+
+  it("accepts KPP when the CLI has no --version command but its pinned package metadata is available", async () => {
+    const base = fakeDoctorDependencies();
+    const report = await runDoctor(fakeDoctorInput(), {
+      ...base,
+      packageVersion: async (packageName: string) => packageName === "@longtable/kpp-cli" ? SUPPORTED_KPP_VERSION : null,
+      spawn: async (command, args, options) => {
+        if (command === "kpp" && args.join(" ") === "--version") {
+          return { code: 1, stdout: "", stderr: "명령어 입력이 올바르지 않습니다." };
+        }
+        if (command === "kpp" && args.join(" ") === "doctor --json") {
+          return { code: 0, stdout: "{\"ok\":true}\n", stderr: "" };
+        }
+        return base.spawn(command, args, options);
+      },
+    } as DoctorDependencies);
+
+    expect(report.checks).toContainEqual(expect.objectContaining({
+      name: "kpp",
+      status: "pass",
+      detected: expect.objectContaining({ version: SUPPORTED_KPP_VERSION, source: "package.json" }),
+    }));
+  });
+
   it("blocks setup when plugin integrity fails independently of runtime tools", async () => {
     const report = await runDoctor(fakeDoctorInput(), fakeDoctorDependencies({ pluginManifestSha: "wrong" }));
 
@@ -141,6 +184,24 @@ describe("public proposal doctor", () => {
       status: "blocker",
       code: "PP_PLUGIN_NOT_INSTALLED",
     }));
+  });
+
+  it("accepts a Codex marketplace registration reported through its canonical macOS path", async () => {
+    const base = fakeDoctorDependencies();
+    const marketplaceRoot = "/home/ada/.config/public-proposal/marketplace";
+    const canonicalMarketplaceRoot = "/private/home/ada/.config/public-proposal/marketplace";
+    const report = await runDoctor(fakeDoctorInput(), {
+      ...base,
+      realpath: async (path: string) => path === marketplaceRoot ? canonicalMarketplaceRoot : path,
+      spawn: async (command, args, options) => {
+        if (command === "codex" && args.join(" ") === "plugin marketplace list --json") {
+          return ok(JSON.stringify({ marketplaces: [{ name: "public-proposal", root: canonicalMarketplaceRoot }] }));
+        }
+        return base.spawn(command, args, options);
+      },
+    });
+
+    expect(report.checks).toContainEqual(expect.objectContaining({ name: "plugin", status: "pass" }));
   });
 });
 
@@ -251,7 +312,7 @@ function fakeDoctorDependencies(input?: {
       if (path === "/pkg/marketplace/marketplace.json") {
         return JSON.stringify({
           name: "public-proposal",
-          plugins: [{ name: "public-proposal", source: { path: "../plugin" } }],
+          plugins: [{ name: "public-proposal", source: { source: "local", path: "./plugin" } }],
         });
       }
       throw Object.assign(new Error(`ENOENT ${path}`), { code: "ENOENT" });

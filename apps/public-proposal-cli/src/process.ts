@@ -4,9 +4,17 @@ import { cp, mkdir, open, readFile, realpath, rename, rm, stat, writeFile } from
 import { dirname } from "node:path";
 import type { ProcessResult } from "./contracts.js";
 
-export async function runProcess(command: string, args: readonly string[]): Promise<ProcessResult> {
+export async function runProcess(
+  command: string,
+  args: readonly string[],
+  options?: { cwd?: string; env?: NodeJS.ProcessEnv },
+): Promise<ProcessResult> {
   return new Promise((resolve) => {
-    const child = spawn(command, args, { stdio: ["ignore", "pipe", "pipe"] });
+    const child = spawn(command, args, {
+      stdio: ["ignore", "pipe", "pipe"],
+      cwd: options?.cwd,
+      env: options?.env,
+    });
     let stdout = "";
     let stderr = "";
     child.stdout.setEncoding("utf8");

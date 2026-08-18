@@ -9,7 +9,7 @@ const validatorPath = join(scriptDirectory, "validate_korean_skill_bundle.py");
 const sourcePluginRoot = join(repositoryRoot, "plugins", "public-proposal");
 const packagedPluginRoot = join(repositoryRoot, "apps", "public-proposal-cli", "plugin");
 const packagedMarketplaceRoot = join(repositoryRoot, "apps", "public-proposal-cli", "marketplace");
-const packagedMarketplacePath = join(packagedMarketplaceRoot, "marketplace.json");
+const packagedMarketplacePath = join(packagedMarketplaceRoot, ".agents", "plugins", "marketplace.json");
 const uriTokenPattern = /[A-Za-z][A-Za-z0-9+.-]*:[^\s"'`<>|]+/g;
 const windowsDriveTokenPattern = /(?:(?<=^)|(?<=[\s"'`(=,\[]))[A-Za-z]:[\\/][^\s"'`<>|]+/g;
 const uncTokenPattern = /(?:(?<=^)|(?<=[\s"'`(=,\[]))\\\\[^\s"'`<>|]+/g;
@@ -34,10 +34,10 @@ replaceDirectory(sourcePluginRoot, packagedPluginRoot);
 runValidator(packagedPluginRoot);
 
 rmSync(packagedMarketplaceRoot, { force: true, recursive: true });
-mkdirSync(packagedMarketplaceRoot, { recursive: true });
-writeFileSync(packagedMarketplacePath, `${JSON.stringify(buildMarketplace("../plugin"), null, 2)}\n`, "utf8");
+mkdirSync(dirname(packagedMarketplacePath), { recursive: true });
+writeFileSync(packagedMarketplacePath, `${JSON.stringify(buildMarketplace("./plugin"), null, 2)}\n`, "utf8");
 assertNoAbsoluteSourceMarkers(packagedMarketplacePath);
-assertRelativePluginSource(packagedMarketplacePath, "../plugin");
+assertRelativePluginSource(packagedMarketplacePath, "./plugin");
 
 console.log(`Packaged public-proposal plugin copied to ${packagedPluginRoot}`);
 console.log(`Packaged marketplace manifest written to ${packagedMarketplacePath}`);
@@ -73,6 +73,7 @@ function buildMarketplace(pluginPath) {
       {
         name: "public-proposal",
         source: {
+          source: "local",
           path: pluginPath,
         },
         policy: {
