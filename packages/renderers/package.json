@@ -2,6 +2,16 @@
   "name": "@longtable/kpp-renderers",
   "version": "0.1.0",
   "description": "Deterministic SVG figure renderers for Korean public proposals.",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/HosungYou/public-proposal.git",
+    "directory": "packages/renderers"
+  },
+  "homepage": "https://github.com/HosungYou/public-proposal#readme",
+  "bugs": {
+    "url": "https://github.com/HosungYou/public-proposal/issues"
+  },
+  "keywords": ["korean", "public-proposal", "svg", "figures", "deterministic", "kpp"],
   "type": "module",
   "files": [
     "dist",

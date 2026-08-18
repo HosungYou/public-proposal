@@ -2,6 +2,16 @@
   "name": "@longtable/kpp-audits",
   "version": "0.1.0",
   "description": "Technical audit gates for Korean public proposal artifacts.",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/HosungYou/public-proposal.git",
+    "directory": "packages/audits"
+  },
+  "homepage": "https://github.com/HosungYou/public-proposal#readme",
+  "bugs": {
+    "url": "https://github.com/HosungYou/public-proposal/issues"
+  },
+  "keywords": ["korean", "public-proposal", "audit", "docx", "render", "kpp"],
   "type": "module",
   "files": [
     "dist",

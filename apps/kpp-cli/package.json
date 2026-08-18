@@ -2,6 +2,16 @@
   "name": "@longtable/kpp-cli",
   "version": "0.1.0",
   "description": "KPP CLI for evidence-bound Korean public proposal generation.",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/HosungYou/public-proposal.git",
+    "directory": "apps/kpp-cli"
+  },
+  "homepage": "https://github.com/HosungYou/public-proposal#readme",
+  "bugs": {
+    "url": "https://github.com/HosungYou/public-proposal/issues"
+  },
+  "keywords": ["korean", "public-proposal", "research-service", "procurement", "evidence", "docx", "kpp"],
   "type": "module",
   "files": [
     "dist",

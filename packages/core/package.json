@@ -2,6 +2,16 @@
   "name": "@longtable/kpp-core",
   "version": "0.1.0",
   "description": "Evidence-bound planning and authoring core for Korean public proposals.",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/HosungYou/public-proposal.git",
+    "directory": "packages/core"
+  },
+  "homepage": "https://github.com/HosungYou/public-proposal#readme",
+  "bugs": {
+    "url": "https://github.com/HosungYou/public-proposal/issues"
+  },
+  "keywords": ["korean", "public-proposal", "evidence", "provenance", "kpp"],
   "type": "module",
   "files": [
     "dist",
