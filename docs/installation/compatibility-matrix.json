@@ -1,0 +1,21 @@
+{
+  "schemaVersion": "1.0.0",
+  "installerPackage": "@longtable/public-proposal",
+  "installerVersion": "0.1.0",
+  "kppPackage": "@longtable/kpp-cli",
+  "kppVersion": "0.2.1",
+  "longtablePackage": "@longtable/cli",
+  "longtableVersion": "0.1.72",
+  "workerProtocol": "1.0.0",
+  "pluginId": "public-proposal",
+  "pluginVersion": "0.1.0",
+  "node": ">=22 <27",
+  "python": ">=3.11 <3.15",
+  "verifiedAt": "2026-08-18",
+  "verificationScope": [
+    "repository package metadata",
+    "installer contract tests",
+    "documentation assertions"
+  ],
+  "releaseBoundary": "NPM publication, marketplace availability, and a clean-machine installation remain separate release checks."
+}

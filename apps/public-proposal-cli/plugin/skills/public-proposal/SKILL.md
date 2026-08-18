@@ -7,6 +7,14 @@ description: Use for Korean public-sector research-service and procurement propo
 
 `$public-proposal` is the English user-facing orchestrator for the KPP public-proposal workflow. It preserves the conversation context across four dimensions—standards, visual, research, and content—and delegates authoritative state changes to the KPP CLI.
 
+For an installed environment, the supported setup command is:
+
+```bash
+npx @longtable/public-proposal setup --provider codex
+```
+
+The installer provides this skill and the bundled `korean-public-proposal` authority, but it does not grant Codex any additional shell, filesystem, network, connector, or approval permission.
+
 ## Authority and boundaries
 
 Use the following authority order:
@@ -61,6 +69,16 @@ LongTable is a research collaborator, not the proposal compiler:
 - Do not create research-state QuestionRecords for KPP product, hook, setup, release, or documentation work.
 
 The proposal workflow may call LongTable, but it must preserve source provenance, access limits, unresolved tensions, and the boundary between external research evidence and institution-specific facts.
+
+### Required research route before authoring approval
+
+For `academic_research`, `research_service`, and `policy_research`, route research work through LongTable before producing approval-ready authoring output. Require a compatible LongTable research handoff with closed required checkpoints, then bind it through KPP:
+
+```bash
+kpp research-lock <project-root> --handoff <longtable-handoff.json> --json
+```
+
+KPP verifies that research lock again before authoring export, content approval, approval, and release. For `general_procurement`, do this only when locked requirements contain an academic-evidence slot. `document_restyle` does not require a LongTable research lock. Do not describe the lock as human approval, issuer compliance, or a license to turn research findings into institution-specific claims.
 
 ## Korean prose and visual QA
 

@@ -21,6 +21,6 @@
     "developerName": "Enaction Labs",
     "category": "Productivity",
     "capabilities": [],
-    "defaultPrompt": "Use $public-proposal to plan, author, audit, and release an evidence-bound Korean public proposal with the bundled Korean authority snapshot."
+    "defaultPrompt": "Use $public-proposal to plan, author, audit, and release an evidence-bound Korean public proposal with the bundled Korean authority snapshot. For academic_research, research_service, and policy_research, route through LongTable and bind a valid research lock before approval-ready authoring; keep KPP as the sole state, receipt, approval, and release writer."
   }
 }
