@@ -7,6 +7,7 @@ import {
   readProject,
   sha256File,
   verifyReceipt,
+  verifyResearchRequirement,
   writeReceipt,
 } from "@longtable/kpp-core";
 import { success, type CliEnvelope } from "../output.js";
@@ -45,6 +46,7 @@ export async function releaseCommand(
 /** Publish an allowlisted snapshot only after the named-human receipt is still byte-current. */
 export async function releaseProject(rootInput: string, options: ReleaseProjectOptions): Promise<ReleaseProjectResult> {
   const root = await realpath(resolve(rootInput));
+  await verifyResearchRequirement(root);
   // Do not call verifyProjectState here: a stale approval must not roll back the
   // project state as a side effect of a release attempt.
   const project = await readProject(root);

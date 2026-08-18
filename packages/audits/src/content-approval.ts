@@ -3,6 +3,7 @@ import { mkdir, open, rename, rm } from "node:fs/promises";
 import { basename, dirname, join, resolve } from "node:path";
 import {
   advanceProject,
+  getResearchLockReceiptHash,
   sha256File,
   verifyImportedAuthoringResponse,
   writeReceipt,
@@ -55,6 +56,7 @@ export async function approveContent(
   input: ContentApprovalInput = {},
 ): Promise<ContentApprovalResult> {
   const root = resolve(rootInput);
+  const researchReceiptHash = await getResearchLockReceiptHash(root);
   // This core boundary re-runs the exact request provenance, response shape,
   // pending-blank, and evidence-scope/numeric checks used at import time.
   const verified = await verifyImportedAuthoringResponse(root);
@@ -98,7 +100,10 @@ export async function approveContent(
       decisionPath,
       ...(glossaryPath === null ? [] : [glossaryPath]),
     ],
-    inputReceiptHashes: [await sha256File(join(root, "receipts", "design-lock.json"))],
+    inputReceiptHashes: [
+      await sha256File(join(root, "receipts", "design-lock.json")),
+      ...(researchReceiptHash === null ? [] : [researchReceiptHash]),
+    ],
     output: receiptPath,
   });
   await advanceProject(root, "CONTENT_APPROVED");

@@ -61,6 +61,11 @@ export {
   type ResearchLockImportResult,
 } from "./research-lock.js";
 export {
+  getResearchLockReceiptHash,
+  requiresResearchLock,
+  verifyResearchRequirement,
+} from "./research-requirement.js";
+export {
   executeFile,
   resolveVerifiedExecutable,
   type ExecutableIdentity,
