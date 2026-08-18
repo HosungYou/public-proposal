@@ -11,7 +11,15 @@ const validatorPath = join(process.cwd(), "scripts", "validate_korean_skill_bund
 const syncScriptPath = join(process.cwd(), "scripts", "sync_public_proposal_package_assets.mjs");
 const sourcePluginRoot = join(process.cwd(), "plugins", "public-proposal");
 const packagedPluginRoot = join(process.cwd(), "apps", "public-proposal-cli", "plugin");
-const packagedMarketplacePath = join(process.cwd(), "apps", "public-proposal-cli", "marketplace", "marketplace.json");
+const packagedMarketplacePath = join(
+  process.cwd(),
+  "apps",
+  "public-proposal-cli",
+  "marketplace",
+  ".agents",
+  "plugins",
+  "marketplace.json",
+);
 const tempDirectories: string[] = [];
 const absoluteLeakFixtures = [
   "Payload leak: source:/tmp/public-proposal/source.md",
@@ -40,7 +48,7 @@ test("the public proposal plugin ships a validated package copy and rewrites the
   );
   expect(packagedMarketplace.plugins).toEqual(
     expect.arrayContaining([
-      expect.objectContaining({ name: "public-proposal", source: { path: "../plugin" } }),
+      expect.objectContaining({ name: "public-proposal", source: { source: "local", path: "./plugin" } }),
     ]),
   );
 

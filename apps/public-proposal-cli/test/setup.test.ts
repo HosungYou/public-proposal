@@ -81,6 +81,18 @@ describe("public proposal setup", () => {
     });
   });
 
+  it("records the installed meta-installer package version in the receipt", async () => {
+    const fake = fakeSetupDependencies();
+    fake.files["/pkg/package.json"] = JSON.stringify({ name: "@longtable/public-proposal", version: "0.1.1" });
+
+    const result = await runSetup(
+      { provider: "codex", installScope: "user", cwd: "/work", home: "/home/ada" },
+      fake,
+    );
+
+    expect(result).toMatchObject({ ok: true, manifest: { packageVersion: "0.1.1" } });
+  });
+
   it("records pre-existing Codex registrations as preserved by uninstall", async () => {
     const fake = fakeSetupDependencies({
       preexistingMarketplaceRegistration: true,
@@ -100,6 +112,28 @@ describe("public proposal setup", () => {
           marketplaceAdded: false,
         },
       },
+    });
+  });
+
+  it("treats a canonical macOS marketplace path as the same pre-existing registration", async () => {
+    const base = fakeSetupDependencies({
+      preexistingMarketplaceRegistration: true,
+      preexistingPluginRegistration: true,
+      preexistingMarketplacePath: "/private/home/ada/.config/public-proposal/marketplace",
+    });
+    const result = await runSetup(
+      { provider: "codex", installScope: "user", cwd: "/work", home: "/home/ada" },
+      {
+        ...base,
+        realpath: async (path: string) => path === "/home/ada/.config/public-proposal/marketplace"
+          ? "/private/home/ada/.config/public-proposal/marketplace"
+          : path,
+      },
+    );
+
+    expect(result).toMatchObject({
+      ok: true,
+      manifest: { codexRegistrations: { pluginAdded: false, marketplaceAdded: false } },
     });
   });
 
@@ -253,6 +287,25 @@ describe("public proposal setup", () => {
     );
     expect(fake.files["/home/ada/.config/public-proposal/plugin/skills/longtable/SKILL.md"]).toContain("LongTable");
     expect(fake.files["/home/ada/.config/public-proposal/plugin/skills/longtable-research/SKILL.md"]).toContain("LongTable Research");
+  });
+
+  it("allows setup when LongTable exposes no --version command but the pinned package metadata is present", async () => {
+    const base = fakeSetupDependencies();
+    const result = await runSetup(
+      { provider: "codex", installScope: "user", cwd: "/work", home: "/home/ada" },
+      {
+        ...base,
+        packageVersion: async (packageName: string) => packageName === "@longtable/cli" ? SUPPORTED_LONGTABLE_VERSION : null,
+        spawn: async (command, args, options) => {
+          if (command === "longtable" && args.join(" ") === "--version") {
+            return { code: 1, stdout: "", stderr: "Unknown command: --version" };
+          }
+          return base.spawn(command, args, options);
+        },
+      },
+    );
+
+    expect(result.ok).toBe(true);
   });
 
   it("stops before mutation when an existing marketplace path is not installer-owned", async () => {
@@ -529,7 +582,7 @@ function fakeSetupDependencies(input?: {
     "/pkg/plugin/skills/korean-public-proposal/BUNDLE-MANIFEST.json": JSON.stringify({ schemaVersion: "1.0.0" }),
     "/pkg/marketplace/marketplace.json": JSON.stringify({
       name: "public-proposal",
-      plugins: [{ name: "public-proposal", source: { path: "../plugin" } }],
+      plugins: [{ name: "public-proposal", source: { source: "local", path: "./plugin" } }],
     }),
     "/pkg/worker/pyproject.toml": "[project]\nname = \"kpp-docx-worker\"\n",
     "/pkg/worker/uv.lock": "version = 1\n",

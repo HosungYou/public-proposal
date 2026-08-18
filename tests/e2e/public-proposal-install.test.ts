@@ -26,7 +26,7 @@ describe("public proposal clean installation", () => {
       },
       plugin: {
         name: "public-proposal",
-        marketplaceSource: "../plugin",
+        marketplaceSource: "./plugin",
       },
     });
     expect(result.report.commands.map(({ name }) => name)).toEqual([
