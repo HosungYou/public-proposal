@@ -34,6 +34,27 @@ export interface CleanInstallReport {
   };
   readonly commands: readonly VerificationCommand[];
   readonly paths: readonly string[];
+  readonly isolation: FixtureIsolation;
+}
+
+export interface FixtureIsolation {
+  readonly environmentMode: "allowlist";
+  readonly environmentKeys: readonly string[];
+  readonly allowedWriteRoot: string;
+  readonly writeGuard: string;
+  readonly deniedWriteProbe: { readonly exitCode: number; readonly detected: string | null };
+  readonly deniedHostReadProbe: { readonly exitCode: number; readonly detected: string | null };
+  readonly fakeRunnerEvents: readonly unknown[];
+  readonly violations: readonly unknown[];
+}
+
+export interface ResearchBinding {
+  readonly researchLockPath: string;
+  readonly contentApprovalPath: string;
+  readonly researchLockSha256: string;
+  readonly researchLockValid: boolean;
+  readonly contentApprovalValid: boolean;
+  readonly boundToContentApproval: boolean;
 }
 
 export function runCleanEnvironmentFixture(): Promise<{
@@ -44,6 +65,7 @@ export function runCleanEnvironmentFixture(): Promise<{
 export function runProposalClassFixture(input: {
   readonly proposalClass: ProposalClass;
   readonly researchLock: boolean;
+  readonly academicEvidence?: boolean;
 }): Promise<{
   readonly fixtureRoot: string;
   readonly envelope: {
@@ -52,6 +74,9 @@ export function runProposalClassFixture(input: {
     readonly message: string;
     readonly data: unknown;
   };
+  readonly researchBinding: ResearchBinding | null;
+  readonly isolation: FixtureIsolation;
+  readonly commands: readonly VerificationCommand[];
 }>;
 
 export function verifyPackageContracts(): Promise<unknown>;

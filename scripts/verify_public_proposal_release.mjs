@@ -2,6 +2,7 @@
 
 import { createHash } from "node:crypto";
 import { spawn } from "node:child_process";
+import { realpathSync } from "node:fs";
 import {
   chmod,
   cp,
@@ -9,11 +10,10 @@ import {
   mkdtemp,
   readFile,
   readdir,
-  stat,
   writeFile,
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { basename, dirname, join, relative, resolve } from "node:path";
+import { basename, delimiter, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const REPOSITORY_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
@@ -27,32 +27,23 @@ const REQUIRED_RESEARCH_CLASSES = ["academic_research", "research_service", "pol
 
 export async function runCleanEnvironmentFixture() {
   const fixtureRoot = await mkdtemp(join(tmpdir(), "public-proposal-clean-install-"));
-  const home = join(fixtureRoot, "home");
   const installRoot = join(fixtureRoot, "install");
-  const fakeBin = join(fixtureRoot, "fake-bin");
-  const fontRoot = join(fixtureRoot, "fonts");
-  await Promise.all([mkdir(home, { recursive: true }), mkdir(fontRoot, { recursive: true })]);
-  await Promise.all([
-    writeFile(join(fontRoot, "NotoSansCJKkr-Regular.otf"), "fixture-font\n"),
-    writeFile(join(fontRoot, "NotoSerifCJKkr-Regular.otf"), "fixture-font\n"),
-  ]);
-  await createFakeToolchain(fakeBin);
-
-  const env = isolatedEnvironment({ fixtureRoot, home, fakeBin, installRoot, fontRoot });
+  const isolated = await prepareIsolation(fixtureRoot, installRoot);
+  const { env, home } = isolated;
   const commands = [];
   commands.push(await capture(
     "public-proposal setup",
     process.execPath,
-    [PUBLIC_PROPOSAL_BINARY, "setup", "--provider", "codex", "--install-root", installRoot, "--json"],
+    [...writeGuardArguments(fixtureRoot), PUBLIC_PROPOSAL_BINARY, "setup", "--provider", "codex", "--install-root", installRoot, "--json"],
     { env },
   ));
   commands.push(await capture(
     "public-proposal doctor",
     process.execPath,
-    [PUBLIC_PROPOSAL_BINARY, "doctor", "--install-root", installRoot, "--project-class", "research_service", "--json"],
+    [...writeGuardArguments(fixtureRoot), PUBLIC_PROPOSAL_BINARY, "doctor", "--install-root", installRoot, "--project-class", "research_service", "--json"],
     { env },
   ));
-  commands.push(await capture("kpp doctor", process.execPath, [KPP_BINARY, "doctor", "--json"], { env }));
+  commands.push(await capture("kpp doctor", process.execPath, [...writeGuardArguments(fixtureRoot), KPP_BINARY, "doctor", "--json"], { env }));
   commands.push(await capture("longtable doctor", "longtable", ["scholar-research", "doctor", "--json"], { env }));
 
   const installationPath = join(installRoot, "installation.json");
@@ -68,6 +59,7 @@ export async function runCleanEnvironmentFixture() {
   const longtableDoctorEnvelope = parseEnvelope(commands[3].stdout, commands[3].stderr);
   const kppWorkerCheck = kppDoctorEnvelope?.data?.checks?.find?.(({ name }) => name === "worker_protocol");
   const paths = await listFiles(fixtureRoot);
+  const isolation = await finalizeIsolation(isolated, commands);
   const report = {
     ok: commands.every(({ exitCode }) => exitCode === 0)
       && setupEnvelope.ok === true
@@ -79,7 +71,9 @@ export async function runCleanEnvironmentFixture() {
       && manifest?.longtableVersion === LONGTABLE_VERSION
       && manifest?.workerProtocol === WORKER_PROTOCOL
       && pluginManifest?.name === "public-proposal"
-      && marketplaceEntry?.source?.path === "../plugin",
+      && marketplaceEntry?.source?.path === "../plugin"
+      && isolation.violations.length === 0
+      && isolation.deniedWriteProbe.exitCode !== 0,
     fixtureRoot,
     home,
     installRoot,
@@ -91,6 +85,7 @@ export async function runCleanEnvironmentFixture() {
       marketplaceSource: marketplaceEntry?.source?.path ?? null,
     },
     envelopes: { setup: setupEnvelope, publicDoctor: publicDoctorEnvelope, kppDoctor: kppDoctorEnvelope, longtableDoctor: longtableDoctorEnvelope },
+    isolation,
     commands,
     paths,
   };
@@ -99,23 +94,43 @@ export async function runCleanEnvironmentFixture() {
   return { exitCode: report.ok ? 0 : 1, report: { ...report, reportPath } };
 }
 
-export async function runProposalClassFixture({ proposalClass, researchLock }) {
+export async function runProposalClassFixture({ proposalClass, researchLock, academicEvidence = false }) {
   assertProposalClass(proposalClass);
   const fixtureRoot = await mkdtemp(join(tmpdir(), `public-proposal-${proposalClass}-`));
   const fixture = join(fixtureRoot, "fixture");
   const projectRoot = join(fixtureRoot, "project");
+  const isolated = await prepareIsolation(fixtureRoot, join(fixtureRoot, "install"));
+  const commands = [];
   await cp(FIXTURE_SOURCE, fixture, { recursive: true, force: false });
   const projectId = `verification-${proposalClass}`;
-  const init = await runKpp(["init", projectRoot, "--project-id", projectId, "--proposal-class", proposalClass, "--json"]);
-  if (init.exitCode !== 0) return { fixtureRoot, envelope: parseEnvelope(init.stdout, init.stderr) };
+  const longtableDoctor = await capture(
+    "longtable fixture doctor",
+    "longtable",
+    ["scholar-research", "doctor", "--json"],
+    { env: isolated.env },
+  );
+  commands.push(longtableDoctor);
+  if (longtableDoctor.exitCode !== 0) {
+    return proposalFixtureResult(fixtureRoot, parseEnvelope(longtableDoctor.stdout, longtableDoctor.stderr), null, isolated, commands);
+  }
+  const init = await runKpp(
+    ["init", projectRoot, "--project-id", projectId, "--proposal-class", proposalClass, "--json"],
+    isolated,
+  );
+  commands.push(init);
+  if (init.exitCode !== 0) {
+    return proposalFixtureResult(fixtureRoot, parseEnvelope(init.stdout, init.stderr), null, isolated, commands);
+  }
 
   if (!researchLock && REQUIRED_RESEARCH_CLASSES.includes(proposalClass)) {
-    const blocked = await runKpp(["export-authoring", projectRoot, "--json"]);
-    return { fixtureRoot, envelope: parseEnvelope(blocked.stdout, blocked.stderr) };
+    const blocked = await runKpp(["export-authoring", projectRoot, "--json"], isolated);
+    commands.push(blocked);
+    return proposalFixtureResult(fixtureRoot, parseEnvelope(blocked.stdout, blocked.stderr), null, isolated, commands);
   }
   if (proposalClass === "document_restyle") {
-    const optional = await runKpp(["export-authoring", projectRoot, "--json"]);
-    return { fixtureRoot, envelope: parseEnvelope(optional.stdout, optional.stderr) };
+    const optional = await runKpp(["export-authoring", projectRoot, "--json"], isolated);
+    commands.push(optional);
+    return proposalFixtureResult(fixtureRoot, parseEnvelope(optional.stdout, optional.stderr), null, isolated, commands);
   }
 
   const rfpPath = join(fixture, "issuer-rfp.txt");
@@ -126,13 +141,24 @@ export async function runProposalClassFixture({ proposalClass, researchLock }) {
   const terminologyPath = join(fixture, "terminology.json");
   const responsePath = join(fixture, "content", "authoring-response-final.json");
 
-  await requireKpp(["ingest", projectRoot, rfpPath, "--json"]);
+  await requireKpp(["ingest", projectRoot, rfpPath, "--json"], isolated, commands);
   await materializeTemplate(join(fixture, "candidates-template.json"), candidatesPath, {
     __ISSUER_RFP_PATH__: rfpPath,
   });
   await materializeTemplate(join(fixture, "requirement-decisions-template.json"), decisionsPath, {
     __METHOD_EVIDENCE_PATH__: evidencePath,
   });
+  if (academicEvidence) {
+    const decisions = await readJson(decisionsPath);
+    const requirement = decisions.requirements?.requirements?.[0];
+    const evidenceBinding = decisions.requirements?.evidenceBindings?.[0];
+    if (requirement === undefined || evidenceBinding === undefined) {
+      throw new Error("Academic evidence fixture is missing its locked requirement binding.");
+    }
+    requirement.pageRole = "academic_evidence";
+    evidenceBinding.targetPageRole = "academic_evidence";
+    await writeFile(decisionsPath, `${JSON.stringify(decisions, null, 2)}\n`, "utf8");
+  }
   await requireKpp([
     "requirements",
     projectRoot,
@@ -141,9 +167,14 @@ export async function runProposalClassFixture({ proposalClass, researchLock }) {
     "--decisions",
     decisionsPath,
     "--json",
-  ]);
+  ], isolated, commands);
   const requirementsPath = join(projectRoot, "requirements", "requirements.json");
-  await requireKpp(["plan", projectRoot, "--requirements", requirementsPath, "--json"]);
+  await requireKpp(["plan", projectRoot, "--requirements", requirementsPath, "--json"], isolated, commands);
+  if (!researchLock && proposalClass === "general_procurement" && academicEvidence) {
+    const blocked = await runKpp(["export-authoring", projectRoot, "--json"], isolated);
+    commands.push(blocked);
+    return proposalFixtureResult(fixtureRoot, parseEnvelope(blocked.stdout, blocked.stderr), null, isolated, commands);
+  }
   if (researchLock) await createResearchLock(projectRoot, projectId, proposalClass);
   await requireKpp([
     "export-authoring",
@@ -153,8 +184,8 @@ export async function runProposalClassFixture({ proposalClass, researchLock }) {
     "--terminology",
     terminologyPath,
     "--json",
-  ]);
-  await requireKpp(["import-authoring", projectRoot, "--response", responsePath, "--json"]);
+  ], isolated, commands);
+  await requireKpp(["import-authoring", projectRoot, "--response", responsePath, "--json"], isolated, commands);
 
   const core = await import(join(REPOSITORY_ROOT, "packages/core/dist/index.js"));
   const designProfilePath = join(projectRoot, "figures", "design-profile.json");
@@ -173,8 +204,13 @@ export async function runProposalClassFixture({ proposalClass, researchLock }) {
     "--approved-by",
     "release-verification-owner",
     "--json",
-  ]);
-  return { fixtureRoot, envelope: parseEnvelope(approval.stdout, approval.stderr) };
+  ], isolated);
+  commands.push(approval);
+  const envelope = parseEnvelope(approval.stdout, approval.stderr);
+  const researchBinding = researchLock && envelope.ok === true
+    ? await inspectResearchBinding(core, projectRoot)
+    : null;
+  return proposalFixtureResult(fixtureRoot, envelope, researchBinding, isolated, commands);
 }
 
 export async function verifyPackageContracts() {
@@ -271,19 +307,53 @@ export async function runReleaseVerification() {
     const matrix = {};
     for (const proposalClass of REQUIRED_RESEARCH_CLASSES) {
       const fixture = await runProposalClassFixture({ proposalClass, researchLock: false });
-      matrix[`${proposalClass}:missing`] = fixture.envelope;
+      matrix[`${proposalClass}:missing`] = {
+        ...fixture.envelope,
+        isolation: fixture.isolation,
+      };
       if (fixture.envelope.code !== "PP_RESEARCH_LOCK_MISSING") {
         throw new VerificationError(`${proposalClass} did not fail closed without LongTable`, { artifactRoot, commands, matrix });
       }
     }
+    const generalAcademicMissing = await runProposalClassFixture({
+      proposalClass: "general_procurement",
+      researchLock: false,
+      academicEvidence: true,
+    });
+    matrix["general_procurement:academic-missing"] = {
+      ...generalAcademicMissing.envelope,
+      isolation: generalAcademicMissing.isolation,
+    };
+    if (generalAcademicMissing.envelope.code !== "PP_RESEARCH_LOCK_MISSING") {
+      throw new VerificationError("general procurement academic evidence did not fail closed without LongTable", {
+        artifactRoot,
+        commands,
+        matrix,
+      });
+    }
     for (const input of [
       { proposalClass: "research_service", researchLock: true },
-      { proposalClass: "general_procurement", researchLock: false },
+      { proposalClass: "general_procurement", researchLock: false, academicEvidence: false },
+      { proposalClass: "general_procurement", researchLock: true, academicEvidence: true },
     ]) {
       const fixture = await runProposalClassFixture(input);
-      matrix[`${input.proposalClass}:${input.researchLock ? "locked" : "optional"}`] = fixture.envelope;
+      const matrixKey = input.proposalClass === "general_procurement" && input.academicEvidence
+        ? "general_procurement:academic-locked"
+        : `${input.proposalClass}:${input.researchLock ? "locked" : "optional"}`;
+      matrix[matrixKey] = {
+        ...fixture.envelope,
+        researchBinding: fixture.researchBinding,
+        isolation: fixture.isolation,
+      };
       if (fixture.envelope?.data?.state !== "CONTENT_APPROVED") {
         throw new VerificationError(`${input.proposalClass} fixture did not reach CONTENT_APPROVED`, { artifactRoot, commands, matrix });
+      }
+      if (input.researchLock && fixture.researchBinding?.boundToContentApproval !== true) {
+        throw new VerificationError(`${input.proposalClass} content approval is not bound to its research lock`, {
+          artifactRoot,
+          commands,
+          matrix,
+        });
       }
     }
     const report = { ok: true, artifactRoot, contracts, tarball, cleanInstall: install.report, matrix, commands };
@@ -335,9 +405,172 @@ async function createResearchLock(root, projectId, proposalClass) {
   await core.importResearchLock(root, handoffPath, LONGTABLE_VERSION);
 }
 
+async function inspectResearchBinding(core, root) {
+  const researchLockPath = join(root, "receipts", "research-lock.json");
+  const contentApprovalPath = join(root, "receipts", "content-approval.json");
+  const [researchVerification, contentVerification, researchLockSha256] = await Promise.all([
+    core.verifyReceipt(researchLockPath),
+    core.verifyReceipt(contentApprovalPath),
+    core.sha256File(researchLockPath),
+  ]);
+  return {
+    researchLockPath,
+    contentApprovalPath,
+    researchLockSha256,
+    researchLockValid: researchVerification.valid,
+    contentApprovalValid: contentVerification.valid,
+    boundToContentApproval: contentVerification.receipt.inputReceiptHashes.includes(researchLockSha256),
+  };
+}
+
+async function prepareIsolation(fixtureRoot, installRoot) {
+  const home = join(fixtureRoot, "home");
+  const fakeBin = join(fixtureRoot, "fake-bin");
+  const fontRoot = join(fixtureRoot, "fonts");
+  const temporaryRoot = join(fixtureRoot, "tmp");
+  const writeLog = join(fixtureRoot, "fake-runner-write-log.jsonl");
+  await Promise.all([
+    mkdir(home, { recursive: true }),
+    mkdir(fontRoot, { recursive: true }),
+    mkdir(temporaryRoot, { recursive: true }),
+  ]);
+  await Promise.all([
+    writeFile(join(fontRoot, "NotoSansCJKkr-Regular.otf"), "fixture-font\n"),
+    writeFile(join(fontRoot, "NotoSerifCJKkr-Regular.otf"), "fixture-font\n"),
+    writeFile(writeLog, "", { mode: 0o600 }),
+  ]);
+  await createFakeToolchain(fakeBin);
+  const env = isolatedEnvironment({
+    fixtureRoot,
+    home,
+    fakeBin,
+    installRoot,
+    fontRoot,
+    temporaryRoot,
+    writeLog,
+  });
+  const deniedPath = join(dirname(fixtureRoot), `public-proposal-denied-${basename(fixtureRoot)}`);
+  const deniedWriteProbe = await capture(
+    "fixture write-boundary probe",
+    process.execPath,
+    [...writeGuardArguments(fixtureRoot), "-e", `require("node:fs").writeFileSync(${JSON.stringify(deniedPath)}, "denied")`],
+    { env },
+  );
+  const hostStatePath = join(resolve(process.env.HOME ?? dirname(fixtureRoot)), ".codex", "config.toml");
+  const deniedReadProbe = await capture(
+    "host-state read-boundary probe",
+    process.execPath,
+    [...writeGuardArguments(fixtureRoot), "-e", `require("node:fs").readFileSync(${JSON.stringify(hostStatePath)})`],
+    { env },
+  );
+  return {
+    fixtureRoot,
+    home,
+    fakeBin,
+    fontRoot,
+    temporaryRoot,
+    installRoot,
+    writeLog,
+    env,
+    deniedWriteProbe,
+    deniedReadProbe,
+  };
+}
+
+async function finalizeIsolation(isolated, commands) {
+  const fakeRunnerEvents = (await readFile(isolated.writeLog, "utf8"))
+    .split("\n")
+    .filter(Boolean)
+    .map((line) => JSON.parse(line));
+  const outsideWrites = fakeRunnerEvents.filter(({ writePath }) =>
+    typeof writePath === "string" && !isWithin(isolated.fixtureRoot, writePath),
+  );
+  const permissionFailures = commands.flatMap((command) => {
+    const combined = `${command.stdout}\n${command.stderr}`;
+    return combined.includes("ERR_ACCESS_DENIED")
+      ? [{ command: command.name, detail: "Node permission model denied an undeclared fixture command access." }]
+      : [];
+  });
+  const probeDenied = isolated.deniedWriteProbe.exitCode !== 0
+    && `${isolated.deniedWriteProbe.stdout}\n${isolated.deniedWriteProbe.stderr}`.includes("ERR_ACCESS_DENIED");
+  const readProbeDenied = isolated.deniedReadProbe.exitCode !== 0
+    && `${isolated.deniedReadProbe.stdout}\n${isolated.deniedReadProbe.stderr}`.includes("ERR_ACCESS_DENIED");
+  return {
+    environmentMode: "allowlist",
+    environmentKeys: Object.keys(isolated.env).sort(),
+    allowedWriteRoot: resolve(isolated.fixtureRoot),
+    writeGuard: "node-permission-model+fake-runner-log",
+    deniedWriteProbe: {
+      exitCode: isolated.deniedWriteProbe.exitCode,
+      detected: probeDenied ? "ERR_ACCESS_DENIED" : null,
+    },
+    deniedHostReadProbe: {
+      exitCode: isolated.deniedReadProbe.exitCode,
+      detected: readProbeDenied ? "ERR_ACCESS_DENIED" : null,
+    },
+    fakeRunnerEvents,
+    violations: [
+      ...outsideWrites.map(({ writePath, command }) => ({ command, writePath })),
+      ...permissionFailures,
+      ...(!probeDenied ? [{ command: "fixture write-boundary probe", detail: "Write guard did not reject an outside write." }] : []),
+      ...(!readProbeDenied ? [{ command: "host-state read-boundary probe", detail: "Read guard did not reject host Codex state." }] : []),
+    ],
+  };
+}
+
+async function proposalFixtureResult(fixtureRoot, envelope, researchBinding, isolated, commands) {
+  return {
+    fixtureRoot,
+    envelope,
+    researchBinding,
+    isolation: await finalizeIsolation(isolated, commands),
+    commands,
+  };
+}
+
+function writeGuardArguments(fixtureRoot) {
+  const permissionFlag = process.allowedNodeEnvironmentFlags.has("--permission")
+    ? "--permission"
+    : "--experimental-permission";
+  const readableRoots = [
+    ...canonicalVariants(REPOSITORY_ROOT),
+    ...canonicalVariants(fixtureRoot).map(temporaryTraversalRoot),
+  ];
+  const fixtureRoots = canonicalVariants(fixtureRoot);
+  return [
+    permissionFlag,
+    ...readableRoots.map((path) => `--allow-fs-read=${path}`),
+    ...fixtureRoots.map((path) => `--allow-fs-read=${path}`),
+    ...fixtureRoots.map((path) => `--allow-fs-write=${path}`),
+    "--allow-child-process",
+  ];
+}
+
+function temporaryTraversalRoot(path) {
+  const resolved = resolve(path);
+  if (resolved.startsWith("/")) {
+    return `/${resolved.split("/").filter(Boolean)[0] ?? "tmp"}`;
+  }
+  return dirname(resolved);
+}
+
+function canonicalVariants(path) {
+  const resolved = resolve(path);
+  try {
+    return [...new Set([resolved, realpathSync(resolved)])];
+  } catch {
+    return [resolved];
+  }
+}
+
+function isWithin(root, path) {
+  const normalizedRoot = `${resolve(root)}/`;
+  return resolve(path).startsWith(normalizedRoot);
+}
+
 async function createFakeToolchain(fakeBin) {
   await mkdir(fakeBin, { recursive: true });
-  const source = `#!${process.execPath}\n${fakeRunnerSource()}`;
+  const source = fakeRunnerSource();
   await Promise.all(["node", "npm", "codex", "python3", "soffice", "fc-match", "kpp", "longtable", "uv"].map(async (name) => {
     const path = join(fakeBin, name);
     await writeFile(path, source, { mode: 0o755 });
@@ -346,51 +579,64 @@ async function createFakeToolchain(fakeBin) {
 }
 
 function fakeRunnerSource() {
-  return String.raw`
-import { chmod, mkdir, writeFile } from "node:fs/promises";
-import { basename, dirname, join } from "node:path";
-const name = basename(process.argv[1]);
-const args = process.argv.slice(2);
-if (name === "node") process.stdout.write("v22.20.0\n");
-else if (name === "npm") process.stdout.write("10.9.3\n");
-else if (name === "python3") process.stdout.write("Python 3.12.0\n");
-else if (name === "soffice") process.stdout.write("LibreOffice 25.2.0\n");
-else if (name === "fc-match") process.stdout.write("NotoSansCJKkr-Regular.otf: Noto Sans CJK KR\n");
-else if (name === "kpp") process.stdout.write("@longtable/kpp-cli 0.2.1\n");
-else if (name === "longtable" && args[0] === "--version") process.stdout.write("@longtable/cli 0.1.72\n");
-else if (name === "longtable" && args.includes("doctor")) process.stdout.write('{"ok":true,"code":"LONGTABLE_OK"}\n');
-else if (name === "longtable") process.stdout.write('{"ok":true}\n');
-else if (name === "codex" && args[0] === "--version") process.stdout.write("codex-cli 0.144.5\n");
-else if (name === "codex" && args.join(" ").includes("list --json")) process.stdout.write("[]\n");
-else if (name === "codex") process.stdout.write('{"ok":true}\n');
-else if (name === "uv") {
-  const environment = process.env.UV_PROJECT_ENVIRONMENT
-    || (process.env.PUBLIC_PROPOSAL_INSTALLATION_MANIFEST
-      ? join(dirname(process.env.PUBLIC_PROPOSAL_INSTALLATION_MANIFEST), "worker", ".venv")
-      : undefined);
-  if (!environment) { process.stderr.write("UV_PROJECT_ENVIRONMENT missing\n"); process.exitCode = 2; }
-  else {
-    const python = join(environment, "bin", "python");
-    await mkdir(join(environment, "bin"), { recursive: true });
-    await writeFile(python, '#!/bin/sh\nprintf "1.0.0\\n"\n', { mode: 0o755 });
-    await chmod(python, 0o755);
-  }
-} else { process.stderr.write("unexpected fake command: " + name + " " + args.join(" ") + "\n"); process.exitCode = 127; }
+  return String.raw`#!/bin/sh
+name=$(basename "$0")
+if [ -n "$PP_VERIFY_WRITE_LOG" ]; then
+  printf '{"command":"%s","event":"invoke"}\n' "$name" >> "$PP_VERIFY_WRITE_LOG"
+fi
+case "$name" in
+  node) printf 'v22.20.0\n' ;;
+  npm) printf '10.9.3\n' ;;
+  python3) printf 'Python 3.12.0\n' ;;
+  soffice) printf 'LibreOffice 25.2.0\n' ;;
+  fc-match) printf 'NotoSansCJKkr-Regular.otf: Noto Sans CJK KR\n' ;;
+  kpp) printf '@longtable/kpp-cli 0.2.1\n' ;;
+  longtable)
+    if [ "$1" = "--version" ]; then printf '@longtable/cli 0.1.72\n'
+    elif printf '%s' "$*" | grep -q doctor; then printf '{"ok":true,"code":"LONGTABLE_OK"}\n'
+    else printf '{"ok":true}\n'; fi
+    ;;
+  codex)
+    if [ "$1" = "--version" ]; then printf 'codex-cli 0.144.5\n'
+    elif printf '%s' "$*" | grep -q 'list --json'; then printf '[]\n'
+    else printf '{"ok":true}\n'; fi
+    ;;
+  uv)
+    environment=$UV_PROJECT_ENVIRONMENT
+    if [ -z "$environment" ] && [ -n "$PUBLIC_PROPOSAL_INSTALLATION_MANIFEST" ]; then
+      environment=$(dirname "$PUBLIC_PROPOSAL_INSTALLATION_MANIFEST")/worker/.venv
+    fi
+    if [ -z "$environment" ]; then printf 'UV_PROJECT_ENVIRONMENT missing\n' >&2; exit 2; fi
+    python=$environment/bin/python
+    if [ -n "$PP_VERIFY_WRITE_LOG" ]; then
+      printf '{"command":"uv","event":"write","writePath":"%s"}\n' "$python" >> "$PP_VERIFY_WRITE_LOG"
+    fi
+    mkdir -p "$environment/bin"
+    printf '#!/bin/sh\nprintf "1.0.0\\n"\n' > "$python"
+    chmod 755 "$python"
+    ;;
+  *) printf 'unexpected fake command: %s %s\n' "$name" "$*" >&2; exit 127 ;;
+esac
 `;
 }
 
-function isolatedEnvironment({ fixtureRoot, home, fakeBin, installRoot, fontRoot }) {
+function isolatedEnvironment({ fixtureRoot, home, fakeBin, installRoot, fontRoot, temporaryRoot, writeLog }) {
   return {
-    ...process.env,
     HOME: home,
     USERPROFILE: home,
     XDG_CONFIG_HOME: join(home, ".config"),
     LONGTABLE_HOME: join(fixtureRoot, "isolated-longtable-state"),
+    TMPDIR: temporaryRoot,
+    TMP: temporaryRoot,
+    TEMP: temporaryRoot,
     PUBLIC_PROPOSAL_INSTALLATION_MANIFEST: join(installRoot, "installation.json"),
     KPP_NOTO_SANS_PATH: join(fontRoot, "NotoSansCJKkr-Regular.otf"),
     KPP_NOTO_SERIF_PATH: join(fontRoot, "NotoSerifCJKkr-Regular.otf"),
     KPP_SOFFICE_PATH: join(fakeBin, "soffice"),
-    PATH: `${fakeBin}:${process.env.PATH ?? ""}`,
+    PP_VERIFY_WRITE_LOG: writeLog,
+    PATH: [fakeBin, "/usr/bin", "/bin"].join(delimiter),
+    LANG: "C.UTF-8",
+    LC_ALL: "C.UTF-8",
   };
 }
 
@@ -425,12 +671,18 @@ async function inspectTarball(path, expectedIntegrity) {
   return { path, bytes: contents.length, integrity, sha256: `sha256:${createHash("sha256").update(contents).digest("hex")}`, files };
 }
 
-async function runKpp(args) {
-  return capture("kpp", process.execPath, [KPP_BINARY, ...args], { cwd: REPOSITORY_ROOT });
+async function runKpp(args, isolated) {
+  return capture(
+    `kpp ${args[0] ?? "command"}`,
+    process.execPath,
+    [...writeGuardArguments(isolated.fixtureRoot), KPP_BINARY, ...args],
+    { cwd: REPOSITORY_ROOT, env: isolated.env },
+  );
 }
 
-async function requireKpp(args) {
-  const result = await runKpp(args);
+async function requireKpp(args, isolated, commands) {
+  const result = await runKpp(args, isolated);
+  commands.push(result);
   if (result.exitCode !== 0) throw new Error(`kpp ${args[0]} failed: ${result.stdout || result.stderr}`);
   return parseEnvelope(result.stdout, result.stderr);
 }

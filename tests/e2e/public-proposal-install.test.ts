@@ -37,16 +37,24 @@ describe("public proposal clean installation", () => {
     ]);
   });
 
-  it("keeps every fixture write outside the maintainer HOME and LongTable state", async () => {
+  it("enforces an explicit fixture-only write boundary and environment allowlist", async () => {
     const result = await runCleanInstallFixture();
-    const fixtureRoot = resolve(result.report.fixtureRoot);
 
-    expect(resolve(result.report.home)).toMatch(new RegExp(`^${escapeRegExp(fixtureRoot)}/`));
-    expect(result.report.paths.every((path) => resolve(path).startsWith(`${fixtureRoot}/`))).toBe(true);
-    expect(result.report.paths.some((path) => path.includes("/.longtable/"))).toBe(false);
-    if (process.env.HOME !== undefined) {
-      expect(resolve(result.report.home)).not.toBe(resolve(process.env.HOME));
-    }
+    expect(result.report.isolation).toMatchObject({
+      allowedWriteRoot: resolve(result.report.fixtureRoot),
+      violations: [],
+      environmentMode: "allowlist",
+    });
+    expect(result.report.isolation.environmentKeys).not.toContain("CODEX_HOME");
+    expect(result.report.isolation.environmentKeys).not.toContain("NPM_CONFIG_USERCONFIG");
+    expect(result.report.isolation.environmentKeys).not.toContain("XDG_DATA_HOME");
+    expect(result.report.isolation.deniedWriteProbe).toEqual({ exitCode: 1, detected: "ERR_ACCESS_DENIED" });
+    expect(result.report.isolation.deniedHostReadProbe).toEqual({ exitCode: 1, detected: "ERR_ACCESS_DENIED" });
+    const runnerWrites = result.report.isolation.fakeRunnerEvents.filter(
+      (event): event is { writePath: string } => hasStringWritePath(event),
+    );
+    expect(runnerWrites.length).toBeGreaterThan(0);
+    expect(runnerWrites.every(({ writePath }) => resolve(writePath).startsWith(`${resolve(result.report.fixtureRoot)}/`))).toBe(true);
   });
 });
 
@@ -56,26 +64,56 @@ describe("proposal-class research matrix", () => {
     async (proposalClass) => {
       const result = await runAcademicFixture({ proposalClass, researchLock: false });
 
-      expect(result).toMatchObject({ ok: false, code: "PP_RESEARCH_LOCK_MISSING" });
+      expect(result.envelope).toMatchObject({ ok: false, code: "PP_RESEARCH_LOCK_MISSING" });
+      expect(result.isolation).toMatchObject({ violations: [], environmentMode: "allowlist" });
+      expect(result.isolation.deniedWriteProbe.detected).toBe("ERR_ACCESS_DENIED");
+      expect(result.isolation.deniedHostReadProbe.detected).toBe("ERR_ACCESS_DENIED");
     },
   );
 
   it("advances a research-service fixture to CONTENT_APPROVED with a valid lock", async () => {
     const result = await runAcademicFixture({ proposalClass: "research_service", researchLock: true });
 
-    expect(result).toMatchObject({ ok: true, data: { state: "CONTENT_APPROVED" } });
+    expect(result.envelope).toMatchObject({ ok: true, data: { state: "CONTENT_APPROVED" } });
+    expect(result.researchBinding).toMatchObject({ boundToContentApproval: true });
   });
 
   it("keeps general procurement usable without LongTable", async () => {
     const result = await runAcademicFixture({ proposalClass: "general_procurement", researchLock: false });
 
-    expect(result).toMatchObject({ ok: true, data: { state: "CONTENT_APPROVED" } });
+    expect(result.envelope).toMatchObject({ ok: true, data: { state: "CONTENT_APPROVED" } });
+    expect(result.researchBinding).toBeNull();
+  });
+
+  it("blocks general procurement with a locked academic evidence slot until LongTable is bound", async () => {
+    const result = await runAcademicFixture({
+      proposalClass: "general_procurement",
+      researchLock: false,
+      academicEvidence: true,
+    });
+
+    expect(result.envelope).toMatchObject({ ok: false, code: "PP_RESEARCH_LOCK_MISSING" });
+    expect(result.isolation).toMatchObject({ violations: [], environmentMode: "allowlist" });
+  });
+
+  it("binds a genuine LongTable receipt for general procurement with academic evidence", async () => {
+    const result = await runAcademicFixture({
+      proposalClass: "general_procurement",
+      researchLock: true,
+      academicEvidence: true,
+    });
+
+    expect(result.envelope).toMatchObject({ ok: true, data: { state: "CONTENT_APPROVED" } });
+    expect(result.researchBinding).toMatchObject({
+      boundToContentApproval: true,
+      researchLockSha256: expect.stringMatching(/^[a-f0-9]{64}$/u),
+    });
   });
 
   it("does not impose the research-lock gate on document restyling", async () => {
     const result = await runAcademicFixture({ proposalClass: "document_restyle", researchLock: false });
 
-    expect(result.code).not.toMatch(/^PP_(?:RESEARCH|LONGTABLE)/u);
+    expect(result.envelope.code).not.toMatch(/^PP_(?:RESEARCH|LONGTABLE)/u);
   });
 });
 
@@ -93,12 +131,14 @@ async function runAcademicFixture(options: {
     | "general_procurement"
     | "document_restyle";
   readonly researchLock: boolean;
+  readonly academicEvidence?: boolean;
 }) {
   const result = await runProposalClassFixture(options);
   temporaryRoots.push(result.fixtureRoot);
-  return result.envelope;
+  return result;
 }
 
-function escapeRegExp(value: string): string {
-  return value.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&");
+function hasStringWritePath(value: unknown): value is { writePath: string } {
+  return typeof value === "object" && value !== null && "writePath" in value
+    && typeof (value as { writePath?: unknown }).writePath === "string";
 }
