@@ -23,6 +23,12 @@
       ],
       "@longtable/kpp-renderers": [
         "./packages/renderers/src/index.ts"
+      ],
+      "@longtable/public-proposal": [
+        "./apps/public-proposal-cli/src/main.ts"
+      ],
+      "@longtable/public-proposal/contracts": [
+        "./apps/public-proposal-cli/src/contracts.ts"
       ]
     },
     "isolatedModules": true,

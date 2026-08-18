@@ -11,9 +11,10 @@
     "node": ">=22 <27"
   },
   "scripts": {
-    "build": "npm run build --workspace @longtable/kpp-schemas && npm run build --workspace @longtable/kpp-core && npm run build --workspace @longtable/kpp-renderers && npm run build --workspace @longtable/kpp-audits && npm run build --workspace @longtable/kpp-cli",
+    "build": "npm run build --workspace @longtable/kpp-schemas && npm run build --workspace @longtable/kpp-core && npm run build --workspace @longtable/kpp-renderers && npm run build --workspace @longtable/kpp-audits && npm run build --workspace @longtable/kpp-cli && npm run build --workspace @longtable/public-proposal",
+    "pack": "npm pack --workspace @longtable/kpp-schemas --dry-run && npm pack --workspace @longtable/kpp-core --dry-run && npm pack --workspace @longtable/kpp-renderers --dry-run && npm pack --workspace @longtable/kpp-audits --dry-run && npm pack --workspace @longtable/kpp-cli --dry-run && npm pack --workspace @longtable/public-proposal --dry-run",
     "test": "vitest run",
-    "typecheck": "tsc --noEmit -p tsconfig.base.json"
+    "typecheck": "tsc --noEmit -p tsconfig.base.json && npm run typecheck --workspace @longtable/public-proposal"
   },
   "devDependencies": {
     "@types/node": "22.20.1",

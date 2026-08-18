@@ -1,0 +1,45 @@
+{
+  "name": "@longtable/public-proposal",
+  "version": "0.1.0",
+  "description": "Meta-installer scaffold for the LongTable public proposal toolchain.",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/HosungYou/public-proposal.git",
+    "directory": "apps/public-proposal-cli"
+  },
+  "homepage": "https://github.com/HosungYou/public-proposal#readme",
+  "bugs": {
+    "url": "https://github.com/HosungYou/public-proposal/issues"
+  },
+  "keywords": [
+    "public-proposal",
+    "installer",
+    "kpp",
+    "codex"
+  ],
+  "type": "module",
+  "files": [
+    "dist",
+    "marketplace",
+    "plugin",
+    "worker",
+    "README.md"
+  ],
+  "publishConfig": {
+    "access": "public"
+  },
+  "bin": {
+    "public-proposal": "dist/main.js"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc --noEmit -p tsconfig.json"
+  },
+  "dependencies": {
+    "@longtable/cli": "0.1.72",
+    "@longtable/kpp-cli": "0.2.1",
+    "commander": "15.0.0",
+    "yaml": "2.9.0",
+    "zod": "4.4.3"
+  }
+}
