@@ -1,0 +1,16 @@
+{
+  "name": "public-proposal",
+  "plugins": [
+    {
+      "name": "public-proposal",
+      "source": {
+        "path": "./plugins/public-proposal"
+      },
+      "policy": {
+        "installation": "AVAILABLE",
+        "authentication": "ON_INSTALL"
+      },
+      "category": "Productivity"
+    }
+  ]
+}

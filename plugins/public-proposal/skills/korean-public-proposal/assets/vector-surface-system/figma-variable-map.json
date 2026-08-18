@@ -1,0 +1,58 @@
+{
+  "schema_version": "kpp-figma-map-1.0",
+  "authority": "assets/vector-surface-system/surface-tokens.json",
+  "write_back": "prohibited",
+  "unit_policy": {"print_geometry": "mm", "figma_canvas": "px_at_96dpi", "conversion": "px = mm * 96 / 25.4"},
+  "collections": {
+    "KPP/Color": {
+      "Paper": "palette.paper",
+      "Ink": "palette.ink",
+      "Navy": "palette.navy",
+      "Navy Secondary": "palette.navy_secondary",
+      "Muted": "palette.muted",
+      "Hairline": "palette.hairline",
+      "Line Dark": "palette.line_dark",
+      "Surface": "palette.surface",
+      "Surface Strong": "palette.surface_strong",
+      "Warning": "palette.warning",
+      "Blocked": "palette.blocked"
+    },
+    "KPP/Typography": {
+      "Title/Family": "typography.heading.family",
+      "Title/Size": "typography.title.size_pt",
+      "Title/Tracking": "typography.title.tracking_em",
+      "Section/Size": "typography.section.size_pt",
+      "Body/Family": "typography.body.family",
+      "Body/Size": "typography.body.size_pt",
+      "Body/Line": "paragraphs.body.line_height",
+      "Table/Size": "tables.body_pt",
+      "Caption/Size": "typography.caption.size_pt",
+      "Source/Size": "typography.source.size_pt"
+    },
+    "KPP/Geometry": {
+      "Page/Width": "page.size_mm[0]",
+      "Page/Height": "page.size_mm[1]",
+      "Inset/Top": "page.content_inset_mm.top",
+      "Inset/Right": "page.content_inset_mm.right",
+      "Inset/Bottom": "page.content_inset_mm.bottom",
+      "Inset/Left": "page.content_inset_mm.left",
+      "Grid": "page.grid_mm",
+      "Box/Radius": "boxes.corner_radius_mm",
+      "Box/PaddingX": "boxes.padding_mm.x",
+      "Box/PaddingY": "boxes.padding_mm.y"
+    },
+    "KPP/Stroke": {
+      "Title Rule": "strokes_pt.title_rule",
+      "Box Outer": "strokes_pt.box_outer",
+      "Table Outer": "strokes_pt.table_outer",
+      "Table Inner": "strokes_pt.table_inner",
+      "Connector Primary": "strokes_pt.connector_primary"
+    }
+  },
+  "component_sets": {
+    "KPP/Page": ["Chapter Opener", "Analysis Evidence", "Literature Baseline", "Research Method", "Candidate Decision", "Roadmap Management", "Evaluation Crosswalk", "Evidence Ledger"],
+    "KPP/Table": ["Evidence", "Baseline Gap", "Work Package", "Schedule", "RACI", "Risk", "Evaluation Crosswalk", "Proof Ledger"],
+    "KPP/Figure": ["Argument Flow", "Evidence Funnel", "2x2 Matrix", "Roadmap", "Chart Frame"],
+    "KPP/Box": ["Judgment Band", "Claim Band", "Gate", "Source Note", "Status"]
+  }
+}
