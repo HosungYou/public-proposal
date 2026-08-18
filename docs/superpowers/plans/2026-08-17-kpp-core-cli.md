@@ -12,7 +12,7 @@
 
 ## Global Constraints
 
-- Product ID is `public-proposal`; CLI command is `kpp`; the current public package line is `0.2.0`.
+- Product ID is `public-proposal`; CLI command is `kpp`; the current public package line is `0.2.1`.
 - Customer documents remain local; the core makes no direct AI API calls.
 - The v0.1 runtime is verified on macOS and keeps OS operations behind adapters.
 - Every state change requires validated inputs and SHA-256-bound receipts.

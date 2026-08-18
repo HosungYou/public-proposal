@@ -1,6 +1,6 @@
 {
   "name": "@longtable/kpp-core",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "Evidence-bound planning and authoring core for Korean public proposals.",
   "repository": {
     "type": "git",
@@ -37,7 +37,7 @@
     "typecheck": "tsc --noEmit -p tsconfig.json"
   },
   "dependencies": {
-    "@longtable/kpp-schemas": "0.2.0",
+    "@longtable/kpp-schemas": "0.2.1",
     "yaml": "2.9.0"
   }
 }

@@ -33,6 +33,14 @@ describe("kpp CLI", () => {
     );
   });
 
+  it("prints command help and exits successfully", async () => {
+    const result = await run(["--help"]);
+
+    expect(result).toMatchObject({ code: 0, stderr: "" });
+    expect(result.stdout).toContain("Usage: kpp");
+    expect(result.stdout).toContain("doctor");
+  });
+
   it("initializes the approved local structure and reports INIT", async () => {
     const root = await mkdtemp(join(tmpdir(), "kpp-cli-"));
     temporaryDirectories.push(root);

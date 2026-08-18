@@ -25,11 +25,15 @@ export async function runCli(argv: readonly string[]): Promise<number> {
   const program = new Command()
     .name("kpp")
     .description("KPP 제안서 컴파일러")
-    .exitOverride()
+    .exitOverride((error) => {
+      if (error.code !== "commander.helpDisplayed") {
+        throw error;
+      }
+    })
     .showSuggestionAfterError(false)
     .showHelpAfterError(false)
     .configureOutput({
-      writeOut: () => undefined,
+      writeOut: (message) => process.stdout.write(message),
       writeErr: () => undefined,
     });
 
