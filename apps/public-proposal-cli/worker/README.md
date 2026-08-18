@@ -1,1 +1,4 @@
-Worker launch assets will be emitted here by later installer tasks.
+# Managed KPP DOCX Worker Snapshot
+
+This directory is generated from `workers/docx-python` during package build.
+It intentionally excludes virtual environments, caches, test bytecode, and local machine paths.

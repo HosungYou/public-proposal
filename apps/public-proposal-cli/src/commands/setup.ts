@@ -11,10 +11,12 @@ import {
   type ProcessRunner,
   type SetupOptions,
   type SetupResult,
+  type WorkerInstallation,
 } from "../contracts.js";
 import { readManifestJson, serializeManifest } from "../installation-manifest.js";
 import { manifestPath, manifestTempPath, installationRoot } from "../paths.js";
 import { nodeFs } from "../process.js";
+import { installManagedWorker } from "../worker.js";
 import { runDoctor } from "./doctor.js";
 
 export interface SetupDependencies {
@@ -29,6 +31,7 @@ export interface SetupDependencies {
   readonly exists?: (path: string) => Promise<boolean>;
   readonly copyDir?: (from: string, to: string) => Promise<void>;
   readonly remove?: (path: string) => Promise<void>;
+  readonly installWorker?: (root: string, runner: ProcessRunner) => Promise<WorkerInstallation>;
 }
 
 const PLAN = [
@@ -52,6 +55,7 @@ export async function runSetup(
   const exists = dependencies.exists ?? defaultExists(dependencies);
   const copyDir = dependencies.copyDir ?? nodeFs.copyDir;
   const remove = dependencies.remove ?? nodeFs.remove;
+  const installWorker = dependencies.installWorker ?? installManagedWorker;
 
   if (options.dryRun) {
     return { ok: true, plan: PLAN, writes: [], checks: [] };
@@ -71,6 +75,9 @@ export async function runSetup(
       checks: [],
       manifest: existingManifest,
     };
+  }
+  if (await exists(manifest)) {
+    return failed("PP_INSTALL_MANIFEST_MISMATCH", "Existing installation receipt cannot be parsed or is unsupported.", []);
   }
 
   const conflict = await findConflict(installRoot, exists);
@@ -95,6 +102,7 @@ export async function runSetup(
     join(installRoot, "plugin"),
     join(installRoot, "marketplace"),
     join(installRoot, "codex-skills"),
+    join(installRoot, "worker"),
   ];
 
   try {
@@ -132,7 +140,10 @@ export async function runSetup(
     await ensureMarketplaceRegistered(dependencies.spawn, join(installRoot, "marketplace"));
     await ensurePluginInstalled(dependencies.spawn);
 
-    const installManifest = await buildManifest(installRoot, ownedPaths, dependencies);
+    const worker = await installWorker(installRoot, dependencies.spawn);
+    writes.push(ownedPaths[3]);
+
+    const installManifest = await buildManifest(installRoot, ownedPaths, worker, dependencies);
     const manifestContents = serializeManifest(installManifest);
     const doctor = await runDoctor(
       {
@@ -265,6 +276,7 @@ function installerOwnedRoots(installRoot: string): readonly string[] {
     join(installRoot, "plugin"),
     join(installRoot, "marketplace"),
     join(installRoot, "codex-skills"),
+    join(installRoot, "worker"),
   ].map((path) => resolve(path));
 }
 
@@ -272,11 +284,15 @@ async function packageIntegrity(packageRoot: string, dependencies: SetupDependen
   const pluginManifestPath = join(packageRoot, "plugin", ".codex-plugin", "plugin.json");
   const marketplacePath = join(packageRoot, "marketplace", "marketplace.json");
   const bundleManifestPath = join(packageRoot, "plugin", "skills", "korean-public-proposal", "BUNDLE-MANIFEST.json");
+  const workerProjectPath = join(packageRoot, "worker", "pyproject.toml");
+  const workerLockPath = join(packageRoot, "worker", "uv.lock");
   try {
-    const [pluginRaw, marketplaceRaw, bundleRaw] = await Promise.all([
+    const [pluginRaw, marketplaceRaw, bundleRaw, workerProject, workerLock] = await Promise.all([
       dependencies.readFile(pluginManifestPath),
       dependencies.readFile(marketplacePath),
       dependencies.readFile(bundleManifestPath),
+      dependencies.readFile(workerProjectPath),
+      dependencies.readFile(workerLockPath),
     ]);
     const plugin = JSON.parse(pluginRaw) as { name?: string };
     const marketplace = JSON.parse(marketplaceRaw) as {
@@ -284,13 +300,13 @@ async function packageIntegrity(packageRoot: string, dependencies: SetupDependen
     };
     JSON.parse(bundleRaw);
     const entry = marketplace.plugins?.find((pluginEntry) => pluginEntry.name === "public-proposal");
-    if (plugin.name !== "public-proposal" || entry?.source?.path !== "../plugin") {
+    if (plugin.name !== "public-proposal" || entry?.source?.path !== "../plugin" || !workerProject.includes("kpp-docx-worker") || workerLock.trim().length === 0) {
       return {
         name: "plugin",
         status: "blocker",
         code: "PP_PLUGIN_INTEGRITY_FAILED",
-        detected: { pluginName: plugin.name, marketplaceSource: entry?.source?.path },
-        message: "Packaged plugin and marketplace entry must reference public-proposal via ../plugin.",
+        detected: { pluginName: plugin.name, marketplaceSource: entry?.source?.path, workerProject: workerProject.includes("kpp-docx-worker") },
+        message: "Packaged plugin, marketplace entry, and managed worker snapshot must be valid.",
       };
     }
     return {
@@ -330,7 +346,6 @@ async function preflightChecks(spawn: ProcessRunner): Promise<DoctorCheck[]> {
     ),
   );
   checks.push(await requireCommand(spawn, "longtable", ["scholar-research", "doctor", "--json"], "scholarResearch"));
-  checks.push(await workerProtocolCheck(spawn));
   return checks;
 }
 
@@ -368,26 +383,6 @@ async function exactVersion(
   return { name, status: "pass", detected, message: `${command} version is pinned.` };
 }
 
-async function workerProtocolCheck(spawn: ProcessRunner): Promise<DoctorCheck> {
-  const result = await spawn("kpp", ["worker", "doctor", "--json"]);
-  let protocol = "";
-  try {
-    protocol = (JSON.parse(result.stdout) as { protocol?: string }).protocol ?? "";
-  } catch {
-    protocol = "";
-  }
-  if (result.code !== 0 || protocol !== WORKER_PROTOCOL_VERSION) {
-    return {
-      name: "worker",
-      status: "blocker",
-      code: "PP_WORKER_PROTOCOL_MISSING",
-      detected: protocol || null,
-      message: `worker protocol ${WORKER_PROTOCOL_VERSION} is required.`,
-    };
-  }
-  return { name: "worker", status: "pass", detected: protocol, message: "worker protocol is pinned." };
-}
-
 async function runRequired(spawn: ProcessRunner, command: string, args: readonly string[]): Promise<void> {
   const result = await spawn(command, args);
   if (result.code !== 0) {
@@ -414,6 +409,7 @@ async function ensurePluginInstalled(spawn: ProcessRunner): Promise<void> {
 async function buildManifest(
   installRoot: string,
   ownedPaths: readonly string[],
+  worker: WorkerInstallation,
   dependencies: SetupDependencies,
 ): Promise<InstallManifest> {
   const pluginManifestPath = join(installRoot, "plugin", ".codex-plugin", "plugin.json");
@@ -429,6 +425,7 @@ async function buildManifest(
     installRoot,
     pluginManifestSha256: await dependencies.sha256(pluginManifestPath),
     bundleManifestSha256: await dependencies.sha256(bundleManifestPath),
+    worker,
     ownedPaths,
     createdAt: dependencies.now(),
   };

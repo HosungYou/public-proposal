@@ -27,6 +27,12 @@ export type ProcessRunner = (
   },
 ) => Promise<ProcessResult>;
 
+export interface WorkerInstallation {
+  readonly executable: string;
+  readonly protocolVersion: typeof WORKER_PROTOCOL_VERSION;
+  readonly sha256: string;
+}
+
 export interface SetupDependencies {
   readonly spawn: ProcessRunner;
   readonly readFile: (path: string) => Promise<string>;
@@ -76,6 +82,11 @@ const installManifestSchema = z.object({
   installRoot: z.string().min(1),
   pluginManifestSha256: z.string().min(1),
   bundleManifestSha256: z.string().min(1),
+  worker: z.object({
+    executable: z.string().min(1),
+    protocolVersion: z.literal(WORKER_PROTOCOL_VERSION),
+    sha256: z.string().min(1),
+  }),
   ownedPaths: z.array(z.string().min(1)).readonly(),
   createdAt: z.string().datetime({ offset: true }),
 });

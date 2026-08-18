@@ -1,4 +1,4 @@
-import { chmod, mkdtemp, readFile, readdir, rm, stat, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, readFile, readdir, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
 import { spawn } from "node:child_process";
@@ -133,6 +133,47 @@ describe("kpp CLI", () => {
     const result = await runProcess(process.execPath, ["apps/kpp-cli/dist/main.js", "doctor", "--json"], {
       KPP_WORKER_PATH: worker,
       KPP_WORKER_PROTOCOL_VERSION: undefined,
+    });
+
+    expect(result).toMatchObject({ code: 0, stderr: "" });
+    expect(checkNamed(parseEnvelope(result.stdout), "worker_protocol")).toMatchObject({
+      status: "pass",
+      detected: { expected: "1.0.0", actual: "1.0.0", worker },
+    });
+  });
+
+  it("passes worker protocol from the managed Public Proposal installation manifest", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "kpp-managed-worker-"));
+    temporaryDirectories.push(directory);
+    const installRoot = join(directory, ".public-proposal");
+    const worker = join(installRoot, "worker", "bin", "python");
+    await mkdir(join(installRoot, "worker", "bin"), { recursive: true });
+    await writeFile(worker, "#!/usr/bin/env node\nif (process.argv[2] === '--protocol-version') process.stdout.write('1.0.0\\n');\n");
+    await chmod(worker, 0o755);
+    const manifestPath = join(installRoot, "installation.json");
+    await writeFile(manifestPath, `${JSON.stringify({
+      schemaVersion: "1.0.0",
+      packageVersion: "0.1.0",
+      kppVersion: "0.2.1",
+      longtableVersion: "0.1.72",
+      pluginVersion: "0.1.0",
+      workerProtocol: "1.0.0",
+      installRoot,
+      pluginManifestSha256: "sha256:plugin",
+      bundleManifestSha256: "sha256:bundle",
+      worker: { executable: worker, protocolVersion: "1.0.0", sha256: "sha256:worker" },
+      ownedPaths: [
+        join(installRoot, "plugin"),
+        join(installRoot, "marketplace"),
+        join(installRoot, "codex-skills"),
+        join(installRoot, "worker"),
+      ],
+      createdAt: "2026-08-18T00:00:00.000Z",
+    })}\n`);
+
+    const result = await runProcess(process.execPath, ["apps/kpp-cli/dist/main.js", "doctor", "--json"], {
+      KPP_WORKER_PATH: undefined,
+      PUBLIC_PROPOSAL_INSTALLATION_MANIFEST: manifestPath,
     });
 
     expect(result).toMatchObject({ code: 0, stderr: "" });

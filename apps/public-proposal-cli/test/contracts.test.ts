@@ -23,6 +23,11 @@ describe("public proposal installer contracts", () => {
       installRoot: "/tmp/public-proposal",
       pluginManifestSha256: "sha256:plugin",
       bundleManifestSha256: "sha256:bundle",
+      worker: {
+        executable: "/tmp/public-proposal/worker/bin/python",
+        protocolVersion: "1.0.0",
+        sha256: "sha256:worker",
+      },
       ownedPaths: ["/tmp/public-proposal"],
       createdAt: "2026-08-18T00:00:00.000Z",
     };

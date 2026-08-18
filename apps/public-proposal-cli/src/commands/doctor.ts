@@ -11,6 +11,7 @@ import {
   type ProcessRunner,
 } from "../contracts.js";
 import { nodeFs } from "../process.js";
+import { resolveManagedWorkerFromManifestContents, verifyWorkerProtocol } from "../worker.js";
 
 export interface DoctorDependencies {
   readonly packageRoot?: string;
@@ -39,7 +40,7 @@ export async function runDoctor(
   checks.push(await kppCheck(dependencies.spawn, input.expectedKppVersion));
   checks.push(await longtableCheck(dependencies.spawn, input.expectedLongtableVersion, input.projectClass));
   checks.push(await scholarResearchCheck(dependencies.spawn, input.projectClass));
-  checks.push(await workerCheck(dependencies.spawn, input.expectedWorkerProtocol));
+  checks.push(await workerCheck(input.installRoot, dependencies, input.expectedWorkerProtocol));
   checks.push(authorityCheck());
 
   return {
@@ -315,20 +316,37 @@ async function scholarResearchCheck(
   };
 }
 
-async function workerCheck(spawn: ProcessRunner, expectedProtocol: string): Promise<DoctorCheck> {
-  const result = await spawn("kpp", ["worker", "doctor", "--json"]);
-  const detected = parseJsonOrText(result.stdout) as { protocol?: string } | string | null;
-  const protocol = typeof detected === "object" && detected !== null ? detected.protocol : undefined;
-  if (result.code !== 0 || protocol !== expectedProtocol) {
+async function workerCheck(
+  installRoot: string,
+  dependencies: DoctorDependencies,
+  expectedProtocol: string,
+): Promise<DoctorCheck> {
+  const manifestRaw = await dependencies.readFile(join(installRoot, "installation.json")).catch(() => undefined);
+  const worker = manifestRaw === undefined ? null : resolveManagedWorkerFromManifestContents(manifestRaw);
+  if (worker === null) {
     return {
       name: "worker",
       status: "blocker",
       code: "PP_WORKER_PROTOCOL_MISSING",
-      detected,
+      detected: null,
       message: `Managed worker protocol ${expectedProtocol} is required.`,
     };
   }
-  return { name: "worker", status: "pass", detected, message: "Managed worker protocol is installed." };
+  try {
+    const protocol = await verifyWorkerProtocol(worker, dependencies.spawn);
+    return { name: "worker", status: "pass", detected: { protocol, worker }, message: "Managed worker protocol is installed." };
+  } catch (error) {
+    const code = error instanceof Error && "code" in error && typeof error.code === "string"
+      ? error.code
+      : "PP_WORKER_PROTOCOL_MISSING";
+    return {
+      name: "worker",
+      status: "blocker",
+      code,
+      detected: { worker },
+      message: `Managed worker protocol ${expectedProtocol} is required.`,
+    };
+  }
 }
 
 function authorityCheck(): DoctorCheck {

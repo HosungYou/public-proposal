@@ -150,10 +150,16 @@ function fakeDoctorDependencies(input?: {
           pluginManifestSha256: "sha256:/home/ada/.config/public-proposal/plugin/.codex-plugin/plugin.json",
           bundleManifestSha256:
             "sha256:/home/ada/.config/public-proposal/plugin/skills/korean-public-proposal/BUNDLE-MANIFEST.json",
+          worker: {
+            executable: "/home/ada/.config/public-proposal/worker/bin/python",
+            protocolVersion: "1.0.0",
+            sha256: "sha256:/home/ada/.config/public-proposal/worker/bin/python",
+          },
           ownedPaths: [
             "/home/ada/.config/public-proposal/plugin",
             "/home/ada/.config/public-proposal/marketplace",
             "/home/ada/.config/public-proposal/codex-skills",
+            "/home/ada/.config/public-proposal/worker",
           ],
           createdAt: "2026-08-18T00:00:00.000Z",
         });
@@ -208,10 +214,10 @@ function fakeDoctorDependencies(input?: {
           : ok(`${longtableVersion}\n`);
       }
       if (rendered === "longtable scholar-research doctor --json") return ok("{\"ok\":true}\n");
-      if (rendered === "kpp worker doctor --json") {
+      if (rendered === "/home/ada/.config/public-proposal/worker/bin/python -c from kpp_docx.protocol import PROTOCOL_VERSION; print(PROTOCOL_VERSION)") {
         return workerProtocol === null
-          ? { code: 1, stdout: "{\"ok\":false}\n", stderr: "" }
-          : ok(`{"ok":true,"protocol":"${workerProtocol}"}\n`);
+          ? { code: 1, stdout: "", stderr: "" }
+          : ok(`${workerProtocol}\n`);
       }
       if (rendered.startsWith("codex plugin list")) return ok("{\"plugins\":[{\"name\":\"public-proposal\"}]}\n");
       return { code: 127, stdout: "", stderr: `unexpected host command: ${rendered}` };

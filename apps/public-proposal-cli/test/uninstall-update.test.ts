@@ -205,6 +205,7 @@ describe("public proposal uninstall and update", () => {
 });
 
 function fakeManifest(input?: Partial<InstallManifest>): InstallManifest {
+  const installRoot = input?.installRoot ?? "/home/ada/.config/public-proposal";
   return {
     schemaVersion: "1.0.0",
     packageVersion: "0.1.0",
@@ -212,12 +213,17 @@ function fakeManifest(input?: Partial<InstallManifest>): InstallManifest {
     longtableVersion: "0.1.72",
     pluginVersion: "0.1.0",
     workerProtocol: "1.0.0",
-    installRoot: "/home/ada/.config/public-proposal",
+    installRoot,
     pluginManifestSha256: "sha256:plugin",
     bundleManifestSha256: "sha256:bundle",
     ownedPaths: ["/home/ada/.config/public-proposal/plugin"],
     createdAt: "2026-08-18T00:00:00.000Z",
     ...input,
+    worker: input?.worker ?? {
+      executable: `${installRoot}/worker/bin/python`,
+      protocolVersion: "1.0.0",
+      sha256: "sha256:worker",
+    },
   };
 }
 

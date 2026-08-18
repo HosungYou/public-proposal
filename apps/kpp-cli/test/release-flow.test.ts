@@ -168,6 +168,20 @@ describe("verified proposal release flow", () => {
     await expect(access(join(fixture.root, "receipts", "build.json"))).rejects.toBeDefined();
   });
 
+  it("rejects an explicit worker protocol mismatch before publishing a build receipt", async () => {
+    const fixture = await createContentApprovedProject(roots);
+    const worker = join(fixture.root, "worker-mismatch.mjs");
+    await writeFile(
+      worker,
+      "#!/usr/bin/env node\nif (process.argv[2] === '--protocol-version') process.stdout.write('2.0.0\\n'); else process.stdout.write('Python 3.13.0\\n');\n",
+    );
+    await chmod(worker, 0o755);
+
+    await expect(buildProject(fixture.root, { requestPath: fixture.requestPath, pythonPath: worker }))
+      .rejects.toMatchObject({ code: "PP_WORKER_PROTOCOL_MISMATCH" });
+    await expect(access(join(fixture.root, "receipts", "build.json"))).rejects.toBeDefined();
+  });
+
   it("releases only approval-bound allowlisted artifacts", async () => {
     const fixture = await createAuditedProject(roots);
     const approved = await approveProject(fixture.root, { approvedBy: "제출책임자", auditPath: fixture.auditPath });
