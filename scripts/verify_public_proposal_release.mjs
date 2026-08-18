@@ -268,7 +268,11 @@ export async function runReleaseVerification() {
   const runRequired = async (name, command, args, options = {}) => {
     const result = await capture(name, command, args, { cwd: REPOSITORY_ROOT, ...options });
     commands.push(result);
-    if (result.exitCode !== 0) throw new VerificationError(`${name} failed`, { artifactRoot, commands });
+    if (result.exitCode !== 0) {
+      const output = `${result.stdout}\n${result.stderr}`.trim();
+      const tail = output.length > 4000 ? output.slice(-4000) : output;
+      throw new VerificationError(`${name} failed${tail ? `; output:\n${tail}` : ""}`, { artifactRoot, commands });
+    }
     return result;
   };
 
