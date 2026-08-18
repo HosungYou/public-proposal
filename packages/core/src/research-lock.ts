@@ -10,18 +10,12 @@ import {
 } from "@longtable/kpp-schemas";
 import { KppError } from "./errors.js";
 import { sha256File } from "./hash.js";
-import { readProject } from "./project-store.js";
+import { resolveProjectResearchRequirement } from "./research-requirement.js";
 import { withReceiptPathLock } from "./receipt-lock.js";
 import { verifyReceipt } from "./receipts.js";
 
 const DEFAULT_SCHEMA_VERSION = "1.0.0";
 const DEFAULT_TOOL_VERSION = "0.1.0";
-
-const REQUIRED_RESEARCH_CLASSES = new Set<ProposalClass>([
-  "academic_research",
-  "research_service",
-  "policy_research",
-]);
 
 const ARTIFACT_BINDINGS = [
   {
@@ -78,10 +72,16 @@ export async function importResearchLock(
 ): Promise<ResearchLockImportResult> {
   const root = resolve(rootInput);
   const handoffPath = resolve(handoffPathInput);
-  const project = await readProject(root);
+  const { project, required: researchRequired } = await resolveProjectResearchRequirement(root);
   const handoff = await readResearchLockHandoff(handoffPath);
 
-  validateIdentity(project.projectId, project.proposalClass, handoff, expectedLongtableVersion);
+  validateIdentity(
+    project.projectId,
+    project.proposalClass,
+    researchRequired,
+    handoff,
+    expectedLongtableVersion,
+  );
   const artifacts = await resolveArtifacts(root, handoff);
   validateDistinctArtifacts(artifacts);
   const receiptPath = join(root, "receipts", "research-lock.json");
@@ -161,6 +161,7 @@ async function readResearchLockHandoff(path: string): Promise<ResearchLock> {
 function validateIdentity(
   projectId: string,
   proposalClass: ProposalClass,
+  researchRequired: boolean,
   handoff: ResearchLock,
   expectedLongtableVersion: string,
 ): void {
@@ -170,16 +171,10 @@ function validateIdentity(
       actual: handoff.longtableVersion,
     });
   }
-  if (!REQUIRED_RESEARCH_CLASSES.has(proposalClass)) {
+  if (!researchRequired) {
     throw new KppError("PP_LONGTABLE_REQUIRED", "이 제안서 유형은 연구 잠금 대상으로 분류되지 않았습니다.", {
-      expected: [...REQUIRED_RESEARCH_CLASSES],
+      expected: "research-required project",
       actual: proposalClass,
-    });
-  }
-  if (!REQUIRED_RESEARCH_CLASSES.has(handoff.proposalClass)) {
-    throw new KppError("PP_LONGTABLE_REQUIRED", "LongTable handoff 제안서 유형은 연구 잠금 대상이어야 합니다.", {
-      expected: [...REQUIRED_RESEARCH_CLASSES],
-      actual: handoff.proposalClass,
     });
   }
   if (handoff.projectId !== projectId || handoff.proposalClass !== proposalClass) {

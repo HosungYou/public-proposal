@@ -227,6 +227,22 @@ describe("content-to-build integration fixture", () => {
     await expect(readFile(join(result.root, "receipts", "research-lock.json"), "utf8"))
       .rejects.toMatchObject({ code: "ENOENT" });
   });
+
+  it("allows general procurement with an academic evidence slot after a valid LongTable lock", async () => {
+    const result = await runContentFixture(
+      "fixtures/valid/minimal-research-proposal",
+      temporaryDirectories,
+      { proposalClass: "general_procurement", academicEvidence: true },
+    );
+
+    expect(result.state).toBe("CONTENT_APPROVED");
+    const researchReceiptPath = join(result.root, "receipts", "research-lock.json");
+    expect((await core.verifyReceipt(researchReceiptPath)).valid).toBe(true);
+    const contentApproval = await core.verifyReceipt(join(result.root, "receipts", "content-approval.json"));
+    expect(contentApproval.receipt.inputReceiptHashes).toContain(
+      await core.sha256File(researchReceiptPath),
+    );
+  });
 });
 
 async function runContentFixture(
@@ -273,13 +289,14 @@ async function runContentFixture(
   const decisions = await materializeTemplate<Record<string, unknown>>(decisionsTemplatePath, decisionsPath, {
     "__METHOD_EVIDENCE_PATH__": evidencePath,
   });
-  if (options.academicEvidence === false) {
+  if (options.academicEvidence !== undefined) {
     const requirementRecord = decisions.requirements as {
       requirements: Array<{ pageRole: string }>;
       evidenceBindings: Array<{ targetPageRole: string }>;
     };
-    requirementRecord.requirements[0]!.pageRole = "qualification_evidence";
-    requirementRecord.evidenceBindings[0]!.targetPageRole = "qualification_evidence";
+    const pageRole = options.academicEvidence ? "academic_evidence" : "qualification_evidence";
+    requirementRecord.requirements[0]!.pageRole = pageRole;
+    requirementRecord.evidenceBindings[0]!.targetPageRole = pageRole;
     await writeFile(decisionsPath, `${JSON.stringify(decisions, null, 2)}\n`, "utf8");
   }
   const issuerSourceSha256 = await core.sha256File(rfpPath);
@@ -305,7 +322,7 @@ async function runContentFixture(
   const requirementsPath = join(root, "requirements", "requirements.json");
   expect(await runCli(["plan", root, "--requirements", requirementsPath, "--json"])).toMatchObject({ code: 0, stderr: "" });
 
-  if (proposalClass === "research_service") {
+  if (proposalClass === "research_service" || options.academicEvidence === true) {
     await createResearchLock(root, proposalClass);
   }
 
@@ -362,7 +379,7 @@ async function runContentFixture(
 
 async function createResearchLock(
   root: string,
-  proposalClass: "research_service",
+  proposalClass: "research_service" | "general_procurement",
 ): Promise<void> {
   const researchRoot = join(root, "evidence", "research-lock");
   await mkdir(researchRoot, { recursive: true });

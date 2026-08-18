@@ -38,13 +38,22 @@ export async function verifyResearchRequirement(root: string): Promise<void> {
   await getResearchLockReceiptHash(root);
 }
 
-export async function getResearchLockReceiptHash(rootInput: string): Promise<string | null> {
+export async function resolveProjectResearchRequirement(rootInput: string) {
   const root = resolve(rootInput);
   const project = await readProject(root);
   const hasAcademicEvidence = project.proposalClass === "general_procurement"
     ? await lockedRequirementsHaveAcademicEvidence(root)
     : false;
-  if (!requiresResearchLock(project.proposalClass, hasAcademicEvidence)) {
+  return {
+    project,
+    required: requiresResearchLock(project.proposalClass, hasAcademicEvidence),
+  } as const;
+}
+
+export async function getResearchLockReceiptHash(rootInput: string): Promise<string | null> {
+  const root = resolve(rootInput);
+  const { project, required } = await resolveProjectResearchRequirement(root);
+  if (!required) {
     return null;
   }
 
@@ -123,6 +132,7 @@ export async function getResearchLockReceiptHash(rootInput: string): Promise<str
 
 async function lockedRequirementsHaveAcademicEvidence(root: string): Promise<boolean> {
   const path = join(root, "requirements", "requirements.json");
+  const requirementsReceiptPath = join(root, "receipts", "requirements-lock.json");
   let value: unknown;
   try {
     value = JSON.parse(await readFile(path, "utf8"));
@@ -134,6 +144,36 @@ async function lockedRequirementsHaveAcademicEvidence(root: string): Promise<boo
       path,
       actual: error instanceof Error ? error.message : error,
     });
+  }
+  let requirementsReceipt;
+  try {
+    requirementsReceipt = await verifyReceipt(requirementsReceiptPath);
+  } catch (error) {
+    if (error instanceof KppError && error.code === "KPP_INPUT_RECEIPT_READ") {
+      return false;
+    }
+    throw withGateStage(error);
+  }
+  if (
+    !requirementsReceipt.valid
+    || requirementsReceipt.receipt.stage !== "REQUIREMENTS_LOCKED"
+    || requirementsReceipt.receipt.result !== "PASS"
+  ) {
+    throw gateError("KPP_INPUT_RECEIPT_INVALID", "학술 근거 슬롯의 요구사항 잠금이 유효하지 않습니다.", {
+      path: requirementsReceiptPath,
+      actual: requirementsReceipt.mismatches,
+    });
+  }
+  const requirementsRealPath = await realpath(path);
+  const requirementsSha256 = await sha256File(requirementsRealPath);
+  const boundRequirements = await Promise.all(requirementsReceipt.receipt.files.map(async (file) => ({
+    path: await realpath(file.path).catch(() => undefined),
+    sha256: file.sha256,
+  })));
+  if (!boundRequirements.some((file) =>
+    file.path === requirementsRealPath && file.sha256 === requirementsSha256,
+  )) {
+    return false;
   }
   const parsed = ConfirmedRequirementsSchema.safeParse(value);
   if (!parsed.success) {
