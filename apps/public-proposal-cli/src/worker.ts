@@ -26,7 +26,15 @@ export interface ManagedWorkerVerificationDependencies {
   readonly sha256?: (path: string) => Promise<string>;
 }
 
-export async function installManagedWorker(root: string, runner: ProcessRunner): Promise<WorkerInstallation> {
+export interface ManagedWorkerInstallOptions {
+  readonly updateManifest?: boolean;
+}
+
+export async function installManagedWorker(
+  root: string,
+  runner: ProcessRunner,
+  options: ManagedWorkerInstallOptions = {},
+): Promise<WorkerInstallation> {
   const installRoot = resolve(root);
   const workerRoot = join(installRoot, "worker");
   const source = join(workerRoot, "source");
@@ -59,7 +67,9 @@ export async function installManagedWorker(root: string, runner: ProcessRunner):
     protocolVersion: WORKER_PROTOCOL_VERSION,
     sha256: await sha256Text(await readFile(executable)),
   } satisfies WorkerInstallation;
-  await updateManifestIfPresent(installRoot, installation);
+  if (options.updateManifest !== false) {
+    await updateManifestIfPresent(installRoot, installation);
+  }
   return installation;
 }
 

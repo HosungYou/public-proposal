@@ -299,6 +299,51 @@ describe("public proposal setup", () => {
     expect(JSON.parse(fake.files[`${installRoot}/installation.json`])).not.toHaveProperty("worker");
   });
 
+  it("preserves exact Task 3 receipt bytes after post-install migration failure and retries", async () => {
+    const fake = fakeSetupDependencies();
+    const installRoot = "/home/ada/.config/public-proposal";
+    const legacyBytes = JSON.stringify(task3Manifest(installRoot));
+    fake.files[`${installRoot}/installation.json`] = legacyBytes;
+    seedInstalledPlugin(fake, installRoot);
+    fake.files[`${installRoot}/marketplace/.dir`] = "dir";
+    fake.files[`${installRoot}/codex-skills/.dir`] = "dir";
+    fake.workerProtocol = "2.0.0";
+
+    const failed = await runSetup(
+      { provider: "codex", installScope: "user", cwd: "/work", home: "/home/ada" },
+      fake,
+    );
+
+    expect(failed.ok).toBe(false);
+    expect(failed.error?.code).toBe("PP_WORKER_PROTOCOL_MISMATCH");
+    expect(fake.files[`${installRoot}/installation.json`]).toBe(legacyBytes);
+    expect(fake.removed).toEqual([`${installRoot}/worker`]);
+    expect(fake.files[`${installRoot}/plugin/.codex-plugin/plugin.json`]).toContain("public-proposal");
+    expect(fake.files[`${installRoot}/marketplace/.dir`]).toBe("dir");
+    expect(fake.files[`${installRoot}/codex-skills/.dir`]).toBe("dir");
+
+    fake.removed.length = 0;
+    fake.workerProtocol = WORKER_PROTOCOL_VERSION;
+    const retried = await runSetup(
+      { provider: "codex", installScope: "user", cwd: "/work", home: "/home/ada" },
+      fake,
+    );
+
+    expect(retried.ok).toBe(true);
+    expect(JSON.parse(fake.files[`${installRoot}/installation.json`])).toMatchObject({
+      worker: {
+        executable: `${installRoot}/worker/bin/python`,
+        protocolVersion: WORKER_PROTOCOL_VERSION,
+      },
+      ownedPaths: [
+        `${installRoot}/plugin`,
+        `${installRoot}/marketplace`,
+        `${installRoot}/codex-skills`,
+        `${installRoot}/worker`,
+      ],
+    });
+  });
+
   it("does not truncate an external file when a fixed manifest temp path is a symlink", async () => {
     const installRoot = await mkdtemp(join(tmpdir(), "public-proposal-setup-symlink-"));
     const externalTarget = join(tmpdir(), `public-proposal-external-${process.pid}-${Date.now()}.txt`);
@@ -335,6 +380,7 @@ interface FakeSetupDependencies extends SetupDependencies {
   readonly removed: string[];
   readonly commands: string[];
   readonly modes: Record<string, number | undefined>;
+  workerProtocol: string;
 }
 
 function seedInstalledPlugin(fake: FakeSetupDependencies, installRoot: string): void {
@@ -366,6 +412,7 @@ function fakeSetupDependencies(input?: {
   const removed: string[] = [];
   const commands: string[] = [];
   const modes: Record<string, number | undefined> = {};
+  const state = { workerProtocol: WORKER_PROTOCOL_VERSION };
 
   return {
     packageRoot: "/pkg",
@@ -376,6 +423,12 @@ function fakeSetupDependencies(input?: {
     removed,
     commands,
     modes,
+    get workerProtocol() {
+      return state.workerProtocol;
+    },
+    set workerProtocol(value: string) {
+      state.workerProtocol = value;
+    },
     now: () => "2026-08-18T00:00:00.000Z",
     sha256: async (path) => path.endsWith("/worker/bin/python") ? `sha256:${"a".repeat(64)}` : `sha256:${path}`,
     realpath: async (path) => path,
@@ -422,11 +475,20 @@ function fakeSetupDependencies(input?: {
       }
       removed.push(path);
     },
-    installWorker: async (root) => {
+    installWorker: async (root, _runner, options) => {
       const executable = `${root}/worker/bin/python`;
       files[`${root}/worker/.dir`] = "dir";
       files[executable] = "#!/usr/bin/env sh\n";
       writes.push(`${root}/worker`);
+      if (options?.updateManifest !== false && files[`${root}/installation.json`] !== undefined) {
+        const parsed = JSON.parse(files[`${root}/installation.json`]);
+        parsed.worker = {
+          executable,
+          protocolVersion: WORKER_PROTOCOL_VERSION,
+          sha256: `sha256:${"a".repeat(64)}`,
+        };
+        files[`${root}/installation.json`] = JSON.stringify(parsed);
+      }
       if (input?.workerFailure !== undefined) {
         throw input.workerFailure;
       }
@@ -494,7 +556,7 @@ function fakeSetupDependencies(input?: {
       if (rendered.startsWith("codex plugin marketplace add ")) return ok("");
       if (rendered.startsWith("codex plugin add ")) return ok("");
       if (rendered === "uv sync --locked --no-dev") return ok("");
-      if (rendered.endsWith("-c from kpp_docx.protocol import PROTOCOL_VERSION; print(PROTOCOL_VERSION)")) return ok("1.0.0\n");
+      if (rendered.endsWith("-c from kpp_docx.protocol import PROTOCOL_VERSION; print(PROTOCOL_VERSION)")) return ok(`${state.workerProtocol}\n`);
       return { code: 127, stdout: "", stderr: `unexpected host command: ${rendered}` };
     },
   };

@@ -16,7 +16,7 @@ import {
 import { readManifestJson, serializeManifest } from "../installation-manifest.js";
 import { manifestPath, manifestTempPath, installationRoot } from "../paths.js";
 import { nodeFs } from "../process.js";
-import { installManagedWorker } from "../worker.js";
+import { installManagedWorker, type ManagedWorkerInstallOptions } from "../worker.js";
 import { runDoctor } from "./doctor.js";
 
 export interface SetupDependencies {
@@ -32,7 +32,7 @@ export interface SetupDependencies {
   readonly exists?: (path: string) => Promise<boolean>;
   readonly copyDir?: (from: string, to: string) => Promise<void>;
   readonly remove?: (path: string) => Promise<void>;
-  readonly installWorker?: (root: string, runner: ProcessRunner) => Promise<WorkerInstallation>;
+  readonly installWorker?: (root: string, runner: ProcessRunner, options?: ManagedWorkerInstallOptions) => Promise<WorkerInstallation>;
 }
 
 const PLAN = [
@@ -327,7 +327,7 @@ async function migrateLegacyManifest(
   dependencies: SetupDependencies,
   exists: (path: string) => Promise<boolean>,
   remove: (path: string) => Promise<void>,
-  installWorker: (root: string, runner: ProcessRunner) => Promise<WorkerInstallation>,
+  installWorker: (root: string, runner: ProcessRunner, options?: ManagedWorkerInstallOptions) => Promise<WorkerInstallation>,
 ): Promise<SetupResult> {
   const requestedRoot = resolve(installRoot);
   const manifest = manifestPath(requestedRoot);
@@ -364,7 +364,7 @@ async function migrateLegacyManifest(
 
   const writes: string[] = [];
   try {
-    const worker = await installWorker(requestedRoot, dependencies.spawn);
+    const worker = await installWorker(requestedRoot, dependencies.spawn, { updateManifest: false });
     writes.push(workerRoot);
     const ownedPaths = [...expectedLegacyPaths, workerRoot];
     const installManifest = await buildManifest(requestedRoot, ownedPaths, worker, dependencies);

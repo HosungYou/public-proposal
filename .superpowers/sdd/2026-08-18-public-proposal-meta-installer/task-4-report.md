@@ -332,3 +332,115 @@ Committed in the fix-round changeset; final immutable HEAD is returned in the wo
 
 - `resolveManagedWorker()` remains the compatibility/lightweight resolver and does not hash-read by itself; doctor/build now use strict verification paths before execution.
 - Repository `.venv` fallback is still present only when no managed manifest exists, preserving development test behavior.
+
+## Fix Round 2: Legacy Migration Atomicity
+
+Status: DONE
+
+### Changes
+
+- Added `ManagedWorkerInstallOptions` to `installManagedWorker`.
+  - Default behavior is unchanged: managed worker install updates an existing manifest when called normally.
+  - Legacy migration calls `installWorker(..., { updateManifest: false })` so the old Task 3 receipt is not mutated before doctor and final atomic receipt replacement complete.
+- Preserved normal setup, owned-path, worker protocol, hash, symlink, mismatch, and explicit `KPP_WORKER_PATH` behavior.
+
+### Regression Test Added
+
+- `preserves exact Task 3 receipt bytes after post-install migration failure and retries`
+  - Simulates the old receipt-mutation path in the fake installer unless `updateManifest: false` is used.
+  - Forces a post-install doctor failure with worker protocol `2.0.0`.
+  - Verifies the exact original legacy receipt bytes remain.
+  - Verifies old `plugin`, `marketplace`, and `codex-skills` paths remain.
+  - Verifies the new worker root is rolled back.
+  - Retries with protocol `1.0.0` and verifies migration succeeds.
+
+### Commands and Output
+
+```text
+npm test -- apps/public-proposal-cli/test/setup.test.ts
+```
+
+Result:
+
+```text
+Test Files  1 passed (1)
+Tests  13 passed (13)
+```
+
+```text
+npm test -- apps/public-proposal-cli/test/worker.test.ts apps/public-proposal-cli/test/setup.test.ts apps/public-proposal-cli/test/doctor.test.ts apps/kpp-cli/test/cli.test.ts apps/kpp-cli/test/release-flow.test.ts
+```
+
+Result:
+
+```text
+Test Files  5 passed (5)
+Tests  51 passed (51)
+```
+
+```text
+npm run typecheck
+```
+
+Result:
+
+```text
+tsc --noEmit -p tsconfig.base.json && npm run typecheck --workspace @longtable/public-proposal
+@longtable/public-proposal@0.1.0 typecheck
+tsc --noEmit -p tsconfig.json
+```
+
+Exit code: 0.
+
+```text
+npm run build
+```
+
+Result:
+
+```text
+@longtable/kpp-schemas@0.2.1 build
+@longtable/kpp-core@0.2.1 build
+@longtable/kpp-renderers@0.2.1 build
+@longtable/kpp-audits@0.2.1 build
+@longtable/kpp-cli@0.2.1 build
+@longtable/public-proposal@0.1.0 build
+node ../../scripts/sync_public_proposal_worker.mjs && tsc -p tsconfig.json
+```
+
+Exit code: 0.
+
+```text
+npm pack --workspace @longtable/public-proposal --dry-run
+```
+
+Result:
+
+```text
+longtable-public-proposal-0.1.0.tgz
+total files: 86
+```
+
+Exit code: 0.
+
+```text
+find apps/public-proposal-cli/worker -type d \( -name .venv -o -name .pytest_cache -o -name __pycache__ \) -print
+```
+
+No output.
+
+```text
+rg -n "/Users/|/var/folders|\.venv|__pycache__|\.pytest_cache" apps/public-proposal-cli/worker
+```
+
+No matches.
+
+```text
+git diff --check
+```
+
+Exit code: 0.
+
+### Fix Round 2 Commit
+
+Committed in the fix-round-2 changeset; final immutable HEAD is returned in the worker status.
