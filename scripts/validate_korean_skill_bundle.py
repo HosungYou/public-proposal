@@ -9,16 +9,30 @@ import json
 import re
 from pathlib import Path, PurePosixPath, PureWindowsPath
 from typing import Any
+from urllib.parse import urlparse
 
 
 ALLOWED_CLASSIFICATIONS = {"skill", "reference", "script", "asset"}
 EXPECTED_TOP_LEVEL = {"SKILL.md", "references", "scripts", "assets", "BUNDLE-MANIFEST.json"}
 HEX64_RE = re.compile(r"^[0-9a-f]{64}$")
-TEXT_ABSOLUTE_PATH_PATTERNS = (
-    re.compile(r"(?:(?<=^)|(?<=[\s\"'`(=,\[]))(?P<path>/(?!/)[^/\s\"'`<>|]+(?:/[^\s\"'`<>|]+)+)"),
-    re.compile(r"(?:(?<=^)|(?<=[\s\"'`(=,\[]))(?P<path>[A-Za-z]:[\\/][^\s\"'`<>|]+)"),
-    re.compile(r"(?:(?<=^)|(?<=[\s\"'`(=,\[]))(?P<path>\\\\[^\s\"'`<>|]+)"),
-)
+URI_TOKEN_RE = re.compile(r"(?P<token>[A-Za-z][A-Za-z0-9+.\-]*:[^\s\"'`<>|]+)")
+WINDOWS_DRIVE_TOKEN_RE = re.compile(r"(?:(?<=^)|(?<=[\s\"'`(=,\[]))(?P<token>[A-Za-z]:[\\/][^\s\"'`<>|]+)")
+UNC_TOKEN_RE = re.compile(r"(?:(?<=^)|(?<=[\s\"'`(=,\[]))(?P<token>\\\\[^\s\"'`<>|]+)")
+POSIX_TOKEN_RE = re.compile(r"(?:(?<=^)|(?<=[\s\"'`(=,\[]))(?P<token>/(?!/)[^\s\"'`<>|]+)")
+KNOWN_POSIX_ROOTS = {
+    "/bin",
+    "/etc",
+    "/home",
+    "/Library",
+    "/opt",
+    "/private",
+    "/sbin",
+    "/tmp",
+    "/Users",
+    "/usr",
+    "/var",
+    "/Volumes",
+}
 
 
 def parse_args() -> argparse.Namespace:
@@ -204,10 +218,10 @@ def check_file_for_absolute_source_paths(path: Path, errors: list[str]) -> None:
 
 def extract_absolute_path_tokens(text: str) -> list[str]:
     matches: list[str] = []
-    for pattern in TEXT_ABSOLUTE_PATH_PATTERNS:
+    for pattern in (URI_TOKEN_RE, WINDOWS_DRIVE_TOKEN_RE, UNC_TOKEN_RE, POSIX_TOKEN_RE):
         for match in pattern.finditer(text):
-            candidate = match.group("path")
-            if is_absolute_path_like(candidate):
+            candidate = match.group("token")
+            if is_absolute_path_reference(candidate):
                 matches.append(candidate)
     return dedupe(matches)
 
@@ -221,6 +235,40 @@ def is_absolute_path_like(value: str) -> bool:
     if PureWindowsPath(stripped).is_absolute():
         return True
     return stripped.startswith("\\\\")
+
+
+def is_absolute_path_reference(value: str) -> bool:
+    stripped = value.strip()
+    if not stripped:
+        return False
+    if stripped.startswith("http://") or stripped.startswith("https://"):
+        return False
+    if URI_TOKEN_RE.fullmatch(stripped):
+        parsed = urlparse(stripped)
+        if parsed.scheme in {"http", "https"}:
+            return False
+        if parsed.scheme == "file":
+            if parsed.netloc and parsed.path:
+                return is_filesystem_absolute_path(f"//{parsed.netloc}{parsed.path}")
+            return is_filesystem_absolute_path(parsed.path or parsed.netloc)
+        return is_filesystem_absolute_path(stripped.split(":", 1)[1])
+    return is_filesystem_absolute_path(stripped)
+
+
+def is_filesystem_absolute_path(value: str) -> bool:
+    stripped = value.strip()
+    if not stripped:
+        return False
+    if stripped.startswith("\\\\"):
+        return True
+    if re.fullmatch(r"[A-Za-z]:[\\/].*", stripped):
+        return True
+    if not PurePosixPath(stripped).is_absolute():
+        return False
+    if stripped.startswith("//"):
+        return True
+    normalized = stripped.rstrip("/") or stripped
+    return normalized in KNOWN_POSIX_ROOTS or "/" in stripped[1:]
 
 
 def dedupe(values: list[str]) -> list[str]:

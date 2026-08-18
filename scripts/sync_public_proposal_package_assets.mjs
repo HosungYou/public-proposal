@@ -10,11 +10,24 @@ const sourcePluginRoot = join(repositoryRoot, "plugins", "public-proposal");
 const packagedPluginRoot = join(repositoryRoot, "apps", "public-proposal-cli", "plugin");
 const packagedMarketplaceRoot = join(repositoryRoot, "apps", "public-proposal-cli", "marketplace");
 const packagedMarketplacePath = join(packagedMarketplaceRoot, "marketplace.json");
-const absolutePathPatterns = [
-  /(?:(?<=^)|(?<=[\s"'`(=,\[]))\/(?!\/)[^/\s"'`<>|]+(?:\/[^\s"'`<>|]+)+/g,
-  /(?:(?<=^)|(?<=[\s"'`(=,\[]))[A-Za-z]:[\\/][^\s"'`<>|]+/g,
-  /(?:(?<=^)|(?<=[\s"'`(=,\[]))\\\\[^\s"'`<>|]+/g,
-];
+const uriTokenPattern = /[A-Za-z][A-Za-z0-9+.-]*:[^\s"'`<>|]+/g;
+const windowsDriveTokenPattern = /(?:(?<=^)|(?<=[\s"'`(=,\[]))[A-Za-z]:[\\/][^\s"'`<>|]+/g;
+const uncTokenPattern = /(?:(?<=^)|(?<=[\s"'`(=,\[]))\\\\[^\s"'`<>|]+/g;
+const posixTokenPattern = /(?:(?<=^)|(?<=[\s"'`(=,\[]))\/(?!\/)[^\s"'`<>|]+/g;
+const knownPosixRoots = new Set([
+  "/bin",
+  "/etc",
+  "/home",
+  "/Library",
+  "/opt",
+  "/private",
+  "/sbin",
+  "/tmp",
+  "/Users",
+  "/usr",
+  "/var",
+  "/Volumes",
+]);
 
 runValidator(sourcePluginRoot);
 replaceDirectory(sourcePluginRoot, packagedPluginRoot);
@@ -86,13 +99,8 @@ function assertNoAbsoluteSourceMarkers(filePath) {
   }
   const payload = readFileSync(filePath);
   const text = payload.toString("utf8");
-  for (const pattern of absolutePathPatterns) {
-    const matches = text.match(pattern) ?? [];
-    for (const match of matches) {
-      if (isAbsolutePathLike(match)) {
-        throw new Error(`Absolute source path ${match} found in ${filePath}`);
-      }
-    }
+  for (const token of extractAbsolutePathTokens(text)) {
+    throw new Error(`Absolute source path ${token} found in ${filePath}`);
   }
 }
 
@@ -128,4 +136,66 @@ function isAbsolutePathLike(value) {
 
 function isTextFilePath(filePath) {
   return new Set([".css", ".json", ".md", ".mjs", ".py", ".txt"]).has(extname(filePath));
+}
+
+function extractAbsolutePathTokens(text) {
+  const matches = [];
+  for (const pattern of [uriTokenPattern, windowsDriveTokenPattern, uncTokenPattern, posixTokenPattern]) {
+    const candidates = text.match(pattern) ?? [];
+    for (const candidate of candidates) {
+      if (isAbsolutePathReference(candidate)) {
+        matches.push(candidate);
+      }
+    }
+  }
+  return [...new Set(matches)];
+}
+
+function isAbsolutePathReference(value) {
+  if (!value) {
+    return false;
+  }
+  if (value.startsWith("http://") || value.startsWith("https://")) {
+    return false;
+  }
+  if (/^[A-Za-z][A-Za-z0-9+.-]*:/.test(value)) {
+    let parsed;
+    try {
+      parsed = new URL(value);
+    } catch {
+      const separatorIndex = value.indexOf(":");
+      return isFilesystemAbsolutePath(value.slice(separatorIndex + 1));
+    }
+    if (parsed.protocol === "http:" || parsed.protocol === "https:") {
+      return false;
+    }
+    if (parsed.protocol === "file:") {
+      if (parsed.host && parsed.pathname) {
+        return isFilesystemAbsolutePath(`//${parsed.host}${decodeURIComponent(parsed.pathname)}`);
+      }
+      return isFilesystemAbsolutePath(decodeURIComponent(parsed.pathname || parsed.host));
+    }
+    return isFilesystemAbsolutePath(value.slice(value.indexOf(":") + 1));
+  }
+  return isFilesystemAbsolutePath(value);
+}
+
+function isFilesystemAbsolutePath(value) {
+  if (!value) {
+    return false;
+  }
+  if (value.startsWith("\\\\")) {
+    return true;
+  }
+  if (/^[A-Za-z]:[\\/]/.test(value)) {
+    return true;
+  }
+  if (!value.startsWith("/")) {
+    return false;
+  }
+  if (value.startsWith("//")) {
+    return true;
+  }
+  const normalized = value.endsWith("/") && value.length > 1 ? value.slice(0, -1) : value;
+  return knownPosixRoots.has(normalized) || normalized.includes("/", 1);
 }

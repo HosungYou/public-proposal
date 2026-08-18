@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { execFile as execFileCallback } from "node:child_process";
-import { cp, mkdtemp, readFile, rename, rm, writeFile } from "node:fs/promises";
+import { cp, mkdir, mkdtemp, readFile, readdir, rename, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
@@ -8,10 +8,16 @@ import { afterEach, expect, test } from "vitest";
 
 const execFile = promisify(execFileCallback);
 const validatorPath = join(process.cwd(), "scripts", "validate_korean_skill_bundle.py");
+const syncScriptPath = join(process.cwd(), "scripts", "sync_public_proposal_package_assets.mjs");
 const sourcePluginRoot = join(process.cwd(), "plugins", "public-proposal");
 const packagedPluginRoot = join(process.cwd(), "apps", "public-proposal-cli", "plugin");
 const packagedMarketplacePath = join(process.cwd(), "apps", "public-proposal-cli", "marketplace", "marketplace.json");
 const tempDirectories: string[] = [];
+const absoluteLeakFixtures = [
+  "Payload leak: source:/tmp/public-proposal/source.md",
+  "Payload leak: file:///tmp/public-proposal/source.md",
+  "Payload leak: /tmp",
+];
 
 afterEach(async () => {
   await Promise.all(tempDirectories.splice(0).map((directory) => rm(directory, { force: true, recursive: true })));
@@ -42,11 +48,21 @@ test("the public proposal plugin ships a validated package copy and rewrites the
   const packagedManifest = await readBundleManifest(packagedPluginRoot);
   expect(packagedManifest).toEqual(sourceManifest);
 
+  const sourceFiles = await listFilesRecursive(sourcePluginRoot);
+  const packagedFiles = await listFilesRecursive(packagedPluginRoot);
+  expect(packagedFiles).toEqual(sourceFiles);
+
+  for (const relativePath of sourceFiles) {
+    const [sourcePayload, packagedPayload] = await Promise.all([
+      readFile(join(sourcePluginRoot, relativePath)),
+      readFile(join(packagedPluginRoot, relativePath)),
+    ]);
+    expect(packagedPayload.equals(sourcePayload), `payload mismatch for ${relativePath}`).toBe(true);
+  }
+
   for (const entry of sourceManifest.files) {
-    const sourceFile = join(sourcePluginRoot, "skills", "korean-public-proposal", entry.path);
     const packagedFile = join(packagedPluginRoot, "skills", "korean-public-proposal", entry.path);
-    const [sourcePayload, packagedPayload] = await Promise.all([readFile(sourceFile), readFile(packagedFile)]);
-    expect(packagedPayload.equals(sourcePayload), `payload mismatch for ${entry.path}`).toBe(true);
+    const packagedPayload = await readFile(packagedFile);
     expect(sha256(packagedPayload)).toBe(entry.sha256);
     expect(packagedPayload.byteLength).toBe(entry.bytes);
   }
@@ -57,18 +73,21 @@ test("the bundle validator rejects generic absolute source path leaks in bundle 
   const relativePath = "SKILL.md";
   const filePath = join(pluginRoot, "skills", "korean-public-proposal", relativePath);
   const original = await readFile(filePath, "utf8");
-  const leaked = [
-    original.trimEnd(),
-    "",
-    "Payload leak: /tmp/public-proposal/source.md",
-    "Payload leak: /Users/example/source.md",
-    "Payload leak: C:\\\\Users\\\\example\\\\source.md",
-    "",
-  ].join("\n");
+  const leaked = [original.trimEnd(), "", ...absoluteLeakFixtures, ""].join("\n");
   await writeFile(filePath, leaked, "utf8");
   await updateManifestEntry(pluginRoot, relativePath, leaked);
 
   await expect(runValidator(pluginRoot)).rejects.toThrow(/absolute source path/i);
+});
+
+test("the package sync rejects generic absolute source path leaks outside the bundled Korean skill", async () => {
+  const repoRoot = await cloneSyncFixtureRepo();
+  const publicSkillPath = join(repoRoot, "plugins", "public-proposal", "skills", "public-proposal", "SKILL.md");
+  const original = await readFile(publicSkillPath, "utf8");
+  const leaked = [original.trimEnd(), "", ...absoluteLeakFixtures, ""].join("\n");
+  await writeFile(publicSkillPath, leaked, "utf8");
+
+  await expect(runSync(repoRoot)).rejects.toThrow(/absolute source path/i);
 });
 
 test("the bundle validator rejects windows-style absolute manifest paths even when the file exists", async () => {
@@ -89,6 +108,23 @@ async function clonePluginRoot(): Promise<string> {
   const pluginRoot = join(tempRoot, "public-proposal");
   await cp(sourcePluginRoot, pluginRoot, { recursive: true });
   return pluginRoot;
+}
+
+async function cloneSyncFixtureRepo(): Promise<string> {
+  const repoRoot = await mkdtemp(join(tmpdir(), "public-proposal-sync-"));
+  tempDirectories.push(repoRoot);
+  await Promise.all([
+    mkdir(join(repoRoot, "scripts"), { recursive: true }),
+    mkdir(join(repoRoot, "plugins"), { recursive: true }),
+    mkdir(join(repoRoot, "apps", "public-proposal-cli", "plugin"), { recursive: true }),
+    mkdir(join(repoRoot, "apps", "public-proposal-cli", "marketplace"), { recursive: true }),
+  ]);
+  await Promise.all([
+    cp(sourcePluginRoot, join(repoRoot, "plugins", "public-proposal"), { recursive: true }),
+    cp(validatorPath, join(repoRoot, "scripts", "validate_korean_skill_bundle.py")),
+    cp(syncScriptPath, join(repoRoot, "scripts", "sync_public_proposal_package_assets.mjs")),
+  ]);
+  return repoRoot;
 }
 
 async function readBundleManifest(pluginRoot: string): Promise<BundleManifest> {
@@ -130,12 +166,41 @@ async function runValidator(pluginRoot: string): Promise<string> {
   }
 }
 
+async function runSync(repoRoot: string): Promise<string> {
+  try {
+    const result = await execFile("node", [join(repoRoot, "scripts", "sync_public_proposal_package_assets.mjs")], {
+      cwd: repoRoot,
+    });
+    return `${result.stdout}${result.stderr}`;
+  } catch (error) {
+    const failure = error as { stdout?: string; stderr?: string };
+    throw new Error(`${failure.stdout ?? ""}${failure.stderr ?? ""}`.trim());
+  }
+}
+
 function parseJson(source: string): unknown {
   return JSON.parse(source) as unknown;
 }
 
 function sha256(payload: Uint8Array): string {
   return createHash("sha256").update(payload).digest("hex");
+}
+
+async function listFilesRecursive(root: string, baseRoot: string = root): Promise<string[]> {
+  const entries = await readdir(root, { withFileTypes: true });
+  const files = await Promise.all(
+    entries.map(async (entry) => {
+      const path = join(root, entry.name);
+      if (entry.isDirectory()) {
+        return listFilesRecursive(path, baseRoot);
+      }
+      if (entry.isFile()) {
+        return [path.slice(baseRoot.length + 1)];
+      }
+      return [];
+    }),
+  );
+  return files.flat().sort();
 }
 
 interface BundleManifest {
