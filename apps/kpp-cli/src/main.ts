@@ -12,6 +12,7 @@ import { importAuthoringCommand } from "./commands/import-authoring.js";
 import { initializeCommand } from "./commands/init.js";
 import { planCommand } from "./commands/plan.js";
 import { requirementsCommand } from "./commands/requirements.js";
+import { researchLockCommand } from "./commands/research-lock.js";
 import { renderCommand } from "./commands/render.js";
 import { releaseCommand } from "./commands/release.js";
 import { statusCommand } from "./commands/status.js";
@@ -93,6 +94,14 @@ export async function runCli(argv: readonly string[]): Promise<number> {
         await requirementsCommand(root, options.candidates, options.decisions),
         options.json === true,
       );
+    });
+
+  program
+    .command("research-lock <root>")
+    .requiredOption("--handoff <path>", "LongTable 연구 handoff JSON")
+    .option("--json", "JSON 형식으로 출력")
+    .action(async (root: string, options: JsonOption & { handoff: string }) => {
+      writeEnvelope(await researchLockCommand(root, options.handoff), options.json === true);
     });
 
   program

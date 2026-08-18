@@ -1,0 +1,16 @@
+{
+  "schemaVersion": "1.0.0",
+  "longtableVersion": "0.1.72",
+  "projectId": "research-lock-fixture",
+  "proposalClass": "research_service",
+  "researchSpecificationPath": "evidence/research-lock/research-specification.json",
+  "researchSpecificationSha256": "f10795ef239462d0cabd87a9e6b84e7a13156c86a346e09974e45c177609695e",
+  "citationSlotMatrixPath": "evidence/research-lock/citation-slot-matrix.json",
+  "citationSlotMatrixSha256": "e28bd6b7a183bade21d9e18ce1d1fd2f4e7759974a46a4cb2135e7d1014d9d6e",
+  "sourceLedgerPath": "evidence/research-lock/source-ledger.json",
+  "sourceLedgerSha256": "9247cacf92548fa6b25f469c221899da8cb51eab221bec47746cbab9177ed024",
+  "claimTransferLedgerPath": "evidence/research-lock/claim-transfer-ledger.json",
+  "claimTransferLedgerSha256": "db605b1ba19ab40c47f81b624a199471a2021e30d0098edaaa99468e71d754ee",
+  "openRequiredCheckpoints": [],
+  "createdAt": "2026-08-18T00:00:00.000Z"
+}

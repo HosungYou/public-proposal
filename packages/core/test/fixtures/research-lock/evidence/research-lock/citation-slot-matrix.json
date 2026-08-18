@@ -1,0 +1,9 @@
+{
+  "slots": [
+    {
+      "slotId": "CITE-001",
+      "claimId": "CLAIM-001",
+      "required": true
+    }
+  ]
+}

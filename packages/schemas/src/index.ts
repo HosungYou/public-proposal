@@ -125,3 +125,7 @@ export {
   type ReceiptFile,
   type ReceiptResult,
 } from "./receipt.js";
+export {
+  ResearchLockSchema,
+  type ResearchLock,
+} from "./research-lock.js";

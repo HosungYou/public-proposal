@@ -57,6 +57,10 @@ export {
   type ValidatedVisualSourcePacket,
 } from "./visual-source-gate.js";
 export {
+  importResearchLock,
+  type ResearchLockImportResult,
+} from "./research-lock.js";
+export {
   executeFile,
   resolveVerifiedExecutable,
   type ExecutableIdentity,
