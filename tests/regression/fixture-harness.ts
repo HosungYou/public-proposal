@@ -85,7 +85,7 @@ async function materialize(relativeFixture: string, prefix: string): Promise<Pro
   const docxPath = join(copied, "docx", "proposal.docx");
   const profileSha256 = "1".repeat(64);
   const figure = await buildFigure(copied, hasBoundary("generic_box_schedule"));
-  // Keep the supplied public reference as a visual-reference-only asset. The
+  // Keep the supplied synthetic reference as a visual-reference-only asset. The
   // actual DOCX drawing must use the governed rasterization of the semantic
   // SVG, otherwise the always-on figure/media lineage audit must (correctly)
   // reject this sanitized fixture.

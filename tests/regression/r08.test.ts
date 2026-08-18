@@ -14,7 +14,7 @@ async function audit(fixture: Awaited<ReturnType<typeof materializeR08Reference>
   return result;
 }
 
-test("R08 sanitized reference renders its fixture-backed visual surface", async () => {
+test("synthetic reference renders its fixture-backed visual surface", async () => {
   const fixture = await materializeR08Reference();
   expect((await audit(fixture, "pass")).status).toBe("PASS");
 

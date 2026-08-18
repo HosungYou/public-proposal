@@ -1,7 +1,7 @@
 {
   "schema_version": "kpp-surface-tokens-1.0",
-  "authority": "R08_approved_project_profile",
-  "status": "approved_project_profile",
+  "authority": "synthetic_public_proposal_profile",
+  "status": "synthetic_validation_profile",
   "proposal_evidence": false,
   "precedence": ["issuer_rule", "approved_project_profile", "surface_tokens", "tool_default"],
   "page": {

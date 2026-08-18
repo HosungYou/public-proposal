@@ -12,7 +12,7 @@
 
 ## Global Constraints
 
-- Product ID is `korean-public-proposal`; CLI command is `kpp`; initial version is `0.1.0`.
+- Product ID is `public-proposal`; CLI command is `kpp`; the current public package line is `0.2.0`.
 - Customer documents remain local; the core makes no direct AI API calls.
 - The v0.1 runtime is verified on macOS and keeps OS operations behind adapters.
 - Every state change requires validated inputs and SHA-256-bound receipts.
@@ -35,7 +35,7 @@
 
 **Interfaces:**
 - Consumes: Node and npm versions from the approved spec.
-- Produces: npm scripts `build`, `test`, `typecheck`; workspace packages `@kpp/core`, `@kpp/schemas`, `@enaction-labs/kpp-cli`.
+- Produces: npm scripts `build`, `test`, `typecheck`; workspace packages under the `@longtable/kpp-*` scope.
 
 - [ ] **Step 1: Write the failing workspace smoke test**
 

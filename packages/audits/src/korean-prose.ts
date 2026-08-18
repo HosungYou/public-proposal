@@ -9,7 +9,9 @@ export interface ContentFinding {
     | "KPP_CONTENT_VAGUE_PROMISE"
     | "KPP_CONTENT_PLACEHOLDER"
     | "KPP_CONTENT_REPETITION"
-    | "KPP_CONTENT_STYLE_LONG_SENTENCE";
+    | "KPP_CONTENT_STYLE_LONG_SENTENCE"
+    | "KPP_CONTENT_SCAFFOLD"
+    | "KPP_CONTENT_THIN_BODY";
   readonly severity: ContentFindingSeverity;
   readonly message: string;
   readonly blockId?: string;
@@ -58,6 +60,13 @@ const VAGUE_PROMISE_PATTERNS: readonly RegExp[] = [
 const PLACEHOLDER_PATTERN = /\{\{[^}]+\}\}|\b(?:TBD|TO\s*BE\s*DECIDED)\b|\[(?:작성|입력|추후)[^\]]*\]|(?:추후\s*입력|입력\s*필요|미정)/giu;
 const ACRONYM_PATTERN = /\b[A-Z][A-Z0-9-]{1,}\b/g;
 const LONG_SENTENCE_LENGTH = 180;
+const THIN_BODY_CHARACTERS = 60;
+const SCAFFOLD_PATTERNS: readonly RegExp[] = [
+  /본문\s*작성\s*메모/u,
+  /이\s*페이지는\s+RFP\s*요구와.*?본문으로\s*확장/u,
+  /확인되지\s*않은.*?(?:검증가설|가설).*?남기/u,
+  /확인된\s*외부자료.*?적용경계.*?표시/u,
+];
 
 export function lintKoreanProse(
   input: string | readonly ProseBlock[],
@@ -109,6 +118,33 @@ function inspectField(
   occurrences: RepetitionOccurrence[],
 ): void {
   occurrences.push({ blockId, field, sentence: value });
+
+  if (field === "text") {
+    const bodyCharacters = [...value.replace(/\s/gu, "")].length;
+    if (bodyCharacters < THIN_BODY_CHARACTERS) {
+      findings.push({
+        code: "KPP_CONTENT_THIN_BODY",
+        severity: "warning",
+        message: "일반 페이지 본문이 짧아 표·그림의 설명과 판단 근거가 충분하지 않을 수 있습니다.",
+        blockId,
+        field,
+        actual: bodyCharacters,
+      });
+    }
+    for (const pattern of SCAFFOLD_PATTERNS) {
+      const match = pattern.exec(value);
+      if (match !== null) {
+        findings.push({
+          code: "KPP_CONTENT_SCAFFOLD",
+          severity: "blocker",
+          message: "기계적으로 반복되는 본문 작성 메모 또는 템플릿 문구가 남아 있습니다.",
+          blockId,
+          field,
+          actual: match[0],
+        });
+      }
+    }
+  }
 
   for (const acronym of value.match(ACRONYM_PATTERN) ?? []) {
     const normalized = normalizeTerm(acronym);

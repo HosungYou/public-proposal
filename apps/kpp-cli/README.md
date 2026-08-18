@@ -2,6 +2,10 @@
 
 The `kpp` command-line interface for evidence-bound Korean public proposal generation.
 
+Repository: https://github.com/HosungYou/public-proposal
+
+This package is the CLI layer behind the English `$public-proposal` orchestrator. Research conversations and scholarly evidence recovery remain routed through LongTable; the CLI owns proposal state, deterministic artifacts, technical audits, human approval, and release receipts.
+
 ```sh
 npx @longtable/kpp-cli --help
 ```

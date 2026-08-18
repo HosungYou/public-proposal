@@ -249,7 +249,7 @@ async function createVisualSourceFixture(temporaryDirectories: string[]) {
         language: "ko",
         rightsStatus: "issuer_provided",
         classification: "issuer_reference",
-        sourceId: "KEITI-RFP-2026",
+        sourceId: "ISSUER-RFP-2026",
         pageLocator: "page:1",
         inspectedAt: "2026-08-17T00:00:00.000Z",
       },

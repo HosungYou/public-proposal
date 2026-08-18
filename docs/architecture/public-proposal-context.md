@@ -7,7 +7,7 @@ The canonical public repository for this product is:
 - GitHub: `https://github.com/HosungYou/public-proposal`
 - Product: Public Proposal orchestrator and KPP evidence-bound document pipeline
 - Maintainer: Enaction Labs / HosungYou
-- Local checkout: `/Users/hosung/work/Enaction Labs/KPP`
+- Local checkout: clone this repository into any project workspace.
 
 The `enactionlabs` repository is outside this product boundary and must not receive KPP or Public Proposal commits.
 
@@ -49,7 +49,7 @@ Every proposal project must keep the following inputs distinguishable:
 3. locked research logic and source ledger;
 4. structured claims/evidence/content and human approval records.
 
-The system may use research sources to design a method or framework, but must not transfer external findings into KEITI or another institution's performance, readiness, or impact claims without institution-specific evidence.
+The system may use research sources to design a method or framework, but must not transfer external findings into an issuer's performance, readiness, or impact claims without institution-specific evidence.
 
 ## Release language
 

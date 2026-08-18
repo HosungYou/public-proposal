@@ -2,7 +2,7 @@
 
 - 작성일: 2026-08-17
 - 제품명: KPP 제안서 컴파일러
-- 플러그인 ID: `korean-public-proposal`
+- 플러그인 ID: `public-proposal`
 - CLI: `kpp`
 - 개발사: Enaction Labs
 - 초기 버전: `0.1.0`
@@ -12,7 +12,7 @@
 
 KPP는 공고, 제안요청서, 평가표, 별지, 기관별 시각 정본과 제안사의 증거를 잠그고, 한국 공공기관 연구·용역 제안서를 DOCX와 검색 가능한 PDF로 생성·검증·승격하는 로컬 우선 제품이다.
 
-기존 `$korean-public-proposal` 스킬의 문제는 규칙이 문서로 존재하더라도 에이전트가 단계를 생략하거나 프로젝트 빌더가 정본을 우회할 수 있다는 점이다. KPP는 프롬프트 준수를 신뢰하지 않고 상태기계, 파일 해시, 결정론적 렌더러, 실제 산출물 검사와 인간 승인을 통해 이를 차단한다.
+기존 한국 공공제안서 규칙의 문제는 규칙이 문서로 존재하더라도 에이전트가 단계를 생략하거나 프로젝트 빌더가 정본을 우회할 수 있다는 점이다. KPP는 프롬프트 준수를 신뢰하지 않고 상태기계, 파일 해시, 결정론적 렌더러, 실제 산출물 검사와 인간 승인을 통해 이를 차단한다.
 
 ## 2. 확정된 제품 결정
 
@@ -30,13 +30,13 @@ KPP는 공고, 제안요청서, 평가표, 별지, 기관별 시각 정본과 �
 12. 자격, 인력, 실적, 가격, 핵심 주장과 평가근거의 미확인은 제출을 차단한다.
 13. 일반 설명과 향후 입력 항목은 `pending_blank` 상태의 빈 필드·빈 표로 유지할 수 있다.
 14. 제품은 상용 폐쇄형으로 배포한다.
-15. 공개 NPM 패키지 `@enaction-labs/kpp`는 설치기와 실행 바이너리만 제공하며 코어 소스를 포함하지 않는다.
+15. 공개 NPM 패키지군 `@longtable/kpp-*`는 컴파일된 실행 표면과 계약 파일만 제공하며 TypeScript·Python 원본과 고객 자료를 포함하지 않는다.
 16. Codex 플러그인은 개인 로컬 마켓플레이스에서 먼저 검증한 뒤 팀·상용 배포로 승격한다.
 17. MCP는 v0.1 범위에 포함하지 않는다. 후속 버전에서 외부 시스템 통합 계층으로만 추가한다.
 
 ## 3. 저장소와 구성 요소
 
-제품 저장소는 `/Users/hosung/work/Enaction Labs/KPP`에 독립적으로 둔다.
+제품 저장소는 공개 GitHub 저장소 `https://github.com/HosungYou/public-proposal`에 독립적으로 둔다.
 
 ```text
 KPP/
@@ -51,7 +51,7 @@ KPP/
 │   ├── audits/
 │   └── issuer-pack-sdk/
 ├── plugins/
-│   └── korean-public-proposal/
+│   └── public-proposal/
 ├── fixtures/
 │   ├── valid/r08-reference/
 │   └── known-bad/c11/
@@ -298,29 +298,29 @@ v0.1은 단일 제출책임자 승인을 사용한다. `kpp approve`는 승인�
 
 플러그인은 다음 manifest를 갖는다.
 
-- ID: `korean-public-proposal`
-- 표시명: `KPP 제안서 컴파일러`
+- ID: `public-proposal`
+- 표시명: `Public Proposal`
 - 개발사: `Enaction Labs`
 - 초기 버전: `0.1.0`
 - 카테고리: Productivity
 - 설치 정책: `AVAILABLE`
 - 인증 정책: `ON_INSTALL`
 
-초기 개발용 플러그인은 `~/.agents/plugins/marketplace.json`의 개인 마켓플레이스에 등록한다. 업데이트 시 manifest cachebuster와 재설치 절차를 사용하고 새 대화에서 플러그인을 검증한다.
+초기 개발용 플러그인은 개인 마켓플레이스에 등록한다. 구체적인 로컬 경로는 환경마다 다르므로 공개 문서에 하드코딩하지 않는다. 업데이트 시 manifest cachebuster와 재설치 절차를 사용하고 새 대화에서 플러그인을 검증한다.
 
-## 14. NPM 공개 설치기
+## 14. NPM 공개 패키지군
 
-공개 패키지 목표명은 `@enaction-labs/kpp`이다. 게시 전 조건은 다음과 같다.
+공개 패키지군은 `@longtable/kpp-schemas`, `@longtable/kpp-core`, `@longtable/kpp-renderers`, `@longtable/kpp-audits`, `@longtable/kpp-cli`이다. 게시 전 조건은 다음과 같다.
 
-1. NPM 계정이 `enaction-labs` scope에 게시 권한을 가진다.
+1. NPM 계정이 `longtable` scope에 게시 권한을 가진다.
 2. CLI 인증이 `npm whoami`에 성공한다.
-3. 공개 패키지는 코어 TypeScript와 Python 소스를 포함하지 않는다.
-4. macOS 실행 바이너리 또는 설치된 로컬 실행기를 호출하는 얇은 JavaScript shim만 포함한다.
-5. 패키지는 지원 플랫폼, 라이선스, 개인정보 경계와 제거 방법을 명시한다.
+3. 공개 tarball은 TypeScript·Python 원본, 고객 자료, 비밀정보와 로컬 절대 경로를 포함하지 않는다.
+4. CLI 패키지는 컴파일된 실행 표면과 런타임 의존성만 제공하며 상태·감사 권위는 KPP 코어에 둔다.
+5. 패키지 메타데이터는 `public-proposal` GitHub 저장소와 라이선스·개인정보 경계를 명시한다.
 6. `npm pack --dry-run`과 깨끗한 임시 환경의 전역 설치 테스트를 통과한다.
 7. `npm publish --access public` 직전에 패키지명, 버전, tarball 내용과 계정을 다시 확인한다.
 
-`@enaction-labs/kpp`는 설치·업데이트 유통 채널이다. 제안서 상태기계의 권위는 설치된 KPP 코어에 있고 NPM shim이나 Codex 플러그인에 있지 않다.
+`@longtable/kpp-*`는 설치·업데이트 유통 채널이다. 제안서 상태기계의 권위는 설치된 KPP 코어에 있고 NPM 패키지나 Codex 플러그인에 있지 않다.
 
 ## 15. 버전과 업데이트
 
@@ -359,9 +359,9 @@ v0.1은 다음 조건을 모두 충족해야 완료로 간주한다.
 4. C11 known-bad 픽스처가 기대한 규칙으로 실패한다.
 5. R08 valid 픽스처가 통과한다.
 6. 승인 이후 파일 변경이 release를 차단한다.
-7. 개인 마켓플레이스 플러그인이 새 Codex 대화에서 `kpp status`를 호출한다.
-8. `@enaction-labs/kpp` 설치기가 깨끗한 macOS 환경에서 설치·진단·제거된다.
-9. NPM tarball에 코어 소스, 고객 자료, KEITI 프로젝트 사실 또는 비밀정보가 포함되지 않는다.
+7. 개인 마켓플레이스의 `$public-proposal` 플러그인이 새 Codex 대화에서 `kpp status`를 호출한다.
+8. `@longtable/kpp-cli`와 의존 패키지가 깨끗한 환경에서 설치·진단된다.
+9. NPM tarball에 코어 원본, 고객 자료, 기관별 사실 또는 비밀정보가 포함되지 않는다.
 10. 실제 NPM 게시 후 설치 가능한 버전과 게시 계정을 기록한다.
 
 ## 18. 범위 밖

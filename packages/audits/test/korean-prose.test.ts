@@ -70,6 +70,24 @@ describe("Korean public-proposal prose lint", () => {
     expect(crossBlock.codes).toContain("KPP_CONTENT_REPETITION");
   });
 
+  it("blocks mechanical scaffold prose that is not a developed proposal paragraph", () => {
+    const result = lintKoreanProse(
+      "본문 작성 메모\n이 페이지는 RFP 요구와 기관 자료의 연결부를 본문으로 확장한다.",
+      glossary,
+    );
+
+    expect(result.codes).toContain("KPP_CONTENT_SCAFFOLD");
+    expect(result.blockers.some(({ code }) => code === "KPP_CONTENT_SCAFFOLD")).toBe(true);
+  });
+
+  it("warns when a prose block is materially thinner than an ordinary page body", () => {
+    const result = lintKoreanProse("짧은 본문입니다.", glossary);
+
+    expect(result.codes).toContain("KPP_CONTENT_THIN_BODY");
+    expect(result.warnings.some(({ code }) => code === "KPP_CONTENT_THIN_BODY")).toBe(true);
+    expect(result.blockers).toHaveLength(0);
+  });
+
   it("rejects direct EVIDENCE_LOCKED approval without writing a receipt or advancing state", async () => {
     const fixture = await createApprovalFixture(temporaryDirectories, { designLocked: false });
 

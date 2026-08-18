@@ -69,7 +69,7 @@ git commit -m "feat: define KPP DOCX worker protocol"
 - Create: `workers/docx-python/src/kpp_docx/styles.py`
 - Create: `workers/docx-python/src/kpp_docx/tables.py`
 - Create: `workers/docx-python/tests/test_build.py`
-- Copy: `/Users/hosung/.codex/skills/korean-public-proposal/assets/Korean Public Proposal A4 v1.docx` to `workers/docx-python/assets/Korean Public Proposal A4 v1.docx`
+- Copy: an approved, redistributable Korean public-proposal template asset to `workers/docx-python/assets/Korean Public Proposal A4 v1.docx`; record only its provenance hash and keep the source path environment-specific.
 
 **Interfaces:**
 - Consumes: `BuildRequest` containing the page plan, evidence ledger, content blocks, figure manifest, and locked surface profile.
@@ -338,4 +338,3 @@ Expected: PASS.
 git add apps/kpp-cli
 git commit -m "feat: build approve and release verified proposals"
 ```
-

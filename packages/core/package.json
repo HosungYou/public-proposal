@@ -1,6 +1,6 @@
 {
   "name": "@longtable/kpp-core",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Evidence-bound planning and authoring core for Korean public proposals.",
   "repository": {
     "type": "git",
@@ -11,7 +11,13 @@
   "bugs": {
     "url": "https://github.com/HosungYou/public-proposal/issues"
   },
-  "keywords": ["korean", "public-proposal", "evidence", "provenance", "kpp"],
+  "keywords": [
+    "korean",
+    "public-proposal",
+    "evidence",
+    "provenance",
+    "kpp"
+  ],
   "type": "module",
   "files": [
     "dist",
@@ -31,7 +37,7 @@
     "typecheck": "tsc --noEmit -p tsconfig.json"
   },
   "dependencies": {
-    "@longtable/kpp-schemas": "0.1.0",
+    "@longtable/kpp-schemas": "0.2.0",
     "yaml": "2.9.0"
   }
 }

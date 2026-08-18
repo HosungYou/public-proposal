@@ -1,6 +1,6 @@
 {
   "schemaVersion": "1",
-  "fixtureId": "R08-SANITIZED-VISUAL-REFERENCE",
+  "fixtureId": "SYNTHETIC-SANITIZED-VISUAL-REFERENCE",
   "classification": "visual_reference_only",
   "claimIds": ["CL-R08-METHOD"],
   "evidenceIds": ["EV-R08-METHOD"],
