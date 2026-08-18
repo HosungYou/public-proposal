@@ -2,7 +2,7 @@
 
 import { createHash } from "node:crypto";
 import { spawn } from "node:child_process";
-import { realpathSync } from "node:fs";
+import { existsSync, realpathSync } from "node:fs";
 import {
   chmod,
   cp,
@@ -294,9 +294,6 @@ export async function runReleaseVerification() {
     await runRequired("npm ci", "npm", ["ci"]);
     await runRequired("workspace build", "npm", ["run", "build"]);
     await runRequired("workspace typecheck", "npm", ["run", "typecheck"]);
-    await runRequired("focused unit tests", "npm", ["test", "--", "apps/public-proposal-cli/test", "tests/plugin/install-docs.test.ts"]);
-    await runRequired("full JavaScript test suite", "npm", ["test"]);
-    await runRequired("Python worker tests", "uv", ["run", "--project", "workers/docx-python", "pytest", "-q"]);
     const contracts = await verifyPackageContracts();
     await runRequired("meta-installer pack dry-run", "npm", ["pack", "--workspace", "@longtable/public-proposal", "--dry-run", "--json"]);
     const pack = await runRequired("meta-installer pack", "npm", [
@@ -328,6 +325,21 @@ export async function runReleaseVerification() {
       output: registryProbe.stdout.trim() || registryProbe.stderr.trim(),
       prerequisite: "Registry availability is independently checked before the documented npx command is marked release-ready.",
     };
+    const testHome = join(artifactRoot, "test-home");
+    await mkdir(testHome, { recursive: true });
+    const hermeticTestEnv = {
+      ...process.env,
+      HOME: testHome,
+      USERPROFILE: testHome,
+      PUBLIC_PROPOSAL_INSTALLATION_MANIFEST: join(artifactRoot, "missing-installation.json"),
+    };
+    const testOptions = { env: hermeticTestEnv };
+    // The release gate must not observe a real user's managed worker receipt.
+    // Otherwise a local Public Proposal install can change the result of KPP's
+    // "no worker path" diagnostic test.
+    await runRequired("hermetic focused unit tests", "npm", ["test", "--", "apps/public-proposal-cli/test", "tests/plugin/install-docs.test.ts"], testOptions);
+    await runRequired("hermetic full JavaScript test suite", "npm", ["test"], testOptions);
+    await runRequired("Python worker tests", "uv", ["run", "--project", "workers/docx-python", "pytest", "-q"], testOptions);
     const dryRunHome = join(artifactRoot, "dry-run-home");
     await mkdir(dryRunHome, { recursive: true });
     await runRequired(
@@ -501,7 +513,11 @@ async function prepareIsolation(fixtureRoot, installRoot) {
     [...writeGuardArguments(fixtureRoot), "-e", `require("node:fs").writeFileSync(${JSON.stringify(deniedPath)}, "denied")`],
     { env },
   );
-  const hostStatePath = join(resolve(process.env.HOME ?? dirname(fixtureRoot)), ".codex", "config.toml");
+  const configuredHostStatePath = join(resolve(process.env.HOME ?? dirname(fixtureRoot)), ".codex", "config.toml");
+  // Hosted runners do not provision a Codex config. Fall back to an existing
+  // executable outside the fixture so the permission probe tests access
+  // control rather than whether an optional host file happens to exist.
+  const hostStatePath = existsSync(configuredHostStatePath) ? configuredHostStatePath : process.execPath;
   const deniedReadProbe = await capture(
     "host-state read-boundary probe",
     process.execPath,
