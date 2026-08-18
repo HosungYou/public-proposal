@@ -127,6 +127,7 @@ export async function runSetup(
   }
 
   const writes: string[] = [];
+  let doctorChecks: readonly DoctorCheck[] = [];
   const ownedPaths = [
     join(installRoot, "plugin"),
     join(installRoot, "marketplace"),
@@ -161,6 +162,8 @@ export async function runSetup(
       "--dir",
       join(ownedPaths[0], "skills"),
     ]);
+    await ensureLongTableResearchSkill(join(ownedPaths[0], "skills"), dependencies, exists);
+    await copyDir(join(ownedPaths[0], "skills"), join(ownedPaths[1], "plugin", "skills"));
     marketplaceAdded = await ensureMarketplaceRegistered(
       dependencies.spawn,
       await canonicalPath(join(installRoot, "marketplace"), dependencies.realpath),
@@ -196,6 +199,7 @@ export async function runSetup(
         sha256: dependencies.sha256,
       },
     );
+    doctorChecks = doctor.checks;
     if (!doctor.ok) {
       const failedCheck = doctor.checks.find((check) => check.status === "blocker") ?? doctor.checks[0];
       throw new SetupCommandError(failedCheck.code ?? "PP_DOCTOR_BLOCKED", failedCheck.message);
@@ -229,8 +233,8 @@ export async function runSetup(
     const code = error instanceof SetupCommandError ? error.code : "PP_SETUP_COMMAND_FAILED";
     const message = error instanceof Error ? error.message : String(error);
     return rollbackFailures.length === 0
-      ? failed(code, message, writes)
-      : failed("PP_SETUP_ROLLBACK_FAILED", `${message}; rollback failed: ${rollbackFailures.join("; ")}`, writes);
+      ? failed(code, message, writes, doctorChecks)
+      : failed("PP_SETUP_ROLLBACK_FAILED", `${message}; rollback failed: ${rollbackFailures.join("; ")}`, writes, doctorChecks);
   }
 }
 
@@ -426,6 +430,11 @@ async function migrateLegacyManifest(
     await runRequired(dependencies.spawn, "longtable", [
       "codex", "install-skills", "--surface", "compact", "--dir", join(requestedRoot, "plugin", "skills"),
     ]);
+    await ensureLongTableResearchSkill(join(requestedRoot, "plugin", "skills"), dependencies, exists);
+    await dependencies.copyDir?.(
+      join(requestedRoot, "plugin", "skills"),
+      join(requestedRoot, "marketplace", "plugin", "skills"),
+    );
     const ownedPaths = installerOwnedRoots(requestedRoot);
     const installManifest = await buildManifest(
       packageRoot,
@@ -729,12 +738,35 @@ async function mirrorPackagedFile(from: string, to: string, dependencies: SetupD
   await dependencies.writeFile(to, await dependencies.readFile(from));
 }
 
-function failed(code: string, message: string, writes: readonly string[]): SetupResult {
+async function ensureLongTableResearchSkill(
+  skillsRoot: string,
+  dependencies: Pick<SetupDependencies, "readFile" | "writeFile">,
+  exists: (path: string) => Promise<boolean>,
+): Promise<void> {
+  const canonicalPath = join(skillsRoot, "longtable-research", "SKILL.md");
+  if (await exists(canonicalPath)) return;
+  const compatibilityPath = join(skillsRoot, "scholar-research", "SKILL.md");
+  let compatibilitySkill: string;
+  try {
+    compatibilitySkill = await dependencies.readFile(compatibilityPath);
+  } catch {
+    throw new SetupCommandError(
+      "PP_LONGTABLE_REQUIRED",
+      "Pinned LongTable CLI did not install the required longtable-research skill surface.",
+    );
+  }
+  const canonicalSkill = compatibilitySkill
+    .replace(/^name:\s*scholar-research\s*$/mu, "name: longtable-research")
+    .replace(/^#\s+scholar-research\s*$/mu, "# longtable-research");
+  await dependencies.writeFile(canonicalPath, canonicalSkill);
+}
+
+function failed(code: string, message: string, writes: readonly string[], checks: readonly DoctorCheck[] = []): SetupResult {
   return {
     ok: false,
     plan: PLAN,
     writes,
-    checks: [],
+    checks,
     error: { code, message },
   };
 }

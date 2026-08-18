@@ -126,6 +126,8 @@ async function pluginCheck(
   const installedBundlePath = join(installRoot, "plugin", "skills", "korean-public-proposal", "BUNDLE-MANIFEST.json");
   const longtableSkillPath = join(installRoot, "plugin", "skills", "longtable", "SKILL.md");
   const longtableResearchSkillPath = join(installRoot, "plugin", "skills", "longtable-research", "SKILL.md");
+  const registeredLongtableSkillPath = join(installRoot, "marketplace", "plugin", "skills", "longtable", "SKILL.md");
+  const registeredLongtableResearchSkillPath = join(installRoot, "marketplace", "plugin", "skills", "longtable-research", "SKILL.md");
   try {
     const [pluginRaw, bundleRaw, marketplaceManifest, packagePluginSha] = await Promise.all([
       dependencies.readFile(pluginManifestPath),
@@ -204,9 +206,11 @@ async function pluginCheck(
     if (bundleCheck) {
       return bundleCheck;
     }
-    const [longtableSkill, longtableResearchSkill, marketplaces, plugins] = await Promise.all([
+    const [longtableSkill, longtableResearchSkill, registeredLongtableSkill, registeredLongtableResearchSkill, marketplaces, plugins] = await Promise.all([
       dependencies.readFile(longtableSkillPath).catch(() => ""),
       dependencies.readFile(longtableResearchSkillPath).catch(() => ""),
+      dependencies.readFile(registeredLongtableSkillPath).catch(() => ""),
+      dependencies.readFile(registeredLongtableResearchSkillPath).catch(() => ""),
       dependencies.spawn("codex", ["plugin", "marketplace", "list", "--json"]),
       dependencies.spawn("codex", ["plugin", "list", "--json"]),
     ]);
@@ -214,7 +218,14 @@ async function pluginCheck(
     const marketplaceRegistered = marketplaces.code === 0
       && marketplaceListContains(marketplaces.stdout, marketplacePath);
     const pluginRegistered = plugins.code === 0 && pluginListContains(plugins.stdout);
-    if (!longtableSkill.trim() || !longtableResearchSkill.trim() || !marketplaceRegistered || !pluginRegistered) {
+    if (
+      !longtableSkill.trim()
+      || !longtableResearchSkill.trim()
+      || !registeredLongtableSkill.trim()
+      || !registeredLongtableResearchSkill.trim()
+      || !marketplaceRegistered
+      || !pluginRegistered
+    ) {
       return {
         name: "plugin",
         status: "blocker",
@@ -222,6 +233,8 @@ async function pluginCheck(
         detected: {
           longtableSkill: Boolean(longtableSkill.trim()),
           longtableResearchSkill: Boolean(longtableResearchSkill.trim()),
+          registeredLongtableSkill: Boolean(registeredLongtableSkill.trim()),
+          registeredLongtableResearchSkill: Boolean(registeredLongtableResearchSkill.trim()),
           marketplaceRegistered,
           pluginRegistered,
         },

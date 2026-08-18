@@ -1,6 +1,6 @@
 # Public Proposal installation and recovery
 
-Verified compatibility date: **2026-08-18**. The exact supported versions are `@longtable/public-proposal@0.1.2`, `@longtable/kpp-cli@0.2.1`, `@longtable/cli@0.1.72`, and managed worker protocol `1.0.0`. See [compatibility-matrix.json](compatibility-matrix.json) for the machine-readable contract.
+Verified compatibility date: **2026-08-18**. The exact supported versions are `@longtable/public-proposal@0.1.3`, `@longtable/kpp-cli@0.2.1`, `@longtable/cli@0.1.72`, and managed worker protocol `1.0.0`. See [compatibility-matrix.json](compatibility-matrix.json) for the machine-readable contract.
 
 ## Prerequisites
 
@@ -10,14 +10,14 @@ Use a writable user or project installation location. Do not put customer RFPs, 
 
 ## Recommended one-command setup
 
-The package is published on npm as `@longtable/public-proposal@0.1.2`. Leaving off the version below resolves the current `latest` tag; pin `@0.1.2` when reproducibility is required.
+The package is published on npm as `@longtable/public-proposal@0.1.3`. Leaving off the version below resolves the current `latest` tag; pin `@0.1.3` when reproducibility is required.
 
 ```bash
 npx @longtable/public-proposal setup --provider codex
 npx @longtable/public-proposal doctor --json
 ```
 
-`setup` validates the packaged marketplace and plugin, installs `$longtable` and `$longtable-research` under the installer-owned plugin `skills/` surface, verifies the pinned KPP and LongTable CLIs, installs the managed DOCX worker, and writes an installation receipt only after its preflight passes. `doctor --json` verifies both LongTable skill files and the Codex marketplace/plugin registration; it is read-only. Use `--install-scope project` only when the installation should be scoped to the current project rather than the user.
+`setup` validates the packaged marketplace and plugin, installs `$longtable` and `$longtable-research` under the installer-owned plugin `skills/` surface, verifies the pinned KPP and LongTable CLIs, installs the managed DOCX worker, and writes an installation receipt only after its preflight passes. The published `@longtable/cli@0.1.72` artifact may name the scholarly skill `scholar-research`; setup preserves that compatibility skill and creates the canonical `longtable-research` surface before mirroring the skills into the registered plugin. `doctor --json` verifies both LongTable skill files and the Codex marketplace/plugin registration; it is read-only. Use `--install-scope project` only when the installation should be scoped to the current project rather than the user.
 
 If a later setup step fails, setup removes only marketplace/plugin registrations added by that invocation and then removes its owned files. Pre-existing Codex registrations are preserved. A failed compensation is reported as `PP_SETUP_ROLLBACK_FAILED` and requires inspection before retrying.
 
@@ -64,7 +64,7 @@ Installing a plugin provides the skills and packaged resources to Codex. **Plugi
 Use this only when `npx` is unavailable or a controlled environment requires global installation:
 
 ```bash
-npm install --global @longtable/public-proposal@0.1.2 @longtable/kpp-cli@0.2.1 @longtable/cli@0.1.72
+npm install --global @longtable/public-proposal@0.1.3 @longtable/kpp-cli@0.2.1 @longtable/cli@0.1.72
 public-proposal setup --provider codex
 public-proposal doctor --json
 ```

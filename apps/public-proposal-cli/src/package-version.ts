@@ -2,16 +2,16 @@ import { createRequire } from "node:module";
 import { dirname, join } from "node:path";
 import type { PackageVersionResolver } from "./contracts.js";
 
-const require = createRequire(import.meta.url);
-
 export function createPackageVersionResolver(
   packageRoot: string,
   readFile: (path: string) => Promise<string>,
 ): PackageVersionResolver {
+  const packageRequire = createRequire(join(packageRoot, "package.json"));
   return async (packageName) => {
     const candidates = [
       join(packageRoot, "node_modules", packageName, "package.json"),
       join(packageRoot, "..", "..", "node_modules", packageName, "package.json"),
+      join(packageRoot, "..", "..", packageName, "package.json"),
     ];
     for (const candidate of candidates) {
       const version = await readPackageJsonVersion(candidate, readFile);
@@ -19,7 +19,15 @@ export function createPackageVersionResolver(
     }
 
     try {
-      const entry = require.resolve(packageName);
+      const packageJsonEntry = packageRequire.resolve(`${packageName}/package.json`);
+      const version = await readPackageJsonVersion(packageJsonEntry, readFile);
+      if (version !== null) return version;
+    } catch {
+      // Some packages do not export package.json; fall back to their executable entry.
+    }
+
+    try {
+      const entry = packageRequire.resolve(packageName);
       let directory = dirname(entry);
       for (let attempt = 0; attempt < 4; attempt += 1) {
         const version = await readPackageJsonVersion(join(directory, "package.json"), readFile);
