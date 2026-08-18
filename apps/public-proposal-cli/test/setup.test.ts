@@ -69,11 +69,37 @@ describe("public proposal setup", () => {
         protocolVersion: WORKER_PROTOCOL_VERSION,
         sha256: `sha256:${"a".repeat(64)}`,
       },
+      codexRegistrations: {
+        pluginAdded: true,
+        marketplaceAdded: true,
+      },
       ownedPaths: expect.arrayContaining([
         "/home/ada/.config/public-proposal/plugin",
         "/home/ada/.config/public-proposal/marketplace",
         "/home/ada/.config/public-proposal/worker",
       ]),
+    });
+  });
+
+  it("records pre-existing Codex registrations as preserved by uninstall", async () => {
+    const fake = fakeSetupDependencies({
+      preexistingMarketplaceRegistration: true,
+      preexistingPluginRegistration: true,
+    });
+
+    const result = await runSetup(
+      { provider: "codex", installScope: "user", cwd: "/work", home: "/home/ada" },
+      fake,
+    );
+
+    expect(result).toMatchObject({
+      ok: true,
+      manifest: {
+        codexRegistrations: {
+          pluginAdded: false,
+          marketplaceAdded: false,
+        },
+      },
     });
   });
 

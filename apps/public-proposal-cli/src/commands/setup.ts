@@ -146,7 +146,13 @@ export async function runSetup(
     const worker = await installWorker(installRoot, dependencies.spawn);
     writes.push(ownedPaths[2]);
 
-    const installManifest = await buildManifest(installRoot, ownedPaths, worker, dependencies);
+    const installManifest = await buildManifest(
+      installRoot,
+      ownedPaths,
+      worker,
+      { pluginAdded, marketplaceAdded },
+      dependencies,
+    );
     const manifestContents = serializeManifest(installManifest);
     const doctor = await runDoctor(
       {
@@ -384,7 +390,13 @@ async function migrateLegacyManifest(
       "codex", "install-skills", "--surface", "compact", "--dir", join(requestedRoot, "plugin", "skills"),
     ]);
     const ownedPaths = installerOwnedRoots(requestedRoot);
-    const installManifest = await buildManifest(requestedRoot, ownedPaths, worker, dependencies);
+    const installManifest = await buildManifest(
+      requestedRoot,
+      ownedPaths,
+      worker,
+      { pluginAdded: false, marketplaceAdded: false },
+      dependencies,
+    );
     const manifestContents = serializeManifest(installManifest);
     const doctor = await runDoctor(
       {
@@ -593,6 +605,7 @@ async function buildManifest(
   installRoot: string,
   ownedPaths: readonly string[],
   worker: WorkerInstallation,
+  codexRegistrations: { pluginAdded: boolean; marketplaceAdded: boolean },
   dependencies: SetupDependencies,
 ): Promise<InstallManifest> {
   const pluginManifestPath = join(installRoot, "plugin", ".codex-plugin", "plugin.json");
@@ -609,6 +622,7 @@ async function buildManifest(
     pluginManifestSha256: await dependencies.sha256(pluginManifestPath),
     bundleManifestSha256: await dependencies.sha256(bundleManifestPath),
     worker,
+    codexRegistrations,
     ownedPaths,
     createdAt: dependencies.now(),
   };

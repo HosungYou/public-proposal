@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { spawn } from "node:child_process";
 import { describe, expect, it } from "vitest";
 import type { InstallManifest } from "../src/contracts.js";
-import { runUninstall } from "../src/commands/uninstall.js";
+import { runUninstall, type UninstallDependencies } from "../src/commands/uninstall.js";
 import { runUpdate } from "../src/commands/update.js";
 
 describe("public proposal uninstall and update", () => {
@@ -35,6 +35,73 @@ describe("public proposal uninstall and update", () => {
     expect(result.preserved).toEqual(["/home/ada/.config/public-proposal/.longtable", "/work/customer-evidence"]);
   });
 
+  it("uninstall deregisters Codex entries owned by this installation before removing its files", async () => {
+    const commands: string[] = [];
+    const removed: string[] = [];
+
+    await runUninstall(
+      "/home/ada/.config/public-proposal",
+      uninstallDependencies({
+        manifest: manifestWithCodexRegistrations({ pluginAdded: true, marketplaceAdded: true }),
+        commands,
+        removed,
+      }),
+    );
+
+    expect(commands).toEqual([
+      "codex plugin remove public-proposal@public-proposal --json",
+      "codex plugin marketplace remove public-proposal --json",
+    ]);
+    expect(removed).toEqual([
+      "/home/ada/.config/public-proposal/plugin",
+      "/home/ada/.config/public-proposal/marketplace",
+      "/home/ada/.config/public-proposal/worker",
+      "/home/ada/.config/public-proposal/installation.json",
+    ]);
+  });
+
+  it("uninstall preserves Codex entries that predate this installation", async () => {
+    const commands: string[] = [];
+
+    await runUninstall(
+      "/home/ada/.config/public-proposal",
+      uninstallDependencies({
+        manifest: manifestWithCodexRegistrations({ pluginAdded: false, marketplaceAdded: false }),
+        commands,
+      }),
+    );
+
+    expect(commands).toEqual([]);
+  });
+
+  it("uninstall restores an already-deregistered plugin and preserves files when marketplace deregistration fails", async () => {
+    const commands: string[] = [];
+    const removed: string[] = [];
+
+    await expect(
+      runUninstall(
+        "/home/ada/.config/public-proposal",
+        uninstallDependencies({
+          manifest: manifestWithCodexRegistrations({ pluginAdded: true, marketplaceAdded: true }),
+          commands,
+          removed,
+          failures: new Map([["codex plugin marketplace remove public-proposal --json", {
+            code: 1,
+            stdout: "",
+            stderr: "marketplace busy",
+          }]]),
+        }),
+      ),
+    ).rejects.toMatchObject({ code: "PP_UNINSTALL_DEREGISTRATION_FAILED" });
+
+    expect(commands).toEqual([
+      "codex plugin remove public-proposal@public-proposal --json",
+      "codex plugin marketplace remove public-proposal --json",
+      "codex plugin add public-proposal@public-proposal",
+    ]);
+    expect(removed).toEqual([]);
+  });
+
   it("uninstall rejects manifest path traversal before recursive removal", async () => {
     const removed: string[] = [];
 
@@ -51,6 +118,45 @@ describe("public proposal uninstall and update", () => {
       }),
     ).rejects.toMatchObject({ code: "PP_UNINSTALL_PATH_REJECTED" });
     expect(removed).toEqual([]);
+  });
+
+  it("uninstall validates every manifest path before changing Codex registrations", async () => {
+    const commands: string[] = [];
+
+    await expect(
+      runUninstall(
+        "/home/ada/.config/public-proposal",
+        uninstallDependencies({
+          manifest: {
+            ...manifestWithCodexRegistrations({ pluginAdded: true, marketplaceAdded: true }),
+            ownedPaths: ["/home/ada/.config/public-proposal/plugin/../../ssh"],
+          },
+          commands,
+        }),
+      ),
+    ).rejects.toMatchObject({ code: "PP_UNINSTALL_PATH_REJECTED" });
+
+    expect(commands).toEqual([]);
+  });
+
+  it("uninstall reports a partial uninstall when file cleanup fails after deregistration", async () => {
+    const commands: string[] = [];
+
+    await expect(
+      runUninstall(
+        "/home/ada/.config/public-proposal",
+        uninstallDependencies({
+          manifest: manifestWithCodexRegistrations({ pluginAdded: true, marketplaceAdded: true }),
+          commands,
+          removeFailure: new Error("disk is read-only"),
+        }),
+      ),
+    ).rejects.toMatchObject({ code: "PP_UNINSTALL_PARTIAL_FAILED" });
+
+    expect(commands).toEqual([
+      "codex plugin remove public-proposal@public-proposal --json",
+      "codex plugin marketplace remove public-proposal --json",
+    ]);
   });
 
   it("uninstall rejects symlink escapes after canonical realpath resolution", async () => {
@@ -225,6 +331,43 @@ function fakeManifest(input?: Partial<InstallManifest>): InstallManifest {
       sha256: `sha256:${"a".repeat(64)}`,
     },
   };
+}
+
+function manifestWithCodexRegistrations(
+  registrations: { pluginAdded: boolean; marketplaceAdded: boolean },
+): InstallManifest {
+  return {
+    ...fakeManifest({
+      ownedPaths: [
+        "/home/ada/.config/public-proposal/plugin",
+        "/home/ada/.config/public-proposal/marketplace",
+        "/home/ada/.config/public-proposal/worker",
+      ],
+    }),
+    codexRegistrations: registrations,
+  } as InstallManifest;
+}
+
+function uninstallDependencies(input: {
+  manifest: InstallManifest;
+  commands: string[];
+  removed?: string[];
+  failures?: Map<string, { code: number; stdout: string; stderr: string }>;
+  removeFailure?: Error;
+}): UninstallDependencies {
+  return {
+    readManifest: async () => input.manifest,
+    exists: async () => true,
+    remove: async (path) => {
+      if (input.removeFailure) throw input.removeFailure;
+      input.removed?.push(path);
+    },
+    spawn: async (command, args) => {
+      const rendered = [command, ...args].join(" ");
+      input.commands.push(rendered);
+      return input.failures?.get(rendered) ?? { code: 0, stdout: "", stderr: "" };
+    },
+  } as UninstallDependencies;
 }
 
 interface CommandResult {

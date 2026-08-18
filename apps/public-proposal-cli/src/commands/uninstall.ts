@@ -1,5 +1,5 @@
 import { join, resolve } from "node:path";
-import { PublicProposalContractError, type InstallManifest } from "../contracts.js";
+import { PublicProposalContractError, type InstallManifest, type ProcessRunner } from "../contracts.js";
 import { readManifestJson, isProtectedPath } from "../installation-manifest.js";
 import { manifestPath } from "../paths.js";
 import { nodeFs } from "../process.js";
@@ -10,6 +10,7 @@ export interface UninstallDependencies {
   readonly remove: (path: string) => Promise<void>;
   readonly exists: (path: string) => Promise<boolean>;
   readonly realpath?: (path: string) => Promise<string>;
+  readonly spawn?: ProcessRunner;
 }
 
 export async function runUninstall(
@@ -32,6 +33,7 @@ export async function runUninstall(
   const receiptPath = manifestPath(requestedRoot);
   const allowedRoots = installerOwnedRoots(requestedRoot);
   const removablePaths = [...manifest.ownedPaths, receiptPath];
+  const validatedPaths: string[] = [];
 
   for (const ownedPath of removablePaths) {
     if (isProtectedPath(ownedPath)) {
@@ -54,8 +56,22 @@ export async function runUninstall(
           `Refusing to remove path that resolves outside its installer root: ${ownedPath}`,
         );
       }
-      await dependencies.remove(normalized);
-      removed.push(normalized);
+      validatedPaths.push(normalized);
+    }
+  }
+
+  await deregisterCodexEntries(manifest, dependencies.spawn ?? nodeFs.spawn);
+
+  for (const ownedPath of validatedPaths) {
+    try {
+      await dependencies.remove(ownedPath);
+      removed.push(ownedPath);
+    } catch (error) {
+      const failure = error instanceof Error ? error.message : String(error);
+      throw new PublicProposalContractError(
+        "PP_UNINSTALL_PARTIAL_FAILED",
+        `Codex deregistration completed but installation cleanup failed at ${ownedPath}: ${failure}`,
+      );
     }
   }
 
@@ -68,7 +84,48 @@ function defaultUninstallDependencies(): UninstallDependencies {
     readFile: nodeFs.readFile,
     realpath: nodeFs.realpath,
     remove: nodeFs.remove,
+    spawn: nodeFs.spawn,
   };
+}
+
+async function deregisterCodexEntries(manifest: InstallManifest, spawn: ProcessRunner): Promise<void> {
+  const registrations = manifest.codexRegistrations;
+  if (!registrations) return;
+
+  let pluginRemoved = false;
+  try {
+    if (registrations.pluginAdded) {
+      await runRequired(spawn, ["plugin", "remove", "public-proposal@public-proposal", "--json"]);
+      pluginRemoved = true;
+    }
+    if (registrations.marketplaceAdded) {
+      await runRequired(spawn, ["plugin", "marketplace", "remove", "public-proposal", "--json"]);
+    }
+  } catch (error) {
+    const failure = error instanceof Error ? error.message : String(error);
+    if (!pluginRemoved) {
+      throw new PublicProposalContractError("PP_UNINSTALL_DEREGISTRATION_FAILED", failure);
+    }
+
+    const restore = await spawn("codex", ["plugin", "add", "public-proposal@public-proposal"]);
+    if (restore.code !== 0) {
+      throw new PublicProposalContractError(
+        "PP_UNINSTALL_ROLLBACK_FAILED",
+        `${failure}; failed to restore Codex plugin registration: ${restore.stderr || restore.stdout || `exit ${restore.code}`}`,
+      );
+    }
+    throw new PublicProposalContractError(
+      "PP_UNINSTALL_DEREGISTRATION_FAILED",
+      `${failure}; restored Codex plugin registration and preserved installation files.`,
+    );
+  }
+}
+
+async function runRequired(spawn: ProcessRunner, args: readonly string[]): Promise<void> {
+  const result = await spawn("codex", args);
+  if (result.code !== 0) {
+    throw new Error(`codex ${args.join(" ")}: ${result.stderr || result.stdout || `exit ${result.code}`}`);
+  }
 }
 
 function isInstallerOwned(installRoot: string, ownedPath: string): boolean {

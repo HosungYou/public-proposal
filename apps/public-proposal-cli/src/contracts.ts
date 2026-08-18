@@ -88,6 +88,10 @@ const installManifestSchema = z.object({
     protocolVersion: z.literal(WORKER_PROTOCOL_VERSION),
     sha256: sha256Schema,
   }),
+  codexRegistrations: z.object({
+    pluginAdded: z.boolean(),
+    marketplaceAdded: z.boolean(),
+  }).optional(),
   ownedPaths: z.array(z.string().min(1)).readonly(),
   createdAt: z.string().datetime({ offset: true }),
 });
