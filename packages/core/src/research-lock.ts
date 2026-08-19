@@ -41,6 +41,15 @@ export interface ResearchLockImportResult {
   readonly state: "PASS";
 }
 
+export interface ResearchLockArtifactBinding {
+  readonly path: string;
+  readonly sha256: string;
+}
+
+export interface ResearchLockImportOptions {
+  readonly additionalArtifacts?: readonly ResearchLockArtifactBinding[];
+}
+
 interface ResearchLockTestHooks {
   readonly afterArtifactsVerified?: () => Promise<void>;
   readonly beforeReceiptCreate?: () => Promise<void>;
@@ -69,6 +78,7 @@ export async function importResearchLock(
   rootInput: string,
   handoffPathInput: string,
   expectedLongtableVersion: string,
+  options: ResearchLockImportOptions = {},
 ): Promise<ResearchLockImportResult> {
   const root = resolve(rootInput);
   const handoffPath = resolve(handoffPathInput);
@@ -82,7 +92,10 @@ export async function importResearchLock(
     handoff,
     expectedLongtableVersion,
   );
-  const artifacts = await resolveArtifacts(root, handoff);
+  const artifacts = [
+    ...await resolveArtifacts(root, handoff),
+    ...await resolveAdditionalArtifacts(root, options.additionalArtifacts ?? []),
+  ];
   validateDistinctArtifacts(artifacts);
   const receiptPath = join(root, "receipts", "research-lock.json");
   const files = [handoffPath, ...artifacts.map((artifact) => artifact.path)];
@@ -124,6 +137,34 @@ export async function importResearchLock(
   await testHooks.afterReceiptCreate?.(receiptPath);
   await verifyEmittedReceipt(receiptPath, files, inputReceiptHashes, createdReceipt.contents);
   return { receiptPath, state: "PASS" };
+}
+
+async function resolveAdditionalArtifacts(
+  root: string,
+  bindings: readonly ResearchLockArtifactBinding[],
+): Promise<readonly VerifiedResearchArtifact[]> {
+  const researchRoot = join(root, "evidence", "research-lock");
+  const researchRootReal = await stableRealpath(researchRoot, "research_root_realpath");
+  return await Promise.all(bindings.map(async (binding) => {
+    const { path, realPath } = await resolveResearchArtifact(root, researchRootReal, binding.path);
+    let metadata;
+    try {
+      metadata = await stat(path);
+    } catch (error) {
+      throw new KppError("PP_RESEARCH_ARTIFACT_PATH", "추가 연구 산출물 파일을 읽을 수 없습니다.", {
+        path,
+        rule: "additional_artifact_unreadable",
+        actual: error instanceof Error ? error.message : error,
+      });
+    }
+    if (!metadata.isFile()) {
+      throw new KppError("PP_RESEARCH_ARTIFACT_PATH", "추가 연구 산출물 경로는 파일이어야 합니다.", {
+        path,
+        rule: "additional_artifact_not_file",
+      });
+    }
+    return { path, realPath, sha256: binding.sha256 };
+  }));
 }
 
 async function readResearchLockHandoff(path: string): Promise<ResearchLock> {

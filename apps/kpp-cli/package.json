@@ -36,6 +36,7 @@
     "typecheck": "tsc --noEmit -p tsconfig.json"
   },
   "dependencies": {
+    "@longtable/proposal-research-contracts": "0.1.0",
     "@longtable/kpp-audits": "0.2.1",
     "@longtable/kpp-core": "0.2.1",
     "@longtable/kpp-schemas": "0.2.1",

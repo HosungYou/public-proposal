@@ -10,6 +10,7 @@ interface ContentFixtureResult {
   readonly state: string;
   readonly blockers: readonly unknown[];
   readonly root: string;
+  readonly researchBundleHash?: string;
   readonly candidates: {
     readonly candidates: readonly {
       readonly candidateId: string;
@@ -214,6 +215,8 @@ describe("content-to-build integration fixture", () => {
     expect(contentApproval.receipt.inputReceiptHashes).toContain(
       await core.sha256File(join(result.root, "receipts", "research-lock.json")),
     );
+    const researchReceipt = await core.verifyReceipt(join(result.root, "receipts", "research-lock.json"));
+    expect(researchReceipt.receipt.inputReceiptHashes).toContain(result.researchBundleHash);
   });
 
   it("allows general procurement content approval without LongTable", async () => {
@@ -242,6 +245,8 @@ describe("content-to-build integration fixture", () => {
     expect(contentApproval.receipt.inputReceiptHashes).toContain(
       await core.sha256File(researchReceiptPath),
     );
+    const researchReceipt = await core.verifyReceipt(researchReceiptPath);
+    expect(researchReceipt.receipt.inputReceiptHashes).toContain(result.researchBundleHash);
   });
 });
 
@@ -322,9 +327,9 @@ async function runContentFixture(
   const requirementsPath = join(root, "requirements", "requirements.json");
   expect(await runCli(["plan", root, "--requirements", requirementsPath, "--json"])).toMatchObject({ code: 0, stderr: "" });
 
-  if (proposalClass === "research_service" || options.academicEvidence === true) {
-    await createResearchLock(root, proposalClass);
-  }
+  const researchBundleHash = proposalClass === "research_service" || options.academicEvidence === true
+    ? await createResearchBundleLock(root, proposalClass, fixture)
+    : undefined;
 
   const issuerProfile = JSON.parse(await readFile(issuerProfilePath, "utf8")) as unknown;
   const terminology = JSON.parse(await readFile(terminologyPath, "utf8")) as unknown;
@@ -365,6 +370,7 @@ async function runContentFixture(
     state: approvalData.state ?? "UNKNOWN",
     blockers: approvalData.findings?.blockers ?? [],
     root,
+    ...(researchBundleHash === undefined ? {} : { researchBundleHash }),
     candidates,
     requirements: JSON.parse(await readFile(requirementsPath, "utf8")) as ContentFixtureResult["requirements"],
     complianceMatrix: JSON.parse(await readFile(join(root, "requirements", "compliance-matrix.json"), "utf8")) as ContentFixtureResult["complianceMatrix"],
@@ -377,42 +383,160 @@ async function runContentFixture(
   };
 }
 
-async function createResearchLock(
+async function createResearchBundleLock(
   root: string,
   proposalClass: "research_service" | "general_procurement",
-): Promise<void> {
-  const researchRoot = join(root, "evidence", "research-lock");
-  await mkdir(researchRoot, { recursive: true });
-  const artifacts = {
-    researchSpecification: join(researchRoot, "research-specification.json"),
-    citationSlotMatrix: join(researchRoot, "citation-slot-matrix.json"),
-    sourceLedger: join(researchRoot, "source-ledger.json"),
-    claimTransferLedger: join(researchRoot, "claim-transfer-ledger.json"),
-  };
-  await Promise.all([
-    writeFile(artifacts.researchSpecification, '{"researchQuestions":["fixture"]}\n'),
-    writeFile(artifacts.citationSlotMatrix, '{"slots":[{"slotId":"CITE-1","required":true}]}\n'),
-    writeFile(artifacts.sourceLedger, '{"sources":[{"sourceId":"SRC-1"}]}\n'),
-    writeFile(artifacts.claimTransferLedger, '{"transfers":[{"claimId":"CLAIM-METHOD","decision":"bounded"}]}\n'),
+  fixture: string,
+): Promise<string> {
+  const requestOptionsPath = join(fixture, "research-request-options.json");
+  await writeFile(requestOptionsPath, `${JSON.stringify({
+    institution: {
+      canonicalName: "합성 연구기관",
+      aliases: [],
+      identifiers: { alio: "SYNTHETIC-INSTITUTION" },
+    },
+    questions: [{
+      questionId: "QUESTION-METHOD",
+      text: "연구 수행방법은 어떤 근거로 구성되는가?",
+      requiredDataFieldIds: ["FIELD-METHOD"],
+    }],
+    requiredData: [{
+      fieldId: "FIELD-METHOD",
+      definition: "연구 수행방법 근거",
+      period: "2026",
+      unit: "method",
+      grain: "requirement",
+      required: true,
+      allowedSourceClasses: ["institution_official"],
+      targetClaimIds: ["CLAIM-METHOD"],
+      targetFigureIds: ["FIG-SCHEDULE-001"],
+    }],
+    privacyClass: "PUBLIC",
+  }, null, 2)}\n`, "utf8");
+  const requestResult = await runCli([
+    "research-request",
+    root,
+    "--requirements",
+    requestOptionsPath,
+    "--json",
   ]);
-  const handoffPath = join(researchRoot, "handoff.json");
-  await writeFile(handoffPath, `${JSON.stringify({
-    schemaVersion: "1.0.0",
-    longtableVersion: "0.1.72",
-    projectId: "synthetic-research-proposal",
-    proposalClass,
-    researchSpecificationPath: "evidence/research-lock/research-specification.json",
-    researchSpecificationSha256: await core.sha256File(artifacts.researchSpecification),
-    citationSlotMatrixPath: "evidence/research-lock/citation-slot-matrix.json",
-    citationSlotMatrixSha256: await core.sha256File(artifacts.citationSlotMatrix),
-    sourceLedgerPath: "evidence/research-lock/source-ledger.json",
-    sourceLedgerSha256: await core.sha256File(artifacts.sourceLedger),
-    claimTransferLedgerPath: "evidence/research-lock/claim-transfer-ledger.json",
-    claimTransferLedgerSha256: await core.sha256File(artifacts.claimTransferLedger),
-    openRequiredCheckpoints: [],
-    createdAt: "2026-08-18T00:00:00.000Z",
-  }, null, 2)}\n`);
-  await core.importResearchLock(root, handoffPath, "0.1.72");
+  expect(requestResult).toMatchObject({ code: 0, stderr: "" });
+  const requestEnvelope = parseEnvelope(requestResult.stdout) as {
+    readonly data: { readonly request: { readonly requestId: string } };
+  };
+
+  const bundleRoot = join(fixture, "longtable-bundle");
+  const artifactContents: Record<string, string> = {
+    "raw/method.json": '{"method":"fixture"}\n',
+    "normalized/dataset.json": '{"fieldId":"FIELD-METHOD"}\n',
+    "transformations/lineage.json": '{"operation":"formatting"}\n',
+    "claims/candidates.json": '{"claimId":"CLAIM-METHOD"}\n',
+    "figures/specs.json": '{"figureId":"FIG-SCHEDULE-001"}\n',
+    "gaps/gaps.json": '{"gaps":[]}\n',
+    "source-manifest.jsonl": '{"sourceId":"SOURCE-OFFICIAL"}\n',
+    "handoff.json": '{"status":"SUCCEEDED"}\n',
+  };
+  for (const [relativePath, contents] of Object.entries(artifactContents)) {
+    const path = join(bundleRoot, relativePath);
+    await mkdir(join(path, ".."), { recursive: true });
+    await writeFile(path, contents, "utf8");
+  }
+  const files = await Promise.all(Object.keys(artifactContents).map(async (path) => ({
+    path,
+    sha256: await core.sha256File(join(bundleRoot, path)),
+  })));
+  const bundlePath = join(bundleRoot, "bundle.json");
+  await writeFile(bundlePath, `${JSON.stringify({
+    schemaVersion: "proposal-evidence-bundle/v1",
+    bundleId: `bundle-${proposalClass}`,
+    requestId: requestEnvelope.data.request.requestId,
+    contractVersion: "1.0.0",
+    files,
+    sources: [
+      {
+        sourceId: "SOURCE-OFFICIAL",
+        sourceClass: "institution_official",
+        title: "합성 연구기관 공식자료",
+        locator: "https://example.test/official",
+        rightsStatus: "public",
+        verified: true,
+        institutionId: "SYNTHETIC-INSTITUTION",
+      },
+      {
+        sourceId: "SOURCE-SCHOLARLY",
+        sourceClass: "scholarly_fulltext",
+        title: "합성 학술 원문",
+        locator: "https://example.test/paper.pdf",
+        rightsStatus: "public",
+        verified: true,
+      },
+    ],
+    datasets: [{
+      datasetId: "DATASET-METHOD",
+      name: "연구 수행방법 근거",
+      sourceIds: ["SOURCE-OFFICIAL"],
+      fieldIds: ["FIELD-METHOD"],
+      period: "2026",
+      unit: "method",
+      grain: "requirement",
+      records: [{ method: "fixture" }],
+    }],
+    transformations: [{
+      schemaVersion: "transformation-lineage/v1",
+      transformationId: "TRANSFORM-METHOD",
+      inputSourceIds: ["SOURCE-OFFICIAL"],
+      inputDatasetIds: ["DATASET-METHOD"],
+      outputDatasetId: "DATASET-METHOD",
+      rawLocator: "SOURCE-OFFICIAL:method",
+      normalizationSteps: ["formatting"],
+      derivedFormula: null,
+      outputCellOrRow: "method",
+      claimIds: ["CLAIM-METHOD"],
+      figureIds: ["FIG-SCHEDULE-001"],
+    }],
+    claims: [{
+      claimId: "CLAIM-METHOD",
+      text: "연구 수행방법 근거를 확인했다.",
+      requirementIds: ["REQ-RESEARCH-METHOD"],
+      sourceIds: ["SOURCE-OFFICIAL"],
+      dataIds: ["DATASET-METHOD"],
+      status: "verified",
+      caveats: [],
+    }],
+    figures: [{
+      schemaVersion: "semantic-figure-spec/v1",
+      figureId: "FIG-SCHEDULE-001",
+      requirementIds: ["REQ-RESEARCH-METHOD"],
+      analyticalQuestion: "수행방법을 어떻게 확인하는가?",
+      readerTask: "검증 단계를 확인한다.",
+      supportedTakeaway: "검증 가능한 수행방법을 확인할 수 있다.",
+      dataIds: ["DATASET-METHOD"],
+      relationship: "process",
+      minimumDataConditions: { minimumRecords: 1 },
+      uncertainty: [],
+      sourceCaption: { text: "출처: 합성 연구기관", sourceIds: ["SOURCE-OFFICIAL"] },
+      targetSurface: "A4_DOCX",
+      referenceFamily: "gantt",
+      rendererVersion: "1.0.0",
+      approvalStatus: "reviewed",
+    }],
+    gaps: [],
+    status: "complete",
+  }, null, 2)}\n`, "utf8");
+  const bundleHash = await core.sha256File(bundlePath);
+  const importResult = await runCli([
+    "research-import",
+    root,
+    "--bundle",
+    bundlePath,
+    "--json",
+  ]);
+  expect(importResult).toMatchObject({ code: 0, stderr: "" });
+  expect(parseEnvelope(importResult.stdout)).toMatchObject({
+    ok: true,
+    data: { state: "SUCCEEDED", bundleHash },
+  });
+  return bundleHash;
 }
 
 async function materializeTemplate<T>(

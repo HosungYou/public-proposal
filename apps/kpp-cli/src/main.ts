@@ -12,7 +12,9 @@ import { importAuthoringCommand } from "./commands/import-authoring.js";
 import { initializeCommand } from "./commands/init.js";
 import { planCommand } from "./commands/plan.js";
 import { requirementsCommand } from "./commands/requirements.js";
+import { researchImportCommand } from "./commands/research-import.js";
 import { researchLockCommand } from "./commands/research-lock.js";
+import { researchRequestCommand } from "./commands/research-request.js";
 import { renderCommand } from "./commands/render.js";
 import { releaseCommand } from "./commands/release.js";
 import { statusCommand } from "./commands/status.js";
@@ -94,6 +96,22 @@ export async function runCli(argv: readonly string[]): Promise<number> {
         await requirementsCommand(root, options.candidates, options.decisions),
         options.json === true,
       );
+    });
+
+  program
+    .command("research-request <root>")
+    .requiredOption("--requirements <path>", "기관·데이터 연구 요구사항 JSON")
+    .option("--json", "JSON 형식으로 출력")
+    .action(async (root: string, options: JsonOption & { requirements: string }) => {
+      writeEnvelope(await researchRequestCommand(root, options.requirements), options.json === true);
+    });
+
+  program
+    .command("research-import <root>")
+    .requiredOption("--bundle <path>", "LongTable Evidence/Data Bundle JSON 또는 legacy handoff")
+    .option("--json", "JSON 형식으로 출력")
+    .action(async (root: string, options: JsonOption & { bundle: string }) => {
+      writeEnvelope(await researchImportCommand(root, options.bundle), options.json === true);
     });
 
   program
