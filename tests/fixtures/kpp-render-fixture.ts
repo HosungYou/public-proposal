@@ -119,6 +119,7 @@ else process.stdout.write("기관 에이엑스 중장기 로드맵\\n");
 `),
     pdftoppm: await writeNodeTool(toolsRoot, "pdftoppm", `
 const fs = require("node:fs");
+const zlib = require("node:zlib");
 const args = process.argv.slice(2);
 if (args.includes("-v")) { process.stderr.write("pdftoppm fixture 1.0\\n"); process.exit(0); }
 const prefix = args[args.length - 1];
@@ -142,12 +143,25 @@ function chunk(name, data) {
 const header = Buffer.alloc(13);
 header.writeUInt32BE(1654, 0);
 header.writeUInt32BE(2339, 4);
-header[8] = 8;
-header[9] = 2;
+header[8] = 1;
+header[9] = 0;
+const layout = Buffer.from(${JSON.stringify(JSON.stringify(visualLayout))}, "utf8");
+const marker = Buffer.alloc(8 + layout.length);
+marker.write("KPP1", 0, "ascii");
+marker.writeUInt32BE(layout.length, 4);
+layout.copy(marker, 8);
+const rowBytes = Math.ceil(1654 / 8);
+const pixels = Buffer.alloc((rowBytes + 1) * 2339, 255);
+for (let row = 0; row < 2339; row += 1) pixels[row * (rowBytes + 1)] = 0;
+for (let index = 0; index < marker.length; index += 1) {
+  const row = Math.floor(index / rowBytes);
+  const column = index % rowBytes;
+  pixels[row * (rowBytes + 1) + 1 + column] = marker[index];
+}
 const png = Buffer.concat([
   Buffer.from([137,80,78,71,13,10,26,10]),
   chunk("IHDR", header),
-  chunk("IDAT", Buffer.from([120,156,3,0,0,0,0,1])),
+  chunk("IDAT", zlib.deflateSync(pixels)),
   chunk("IEND", Buffer.alloc(0)),
 ]);
 for (let page = 1; page <= ${pageCount}; page += 1) {

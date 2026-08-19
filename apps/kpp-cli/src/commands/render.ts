@@ -1,6 +1,7 @@
 import { createHash, randomUUID } from "node:crypto";
 import {
   lstat,
+  chmod,
   mkdir,
   mkdtemp,
   open,
@@ -28,6 +29,12 @@ import {
   type ExecutableIdentity,
 } from "@longtable/kpp-core";
 import { success, type CliEnvelope } from "../output.js";
+import {
+  APPROVED_VISUAL_EVIDENCE_PROBE_AUTHORITY_ID,
+  APPROVED_VISUAL_EVIDENCE_PROBE_SHA256,
+  APPROVED_VISUAL_EVIDENCE_PROBE_SOURCE,
+  APPROVED_VISUAL_EVIDENCE_PROBE_VERSION,
+} from "@longtable/kpp-audits";
 
 const RENDER_SCHEMA_VERSION = "1.0.0";
 const RENDER_TOOL_VERSION = "0.1.0";
@@ -38,13 +45,15 @@ interface RenderToolPaths {
   readonly pdfinfo?: string;
   readonly pdftotext?: string;
   readonly pdftoppm?: string;
-  /** Optional trusted analyzer for semantic QA of the actual PNG page bytes. */
+  /** Rejected legacy seam: release-semantic analysis is package-owned. */
   readonly visualEvidenceProbe?: string;
 }
 
 export interface RenderProjectOptions {
   readonly docxPath: string;
   readonly tools?: RenderToolPaths;
+  /** Produce release-semantic visual evidence with the package-owned probe. */
+  readonly visualEvidence?: boolean;
 }
 
 interface PageImageArtifact {
@@ -55,6 +64,7 @@ interface PageImageArtifact {
 }
 
 interface RenderExecutableIdentity extends ExecutableIdentity {
+  readonly name?: string;
   readonly realpath: string;
   readonly sha256: string;
 }
@@ -104,6 +114,7 @@ export async function renderProject(
   rootInput: string,
   options: RenderProjectOptions,
 ): Promise<RenderProjectResult> {
+  assertNoCallerSelectedVisualEvidenceProbe(options.tools);
   const root = await realpath(resolve(rootInput));
   const project = await verifyProjectState(root);
   if (project.state !== "BUILT") {
@@ -235,11 +246,18 @@ export async function renderProject(
         };
       }),
     );
+    const approvedProbe = options.visualEvidence === true
+      ? await stageApprovedVisualEvidenceProbe(staging, generationPath)
+      : undefined;
+    const renderExecutables: RenderExecutables = {
+      ...executables,
+      ...(approvedProbe === undefined ? {} : { visualEvidenceProbe: approvedProbe.identity }),
+    };
     const visualEvidencePages = await createVisualEvidenceSidecars({
       staging,
       generationPath,
       pageImages,
-      probe: executables.visualEvidenceProbe,
+      probePath: approvedProbe?.executionPath,
     });
     const pdfHash = await sha256File(stagedPdf);
     const manifestPath = join(generationPath, "render.json");
@@ -256,12 +274,17 @@ export async function renderProject(
         },
         pages: pageImages,
       },
-      executables,
+      executables: renderExecutables,
       raster: { dpi: PAGE_DPI, format: "png" },
-      ...(executables.visualEvidenceProbe === undefined ? {} : {
+      ...(approvedProbe === undefined ? {} : {
         visualEvidence: {
           schemaVersion: "kpp-visual-evidence-render/v1",
-          analyzer: executables.visualEvidenceProbe,
+          authority: {
+            schemaVersion: "kpp-visual-probe-authority/v1",
+            authorityId: APPROVED_VISUAL_EVIDENCE_PROBE_AUTHORITY_ID,
+            analyzerSha256: APPROVED_VISUAL_EVIDENCE_PROBE_SHA256,
+          },
+          analyzer: approvedProbe.identity,
           pages: visualEvidencePages,
         },
       }),
@@ -301,6 +324,7 @@ export async function renderProject(
         pdfPath,
         ...pageImages.map((page) => page.path),
         ...visualEvidencePages.map((page) => page.path),
+        ...(approvedProbe === undefined ? [] : [approvedProbe.identity.path]),
       ],
       inputReceiptHashes: [await sha256File(buildReceiptPath)],
       output: renderReceiptPath,
@@ -326,7 +350,7 @@ export async function renderProject(
       pageImages,
       visualEvidencePages,
       searchableText,
-      executables,
+      executables: renderExecutables,
     };
   } catch (error) {
     const state = await readProject(root).catch(() => undefined);
@@ -350,8 +374,6 @@ export async function renderProject(
 async function resolveRenderExecutables(
   tools: RenderToolPaths = {},
 ): Promise<RenderExecutables> {
-  const visualEvidenceProbeCandidate = tools.visualEvidenceProbe
-    ?? process.env.KPP_VISUAL_EVIDENCE_PROBE_PATH;
   const sofficeCandidates = compact([
     tools.soffice,
     process.env.KPP_SOFFICE_PATH,
@@ -368,32 +390,70 @@ async function resolveRenderExecutables(
     `/usr/local/bin/${name}`,
     name,
   ]);
-  const [soffice, pdfinfo, pdftotext, pdftoppm, visualEvidenceProbe] = await Promise.all([
+  const [soffice, pdfinfo, pdftotext, pdftoppm] = await Promise.all([
     resolveVerifiedExecutable({ name: "soffice", candidates: sofficeCandidates, versionArgs: ["--version"] }),
     resolveVerifiedExecutable({ name: "pdfinfo", candidates: popplerCandidates(tools.pdfinfo, "pdfinfo"), versionArgs: ["-v"] }),
     resolveVerifiedExecutable({ name: "pdftotext", candidates: popplerCandidates(tools.pdftotext, "pdftotext"), versionArgs: ["-v"] }),
     resolveVerifiedExecutable({ name: "pdftoppm", candidates: popplerCandidates(tools.pdftoppm, "pdftoppm"), versionArgs: ["-v"] }),
-    visualEvidenceProbeCandidate === undefined
-      ? Promise.resolve(undefined)
-      : resolveVerifiedExecutable({
-        name: "visual-evidence-probe",
-        candidates: [visualEvidenceProbeCandidate],
-        versionArgs: ["--version"],
-      }),
   ]);
   const enriched = await Promise.all([
     enrichExecutable(soffice),
     enrichExecutable(pdfinfo),
     enrichExecutable(pdftotext),
     enrichExecutable(pdftoppm),
-    visualEvidenceProbe === undefined ? Promise.resolve(undefined) : enrichExecutable(visualEvidenceProbe),
   ]);
   return {
     soffice: enriched[0],
     pdfinfo: enriched[1],
     pdftotext: enriched[2],
     pdftoppm: enriched[3],
-    ...(enriched[4] === undefined ? {} : { visualEvidenceProbe: enriched[4] }),
+  };
+}
+
+function assertNoCallerSelectedVisualEvidenceProbe(tools: RenderToolPaths | undefined): void {
+  if (tools?.visualEvidenceProbe !== undefined || process.env.KPP_VISUAL_EVIDENCE_PROBE_PATH !== undefined) {
+    throw new KppError(
+      "KPP_RENDER_VISUAL_EVIDENCE_PROBE_UNTRUSTED",
+      "시각 근거 분석기는 호출자 경로나 환경변수가 아니라 KPP 릴리스 권한으로만 선택할 수 있습니다.",
+      { stage: "BUILT" },
+    );
+  }
+}
+
+async function stageApprovedVisualEvidenceProbe(
+  staging: string,
+  generationPath: string,
+): Promise<{ readonly executionPath: string; readonly identity: RenderExecutableIdentity }> {
+  const sourceSha256 = sha256Text(APPROVED_VISUAL_EVIDENCE_PROBE_SOURCE);
+  if (sourceSha256 !== APPROVED_VISUAL_EVIDENCE_PROBE_SHA256) {
+    throw new KppError("KPP_RENDER_VISUAL_EVIDENCE_AUTHORITY_INVALID", "패키지 소유 시각 분석기 바이트가 고정된 권한 해시와 다릅니다.", {
+      expected: APPROVED_VISUAL_EVIDENCE_PROBE_SHA256,
+      actual: sourceSha256,
+      stage: "BUILT",
+    });
+  }
+  const filename = "kpp-visual-evidence-probe.cjs";
+  const executionPath = join(staging, filename);
+  await writeFile(executionPath, APPROVED_VISUAL_EVIDENCE_PROBE_SOURCE, { encoding: "utf8", flag: "wx", mode: 0o700 });
+  await chmod(executionPath, 0o700);
+  const versionResult = await executeFile(executionPath, ["--version"]);
+  const version = `${versionResult.stdout}\n${versionResult.stderr}`.trim();
+  if (version !== APPROVED_VISUAL_EVIDENCE_PROBE_VERSION || await sha256File(executionPath) !== APPROVED_VISUAL_EVIDENCE_PROBE_SHA256) {
+    throw new KppError("KPP_RENDER_VISUAL_EVIDENCE_AUTHORITY_INVALID", "패키지 소유 시각 분석기 신원을 검증할 수 없습니다.", {
+      actual: { version },
+      stage: "BUILT",
+    });
+  }
+  const publishedPath = join(generationPath, filename);
+  return {
+    executionPath,
+    identity: {
+      name: "visual-evidence-probe",
+      path: publishedPath,
+      realpath: publishedPath,
+      sha256: APPROVED_VISUAL_EVIDENCE_PROBE_SHA256,
+      version,
+    },
   };
 }
 
@@ -410,16 +470,16 @@ async function createVisualEvidenceSidecars(input: {
   readonly staging: string;
   readonly generationPath: string;
   readonly pageImages: readonly PageImageArtifact[];
-  readonly probe?: RenderExecutableIdentity;
+  readonly probePath?: string;
 }): Promise<readonly VisualEvidencePageArtifact[]> {
-  if (input.probe === undefined) return [];
+  if (input.probePath === undefined) return [];
   const sidecars: VisualEvidencePageArtifact[] = [];
   for (const page of input.pageImages) {
     const pageName = `page-${String(page.page).padStart(4, "0")}.png`;
     const stagedPagePath = join(input.staging, pageName);
     const sidecarName = `page-${String(page.page).padStart(4, "0")}.visual-evidence.json`;
     const stagedSidecarPath = join(input.staging, sidecarName);
-    await executeFile(input.probe.path, [
+    await executeFile(input.probePath, [
       stagedPagePath,
       stagedSidecarPath,
       String(page.page),

@@ -41,6 +41,12 @@ export {
   type FigureSemanticAuditInput,
 } from "./visual-evidence.js";
 export {
+  APPROVED_VISUAL_EVIDENCE_PROBE_AUTHORITY_ID,
+  APPROVED_VISUAL_EVIDENCE_PROBE_SHA256,
+  APPROVED_VISUAL_EVIDENCE_PROBE_SOURCE,
+  APPROVED_VISUAL_EVIDENCE_PROBE_VERSION,
+} from "./visual-probe-authority.js";
+export {
   type AuditArtifact,
   type AuditFinding,
   type AuditSlice,

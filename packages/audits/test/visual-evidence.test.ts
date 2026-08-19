@@ -24,6 +24,7 @@ import {
   type VisualEvidenceFigureArtifact,
 } from "@longtable/kpp-renderers";
 import { auditFigureSemantics, type FigureSemanticAuditInput } from "../src/index.js";
+import { sha256File, writeReceipt } from "@longtable/kpp-core";
 
 const SOURCE_SHA = "1".repeat(64);
 const REFERENCE_SHA = "2".repeat(64);
@@ -152,6 +153,35 @@ describe("independent visual evidence audit", () => {
     const manifest = JSON.parse(await readFile(input.renderManifestPath!, "utf8")) as { raster: { format: string } };
     manifest.raster.format = "svg";
     await writeFile(input.renderManifestPath!, `${JSON.stringify(manifest, null, 2)}\n`);
+
+    const report = await auditFigureSemantics(input);
+
+    expect(report.status).toBe("BLOCKED");
+    expect(report.findings).toContainEqual(expect.objectContaining({ code: "PP_FIGURE_RENDER_PROVENANCE_MISMATCH" }));
+  });
+
+  it("blocks a self-consistent receipt when the manifest names a caller-owned probe authority", async () => {
+    const input = await validAuditInput();
+    const manifest = JSON.parse(await readFile(input.renderManifestPath!, "utf8")) as {
+      visualEvidence: { authority: { authorityId: string } };
+    };
+    manifest.visualEvidence.authority.authorityId = "attacker/self-consistent-probe@1";
+    await writeFile(input.renderManifestPath!, `${JSON.stringify(manifest, null, 2)}\n`);
+
+    const receiptPath = join(input.projectRoot!, "receipts", "render.json");
+    const originalReceipt = JSON.parse(await readFile(receiptPath, "utf8")) as {
+      files: readonly { path: string }[];
+      inputReceiptHashes: readonly string[];
+    };
+    await rm(receiptPath);
+    await writeReceipt({
+      stage: "RENDERED",
+      files: originalReceipt.files.map((file) => file.path),
+      inputReceiptHashes: originalReceipt.inputReceiptHashes,
+      output: receiptPath,
+      toolVersion: "0.1.0",
+    });
+    expect(await sha256File(input.renderManifestPath!)).toMatch(/^[a-f0-9]{64}$/u);
 
     const report = await auditFigureSemantics(input);
 
@@ -403,7 +433,8 @@ async function bindPageFixture(fixture: FigureA4PageFixture, blockedDimensions: 
   temporaryRoots.push(governed.root);
   const rendered = await renderProject(governed.root, {
     docxPath: governed.docxPath,
-    tools: governed.tools,
+    tools: (({ visualEvidenceProbe: _probe, ...tools }) => tools)(governed.tools),
+    visualEvidence: true,
   });
   const selected = rendered.pageImages.find((page) => page.page === pageNumber);
   if (selected === undefined) throw new Error(`render fixture did not produce page ${pageNumber}`);

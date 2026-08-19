@@ -15,6 +15,11 @@ import {
   type VisualEvidenceFigureArtifact,
 } from "@longtable/kpp-renderers";
 import type { AuditFinding, AuditStatus } from "./source.js";
+import {
+  APPROVED_VISUAL_EVIDENCE_PROBE_AUTHORITY_ID,
+  APPROVED_VISUAL_EVIDENCE_PROBE_SHA256,
+  APPROVED_VISUAL_EVIDENCE_PROBE_VERSION,
+} from "./visual-probe-authority.js";
 
 export interface FigureSemanticAuditInput {
   readonly spec: SemanticFigureSpecV1_1;
@@ -223,6 +228,13 @@ async function validateFinalRenderProvenance(
     const manifestBytes = await readFile(manifestPath);
     const manifest = parseRenderManifest(manifestBytes);
     if (manifest.raster.format !== "png") throw new Error("render manifest raster contract is not canonical PNG");
+    if (manifest.visualEvidence.authority.authorityId !== APPROVED_VISUAL_EVIDENCE_PROBE_AUTHORITY_ID
+      || manifest.visualEvidence.authority.analyzerSha256 !== APPROVED_VISUAL_EVIDENCE_PROBE_SHA256
+      || manifest.visualEvidence.analyzer.name !== "visual-evidence-probe"
+      || manifest.visualEvidence.analyzer.sha256 !== APPROVED_VISUAL_EVIDENCE_PROBE_SHA256
+      || manifest.visualEvidence.analyzer.version !== APPROVED_VISUAL_EVIDENCE_PROBE_VERSION) {
+      throw new Error("visual evidence analyzer is not approved by the KPP release authority");
+    }
     const manifestRecord = await matchingReceiptFile(renderVerification.receipt.files, manifestPath);
     if (manifestRecord?.sha256 !== sha256Bytes(manifestBytes)) throw new Error("render manifest is not bound by the RENDERED receipt");
 
@@ -237,6 +249,12 @@ async function validateFinalRenderProvenance(
     if (visualPageRecord === undefined || visualPageRecord.sourcePageSha256 !== pageRecord.sha256) throw new Error("visual evidence sidecar is not bound to the selected PNG page");
     const visualPagePath = await realpath(visualPageRecord.path);
     if (!isWithin(currentGeneration, visualPagePath)) throw new Error("visual evidence sidecar escapes the current KPP generation");
+    const analyzerPath = await realpath(manifest.visualEvidence.analyzer.path);
+    if (!isWithin(currentGeneration, analyzerPath)
+      || manifest.visualEvidence.analyzer.realpath !== analyzerPath
+      || await sha256File(analyzerPath) !== APPROVED_VISUAL_EVIDENCE_PROBE_SHA256) {
+      throw new Error("visual evidence analyzer bytes or location do not match the KPP release authority");
+    }
 
     const [sourceBytes, outputBytes, pdfBytes, visualPageBytes] = await Promise.all([
       readFile(sourcePath), readFile(outputPath), readFile(pdfPath), readFile(visualPagePath),
@@ -260,9 +278,11 @@ async function validateFinalRenderProvenance(
     const renderPdf = await matchingReceiptFile(renderVerification.receipt.files, pdfPath);
     const renderPage = await matchingReceiptFile(renderVerification.receipt.files, outputPath);
     const renderVisualPage = await matchingReceiptFile(renderVerification.receipt.files, visualPagePath);
+    const renderAnalyzer = await matchingReceiptFile(renderVerification.receipt.files, analyzerPath);
     if (buildSource?.sha256 !== sourceHash || renderSource?.sha256 !== sourceHash
       || renderPdf?.sha256 !== pdfHash || renderPage?.sha256 !== outputHash
-      || renderVisualPage?.sha256 !== visualPageRecord.sha256) throw new Error("document or outputs are not bound by the KPP receipt chain");
+      || renderVisualPage?.sha256 !== visualPageRecord.sha256
+      || renderAnalyzer?.sha256 !== APPROVED_VISUAL_EVIDENCE_PROBE_SHA256) throw new Error("document, analyzer, or outputs are not bound by the KPP receipt chain");
 
     for (const executable of [...Object.values(manifest.executables), manifest.visualEvidence.analyzer]) {
       const executablePath = await realpath(executable.path);
@@ -287,6 +307,11 @@ interface TrustedRenderManifest {
   readonly raster: { readonly dpi: number; readonly format: "png" };
   readonly visualEvidence: {
     readonly schemaVersion: "kpp-visual-evidence-render/v1";
+    readonly authority: {
+      readonly schemaVersion: "kpp-visual-probe-authority/v1";
+      readonly authorityId: string;
+      readonly analyzerSha256: string;
+    };
     readonly analyzer: RenderManifestExecutable;
     readonly pages: readonly (RenderManifestPage & { readonly sourcePageSha256: string })[];
   };
@@ -302,6 +327,7 @@ function parseRenderManifest(bytes: Uint8Array): TrustedRenderManifest {
     || !value.output.pages.every(isRenderPage) || !isRecord(value.executables)
     || !isRecord(value.raster) || !Number.isInteger(value.raster.dpi) || Number(value.raster.dpi) < 1 || value.raster.format !== "png"
     || !isRecord(value.visualEvidence) || value.visualEvidence.schemaVersion !== "kpp-visual-evidence-render/v1"
+    || !isVisualEvidenceAuthority(value.visualEvidence.authority)
     || !isRenderExecutable(value.visualEvidence.analyzer) || !Array.isArray(value.visualEvidence.pages)
     || !value.visualEvidence.pages.every(isVisualEvidencePageRecord)) throw new Error("render manifest structure is invalid");
   const pages = value.output.pages as RenderManifestPage[];
@@ -332,6 +358,12 @@ function isVisualEvidencePageRecord(value: unknown): value is RenderManifestPage
 function isRenderExecutable(value: unknown): value is RenderManifestExecutable {
   return isPathHash(value) && (value.name === undefined || typeof value.name === "string")
     && typeof value.realpath === "string" && typeof value.version === "string";
+}
+
+function isVisualEvidenceAuthority(value: unknown): value is TrustedRenderManifest["visualEvidence"]["authority"] {
+  return isRecord(value) && value.schemaVersion === "kpp-visual-probe-authority/v1"
+    && typeof value.authorityId === "string"
+    && typeof value.analyzerSha256 === "string" && /^[a-f0-9]{64}$/u.test(value.analyzerSha256);
 }
 
 interface MillimetreBox { readonly xMm: number; readonly yMm: number; readonly widthMm: number; readonly heightMm: number }
