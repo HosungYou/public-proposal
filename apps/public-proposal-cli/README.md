@@ -2,25 +2,36 @@
 
 Pinned meta-installer for the Public Proposal Codex plugin, bundled Korean public-proposal authority, KPP CLI, LongTable CLI, and managed KPP DOCX worker.
 
-This package is published on npm as `@longtable/public-proposal@0.1.3`. The commands below are the supported interface; pin `@0.1.3` when reproducibility is required.
+Published 0.1.3 legacy/current behavior is available on npm. Pin the published artifact for the supported legacy command surface:
 
 ```bash
-npx @longtable/public-proposal setup --provider codex
-npx @longtable/public-proposal doctor --json
+npx --yes @longtable/public-proposal@0.1.3 setup --provider codex
+npx --yes @longtable/public-proposal@0.1.3 doctor --json
+npx --yes @longtable/public-proposal@0.1.3 update
+npx --yes @longtable/public-proposal@0.1.3 update --apply
+npx --yes --package @longtable/public-proposal@0.1.3 kpp adopt <legacy-project> --source <source-packet> --master <working-master> --json
+npx --yes @longtable/public-proposal@0.1.3 uninstall
 ```
 
-Use the package through these explicit ephemeral commands:
+The registry's 0.1.3 bytes are the legacy/current artifact, not this branch's independent two-plugin vNext surface. Do not present an unpinned `npx @longtable/public-proposal ...` command as vNext.
+
+Local vNext tarball / hermetic verification is performed by the bounded workspace verifier:
 
 ```bash
-npx --yes @longtable/public-proposal setup --provider codex
-npx --yes @longtable/public-proposal doctor --json
-npx --yes @longtable/public-proposal update
-npx --yes @longtable/public-proposal update --apply
-npx --yes --package @longtable/public-proposal kpp adopt <legacy-project> --source <source-packet> --master <working-master> --json
-npx --yes @longtable/public-proposal uninstall
+npm run verify:public-proposal
 ```
 
-Setup creates or reuses two independent registrations, `public-proposal@public-proposal` and `longtable@longtable`. The single global Codex `public-proposal` marketplace selector still means differently sourced user and project installations cannot coexist. A conflict stops with `PP_MARKETPLACE_CONFLICT`.
+The verifier installs the complete local workspace tarball set in an isolated fixture and checks the separate `public-proposal@public-proposal` and `longtable@longtable` registrations. A local tarball or `npx --package <tarball>` run is not evidence of npm registry identity.
+
+Future vNext registry command, only after a new version is published and its exact `dist.integrity` is verified:
+
+```bash
+npx --yes @longtable/public-proposal@<vnext-version> setup --provider codex
+```
+
+`<vnext-version>` is intentionally not an invented or currently available version. Until publication and integrity verification pass, use the local verifier rather than a registry command.
+
+Setup creates or reuses two independent registrations, `public-proposal@public-proposal` and `longtable@longtable` in the vNext source. The single global Codex `public-proposal` marketplace selector still means differently sourced user and project installations cannot coexist. A conflict stops with `PP_MARKETPLACE_CONFLICT`.
 
 This release coordinates the following exact contract:
 

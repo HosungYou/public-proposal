@@ -2,24 +2,42 @@
 
 vNext is a gated beta candidate, not a `latest` promotion claim. The repository verifier never runs `npm publish` and never changes a dist-tag.
 
-## One command, two independent plugins
+## Published 0.1.3 legacy/current behavior
+
+The registry currently serves `@longtable/public-proposal@0.1.3` as the published legacy/current artifact. Reproduce that artifact with the exact version-pinned commands:
 
 ```bash
-npx --yes @longtable/public-proposal setup --provider codex
+npx --yes @longtable/public-proposal@0.1.3 setup --provider codex
+npx --yes @longtable/public-proposal@0.1.3 doctor --json
+npx --yes @longtable/public-proposal@0.1.3 update
+npx --yes @longtable/public-proposal@0.1.3 update --apply
+npx --yes --package @longtable/public-proposal@0.1.3 kpp adopt <legacy-project> --source <source-packet> --master <working-master> --json
+npx --yes @longtable/public-proposal@0.1.3 uninstall
 ```
 
-This registers `public-proposal@public-proposal` and `longtable@longtable` from independently receipted sources. A compatible external LongTable registration is reused and remains externally owned. Uninstall removes only installer-owned registrations and files. Codex has one global `public-proposal` marketplace selector, so user- and project-scoped installations with different sources cannot coexist; setup reports `PP_MARKETPLACE_CONFLICT`.
+This published 0.1.3 artifact is not the independent two-plugin vNext surface in this branch. Do not use an unpinned `npx @longtable/public-proposal ...` command as a vNext claim.
 
-Use the complete command matrix:
+## Local vNext tarball / hermetic verification
+
+Verify the vNext source locally with the bounded verifier:
 
 ```bash
-npx --yes @longtable/public-proposal setup --provider codex
-npx --yes @longtable/public-proposal doctor --json
-npx --yes @longtable/public-proposal update
-npx --yes @longtable/public-proposal update --apply
-npx --yes --package @longtable/public-proposal kpp adopt <legacy-project> --source <source-packet> --master <working-master> --json
-npx --yes @longtable/public-proposal uninstall
+npm run verify:public-proposal
 ```
+
+The verifier builds and installs the complete local workspace tarball set in an isolated fixture and checks the independent `public-proposal@public-proposal` and `longtable@longtable` registrations. A local `npm pack` or `npx --package <tarball>` run proves only local bytes; it does not prove npm visibility.
+
+## Future vNext registry command
+
+Only after a new vNext version has been published and the exact registry `dist.integrity` matches the verified local tarball may the future version-pinned command be used:
+
+```bash
+npx --yes @longtable/public-proposal@<vnext-version> setup --provider codex
+```
+
+`<vnext-version>` is a placeholder, not an invented release. Until that gate passes, this document does not provide a registry command for vNext.
+
+In the vNext source, one setup registers `public-proposal@public-proposal` and `longtable@longtable` from independently receipted sources. A compatible external LongTable registration is reused and remains externally owned. Uninstall removes only installer-owned registrations and files. Codex has a **single global Codex `public-proposal` marketplace selector**, so user- and project-scoped installations with different sources cannot coexist; setup reports `PP_MARKETPLACE_CONFLICT`.
 
 ## Conditional LongTable routing
 

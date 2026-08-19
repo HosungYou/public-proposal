@@ -8,18 +8,40 @@ Use a supported Node runtime (`>=22 <27`) and Python (`>=3.11 <3.15`), plus npm,
 
 Use a writable user or project installation location. Do not put customer RFPs, private source files, credentials, personnel records, pricing, or bid-specific evidence in the plugin package or installation directory.
 
-## Recommended one-command setup
+## Published 0.1.3 legacy/current behavior
 
-The package is published on npm as `@longtable/public-proposal@0.1.3`. Leaving off the version below resolves the current `latest` tag; pin `@0.1.3` when reproducibility is required.
+The npm registry currently serves `@longtable/public-proposal@0.1.3` as the published legacy/current artifact. Pin the exact version for reproducibility:
 
 ```bash
-npx --yes @longtable/public-proposal setup --provider codex
-npx --yes @longtable/public-proposal doctor --json
-npx --yes @longtable/public-proposal update
-npx --yes @longtable/public-proposal update --apply
-npx --yes --package @longtable/public-proposal kpp adopt <legacy-project> --source <source-packet> --master <working-master> --json
-npx --yes @longtable/public-proposal uninstall
+npx --yes @longtable/public-proposal@0.1.3 setup --provider codex
+npx --yes @longtable/public-proposal@0.1.3 doctor --json
+npx --yes @longtable/public-proposal@0.1.3 update
+npx --yes @longtable/public-proposal@0.1.3 update --apply
+npx --yes --package @longtable/public-proposal@0.1.3 kpp adopt <legacy-project> --source <source-packet> --master <working-master> --json
+npx --yes @longtable/public-proposal@0.1.3 uninstall
 ```
+
+Do not use an unpinned `npx @longtable/public-proposal ...` command as the vNext install path. The published 0.1.3 bytes are not this branch's independent two-plugin vNext surface.
+
+## Local vNext tarball / hermetic verification
+
+Run the bounded verifier for this branch's local vNext artifact:
+
+```bash
+npm run verify:public-proposal
+```
+
+It builds and installs the complete local workspace tarball set in an isolated fixture, then checks the separate `public-proposal@public-proposal` and `longtable@longtable` registrations. A local `npm pack` or `npx --package <tarball>` run proves only local bytes and does not prove npm visibility or registry identity.
+
+## Future vNext registry command
+
+Only after a new vNext version has been published and its exact registry `dist.integrity` has been independently verified may users run:
+
+```bash
+npx --yes @longtable/public-proposal@<vnext-version> setup --provider codex
+```
+
+`<vnext-version>` is a placeholder, not a current release. Until that publication and integrity gate passes, use the local verifier above and do not promote `latest`.
 
 `setup` validates the packaged Public Proposal marketplace and plugin, verifies the pinned KPP and LongTable CLIs, installs the managed DOCX worker, and writes an installation receipt only after its preflight passes. In the vNext source, LongTable is an independent `longtable@longtable` registration: a compatible external source is reused as `externally_owned`; otherwise setup creates a separate installer-owned LongTable marketplace and installs `$longtable` plus the canonical `longtable-research` skill there. The published `@longtable/cli@0.1.72` artifact may name the scholarly skill `scholar-research`; the installer normalizes that name only inside its own LongTable plugin. `doctor --json` verifies both independent registration sources and LongTable doctor; it is read-only. Use `--install-scope project` only when the installation should be scoped to the current project rather than the user.
 
@@ -27,7 +49,7 @@ If a later setup step fails, setup removes only marketplace/plugin registrations
 
 During migration, setup/update snapshot the prior receipt hash, both Codex registration states, and load-bearing installer-owned file hashes. It adds only missing registrations, validates LongTable doctor, removes only legacy LongTable role copies below Public Proposal-owned plugin roots, and atomically replaces `installation.json`. It never writes or deletes `.longtable/`, customer data, KPP project state, or approval artifacts. Retrying after a compensated failure does not duplicate registrations.
 
-The `npx` form is intentionally repeatable: setup does not install a persistent `public-proposal` executable. Use the same `npx @longtable/public-proposal` prefix for doctor, update, and uninstall unless you deliberately choose the global fallback below.
+The pinned `npx --yes @longtable/public-proposal@0.1.3` form is intentionally repeatable for the published legacy/current artifact. Setup does not install a persistent `public-proposal` executable. Use the future version-pinned vNext form only after its registry integrity gate passes.
 
 The `kpp adopt` line uses `npx --package` because adoption belongs to the pinned KPP binary supplied as a dependency, not to the installer command. A single setup invocation registers both `public-proposal@public-proposal` and `longtable@longtable` as independent plugins. Their skills and ownership remain separate.
 
@@ -38,9 +60,9 @@ Codex has a **single global Codex `public-proposal` marketplace selector**. Ther
 Choose one scope, uninstall the existing Public Proposal installation, then set up the selected scope. For example, to move from user scope to the current project scope:
 
 ```bash
-npx @longtable/public-proposal uninstall --install-scope user
-npx @longtable/public-proposal setup --provider codex --install-scope project
-npx @longtable/public-proposal doctor --install-scope project --json
+npx --yes @longtable/public-proposal@0.1.3 uninstall --install-scope user
+npx --yes @longtable/public-proposal@0.1.3 setup --provider codex --install-scope project
+npx --yes @longtable/public-proposal@0.1.3 doctor --install-scope project --json
 ```
 
 Do not remove an unrelated Codex marketplace registration to force this transition. `uninstall` removes only the installation receipt's owned Public Proposal paths; if the existing marketplace source is not owned by that receipt, inspect it and choose one source before retrying setup.
@@ -94,7 +116,7 @@ To remove only files owned by a successful Public Proposal installation:
 public-proposal uninstall
 ```
 
-Uninstall preserves existing LongTable projects, `.longtable/` research state, KPP project data, and customer material. `public-proposal update` previews compatibility changes; use `public-proposal update --apply` only after checking the preview and the compatibility matrix. With the ephemeral path, use `npx @longtable/public-proposal uninstall` and `npx @longtable/public-proposal update` instead.
+Uninstall preserves existing LongTable projects, `.longtable/` research state, KPP project data, and customer material. `public-proposal update` previews compatibility changes; use `public-proposal update --apply` only after checking the preview and the compatibility matrix. With the published ephemeral path, use `npx --yes @longtable/public-proposal@0.1.3 uninstall` and `npx --yes @longtable/public-proposal@0.1.3 update` instead.
 
 ## Adopt a legacy proposal project
 
@@ -128,7 +150,7 @@ The resulting LongTable research lock is rechecked before authoring export, cont
 
 | Code | Meaning | Safe recovery |
 | --- | --- | --- |
-| `PP_WORKER_PROTOCOL_MISSING` | The managed DOCX worker is absent, incompatible, or fails its protocol check. | Run `npx @longtable/public-proposal doctor --json`, restore a runtime in the documented Python compatibility range, then rerun setup. Do not interpret doctor as semver enforcement or point KPP at an unverified worker binary. |
+| `PP_WORKER_PROTOCOL_MISSING` | The managed DOCX worker is absent, incompatible, or fails its protocol check. | Run `npx --yes @longtable/public-proposal@0.1.3 doctor --json`, restore a runtime in the documented Python compatibility range, then rerun setup. Do not interpret doctor as semver enforcement or point KPP at an unverified worker binary. |
 | `PP_LONGTABLE_REQUIRED` | The project class needs LongTable, or the handoff no longer matches the locked project. | Prepare the required LongTable research handoff and confirm the project class before importing it with `kpp research-lock`. |
 | `PP_RESEARCH_LOCK_MISSING` | A required project has no valid KPP-bound LongTable research lock. | Complete the required LongTable artifacts and checkpoints, then import the handoff with `kpp research-lock <project-root> --handoff <handoff.json> --json`. |
 | `PP_RESEARCH_CHECKPOINT_OPEN` | A required researcher decision remains unresolved. | Resolve it with the researcher; do not bypass it in KPP. |

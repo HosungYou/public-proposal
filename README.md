@@ -6,34 +6,42 @@ This repository is the canonical GitHub home for the English `$public-proposal` 
 
 ## Install and run
 
-The public `@longtable/public-proposal@0.1.3` package is available from npm. The Codex setup path is:
+### Published 0.1.3 legacy/current behavior
+
+The npm registry currently serves `@longtable/public-proposal@0.1.3` as the published legacy/current artifact. Pin that version when reproducing it:
 
 ```bash
-npx @longtable/public-proposal setup --provider codex
+npx --yes @longtable/public-proposal@0.1.3 setup --provider codex
+npx --yes @longtable/public-proposal@0.1.3 doctor --json
+npx --yes @longtable/public-proposal@0.1.3 update
+npx --yes @longtable/public-proposal@0.1.3 update --apply
+npx --yes --package @longtable/public-proposal@0.1.3 kpp adopt <legacy-project> --source <source-packet> --master <working-master> --json
+npx --yes @longtable/public-proposal@0.1.3 uninstall
 ```
 
-To reproduce this exact release, use `npx @longtable/public-proposal@0.1.3 ...`; leaving off the version resolves the current `latest` tag.
+Do not use an unpinned `npx @longtable/public-proposal ...` command as the vNext install path. The published 0.1.3 artifact and this branch's vNext artifact are not interchangeable; the current registry artifact must not be described as the independent two-plugin vNext surface.
 
-It pins `@longtable/kpp-cli@0.2.1`, `@longtable/cli@0.1.72`, and managed worker protocol `1.0.0`. In the vNext source, Public Proposal and LongTable are independent Codex registrations. Setup reuses a compatible external `longtable@longtable` registration or creates a separately receipted installer-owned LongTable marketplace; uninstall never removes an externally owned registration. Node `>=22 <27` and Python `>=3.11 <3.15` are compatibility requirements. The current setup and doctor commands verify that the required executables are available; they do not yet enforce those runtime version ranges.
+### Local vNext tarball / hermetic verification
 
-After setup, inspect the installed boundary without changing it:
+Run the bounded verifier against the local workspace when checking this branch's vNext surface:
 
 ```bash
-npx @longtable/public-proposal doctor --json
+npm run verify:public-proposal
 ```
 
-The complete ephemeral command matrix is:
+It builds and installs the complete local workspace tarball set in an isolated fixture, then checks the independent `public-proposal@public-proposal` and `longtable@longtable` registrations. A local `npm pack` or `npx --package <tarball>` run proves only local bytes; it does not prove npm visibility or registry identity.
+
+### Future vNext registry command
+
+After a new vNext version has been published and its exact registry `dist.integrity` has been independently verified, the future version-pinned command will be:
 
 ```bash
-npx --yes @longtable/public-proposal setup --provider codex
-npx --yes @longtable/public-proposal doctor --json
-npx --yes @longtable/public-proposal update
-npx --yes @longtable/public-proposal update --apply
-npx --yes --package @longtable/public-proposal kpp adopt <legacy-project> --source <source-packet> --master <working-master> --json
-npx --yes @longtable/public-proposal uninstall
+npx --yes @longtable/public-proposal@<vnext-version> setup --provider codex
 ```
 
-One setup invocation coordinates two independent Codex plugin registrations: `public-proposal@public-proposal` and `longtable@longtable`. It does not merge their authority or make LongTable a Public Proposal sub-skill.
+`<vnext-version>` is deliberately a placeholder, not a version available today. Until that gate passes, use the local verifier above rather than presenting a registry command as vNext.
+
+The vNext source keeps Public Proposal and LongTable as independent Codex registrations. Setup reuses a compatible external `longtable@longtable` registration or creates a separately receipted installer-owned LongTable marketplace; uninstall never removes an externally owned registration. Node `>=22 <27` and Python `>=3.11 <3.15` are compatibility requirements. The current setup and doctor commands verify that the required executables are available; they do not yet enforce those runtime version ranges.
 
 `setup` is a change command; `doctor` is read-only. See the full [installation and recovery guide](docs/installation/INSTALL.md) and the machine-readable [compatibility matrix](docs/installation/compatibility-matrix.json).
 

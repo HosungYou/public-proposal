@@ -1,33 +1,42 @@
 import { readFile } from "node:fs/promises";
 import { expect, test } from "vitest";
 
-const EPHEMERAL_SETUP = "npx @longtable/public-proposal setup --provider codex";
-const EPHEMERAL_DOCTOR = "npx @longtable/public-proposal doctor --json";
+const PUBLISHED_SETUP = "npx --yes @longtable/public-proposal@0.1.3 setup --provider codex";
+const PUBLISHED_DOCTOR = "npx --yes @longtable/public-proposal@0.1.3 doctor --json";
 const GLOBAL_DOCTOR_LINE = /^public-proposal doctor --json$/mu;
+const UNPINNED_COMMAND_LINE = /^\s*npx(?: --yes)? @longtable\/public-proposal (?:setup|doctor|update|uninstall)\b.*$/mu;
+const FUTURE_VNEXT_SETUP = "npx --yes @longtable/public-proposal@<vnext-version> setup --provider codex";
 
 async function readInstallationDocs(): Promise<InstallationDocs> {
-  const [readme, install, packageReadme, matrixRaw] = await Promise.all([
+  const [readme, install, packageReadme, beta, matrixRaw] = await Promise.all([
     readFile("README.md", "utf8"),
     readFile("docs/installation/INSTALL.md", "utf8"),
     readFile("apps/public-proposal-cli/README.md", "utf8"),
+    readFile("docs/VNEXT-BETA.md", "utf8"),
     readFile("docs/installation/compatibility-matrix.json", "utf8"),
   ]);
   return {
     readme,
     install,
     packageReadme,
+    beta,
     matrix: JSON.parse(matrixRaw) as Record<string, unknown>,
   };
 }
 
 test("documentation exposes a runnable ephemeral install and doctor path", async () => {
-  const { readme, install, packageReadme } = await readInstallationDocs();
+  const { readme, install, packageReadme, beta } = await readInstallationDocs();
 
-  for (const document of [readme, install, packageReadme]) {
-    expect(document).toContain(EPHEMERAL_SETUP);
-    expect(document).toContain(EPHEMERAL_DOCTOR);
+  for (const document of [readme, install, packageReadme, beta]) {
+    expect(document).toContain(PUBLISHED_SETUP);
+    expect(document).toContain(PUBLISHED_DOCTOR);
     expect(document).toContain("@longtable/public-proposal@0.1.3");
     expect(document).not.toContain("not yet available from the public npm registry");
+    expect(document).toContain("Published 0.1.3 legacy/current behavior");
+    expect(document).toContain("Local vNext tarball / hermetic verification");
+    expect(document).toContain("Future vNext registry command");
+    expect(document).toContain(FUTURE_VNEXT_SETUP);
+    expect(document).not.toMatch(UNPINNED_COMMAND_LINE);
   }
 
   const [primaryGuide] = install.split("## Manual fallback");
@@ -73,8 +82,8 @@ test("manual global fallback is distinct and the matrix records exact compatibil
   expect(manualFallback).toContain("npm install --global @longtable/public-proposal@0.1.3 @longtable/kpp-cli@0.2.1 @longtable/cli@0.1.72");
   expect(manualFallback).toMatch(GLOBAL_DOCTOR_LINE);
   expect(manualFallback).toContain("This section alone assumes the globally installed `public-proposal` executable.");
-  expect(manualFallback).toContain("npx @longtable/public-proposal uninstall");
-  expect(manualFallback).toContain("npx @longtable/public-proposal update");
+  expect(manualFallback).toContain("npx --yes @longtable/public-proposal@0.1.3 uninstall");
+  expect(manualFallback).toContain("npx --yes @longtable/public-proposal@0.1.3 update");
   expect(matrix).toMatchObject({
     installerPackage: "@longtable/public-proposal",
     installerVersion: "0.1.3",
@@ -102,25 +111,26 @@ test("installation guidance retains the required recovery paths", async () => {
   ]) {
     expect(install).toContain(code);
   }
-  expect(install).toContain(EPHEMERAL_DOCTOR);
+  expect(install).toContain(PUBLISHED_DOCTOR);
   expect(install).toContain("public-proposal uninstall");
 });
 
 test("documentation explains the global Codex marketplace scope collision", async () => {
-  const { readme, install, packageReadme } = await readInstallationDocs();
+  const { readme, install, packageReadme, beta } = await readInstallationDocs();
 
-  for (const document of [readme, install, packageReadme]) {
+  for (const document of [readme, install, packageReadme, beta]) {
     expect(document).toContain("single global Codex `public-proposal` marketplace selector");
     expect(document).toContain("PP_MARKETPLACE_CONFLICT");
   }
   expect(install).toContain("Choose one scope, uninstall the existing Public Proposal installation");
-  expect(install).toContain("npx @longtable/public-proposal uninstall --install-scope user");
-  expect(install).toContain("npx @longtable/public-proposal setup --provider codex --install-scope project");
+  expect(install).toContain("npx --yes @longtable/public-proposal@0.1.3 uninstall --install-scope user");
+  expect(install).toContain("npx --yes @longtable/public-proposal@0.1.3 setup --provider codex --install-scope project");
 });
 
 interface InstallationDocs {
   readonly readme: string;
   readonly install: string;
   readonly packageReadme: string;
+  readonly beta: string;
   readonly matrix: Record<string, unknown>;
 }
