@@ -1,6 +1,6 @@
 {
   "name": "public-proposal",
-  "version": "0.1.0",
+  "version": "0.1.3",
   "description": "English orchestration layer for evidence-bound Korean public proposals.",
   "repository": "https://github.com/HosungYou/public-proposal",
   "homepage": "https://github.com/HosungYou/public-proposal#readme",
@@ -21,6 +21,9 @@
     "developerName": "Enaction Labs",
     "category": "Productivity",
     "capabilities": [],
-    "defaultPrompt": "Use $public-proposal to plan, author, audit, and release an evidence-bound Korean public proposal with the bundled Korean authority snapshot. For academic_research, research_service, and policy_research, route through LongTable and bind a valid research lock before approval-ready authoring; keep KPP as the sole state, receipt, approval, and release writer."
+    "defaultPrompt": [
+      "Use $public-proposal to plan and author an evidence-bound Korean public proposal.",
+      "Audit this proposal's evidence, figures, and release gates."
+    ]
   }
 }

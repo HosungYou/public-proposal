@@ -1,9 +1,13 @@
 {
   "name": "public-proposal",
+  "interface": {
+    "displayName": "Public Proposal"
+  },
   "plugins": [
     {
       "name": "public-proposal",
       "source": {
+        "source": "local",
         "path": "./plugins/public-proposal"
       },
       "policy": {

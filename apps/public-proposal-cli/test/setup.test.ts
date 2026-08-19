@@ -420,14 +420,40 @@ describe("public proposal setup", () => {
 
     expect(result.ok).toBe(true);
     expect(fake.commands).toContain(
-      "longtable codex install-skills --surface compact --dir /home/ada/.config/public-proposal/longtable-marketplace/plugin/skills",
+      "longtable codex install-skills --surface plugin --dir /home/ada/.config/public-proposal/longtable-marketplace/plugin/skills",
     );
     expect(fake.files["/home/ada/.config/public-proposal/longtable-marketplace/plugin/skills/longtable/SKILL.md"]).toContain("LongTable");
     expect(fake.files["/home/ada/.config/public-proposal/longtable-marketplace/plugin/skills/longtable-research/SKILL.md"]).toContain("LongTable Research");
     expect(fake.files["/home/ada/.config/public-proposal/plugin/skills/longtable/SKILL.md"]).toBeUndefined();
   });
 
-  it("normalizes the legacy scholar-research skill and mirrors it into the registered plugin", async () => {
+  it("falls back to the pinned compact CLI surface and removes legacy roles when plugin surface is unavailable", async () => {
+    const pluginCommand = "longtable codex install-skills --surface plugin --dir /home/ada/.config/public-proposal/longtable-marketplace/plugin/skills";
+    const fake = fakeSetupDependencies({
+      legacyLongtableSkills: true,
+      commandFailures: new Map([[pluginCommand, {
+        code: 1,
+        stdout: "",
+        stderr: "Invalid --surface value. Use compact or full.",
+      }]]),
+    });
+
+    const result = await runSetup(
+      { provider: "codex", installScope: "user", cwd: "/work", home: "/home/ada" },
+      fake,
+    );
+
+    expect(result.ok).toBe(true);
+    expect(fake.commands).toContain(
+      "longtable codex install-skills --surface compact --dir /home/ada/.config/public-proposal/longtable-marketplace/plugin/skills",
+    );
+    expect(Object.keys(fake.files).filter((path) => path.includes("/longtable-marketplace/plugin/skills/") && path.endsWith("/SKILL.md"))).toEqual([
+      "/home/ada/.config/public-proposal/longtable-marketplace/plugin/skills/longtable/SKILL.md",
+      "/home/ada/.config/public-proposal/longtable-marketplace/plugin/skills/longtable-research/SKILL.md",
+    ]);
+  });
+
+  it("does not expose the legacy scholar-research skill on the plugin surface", async () => {
     const fake = fakeSetupDependencies({ legacyLongtableSkills: true });
     const result = await runSetup(
       { provider: "codex", installScope: "user", cwd: "/work", home: "/home/ada" },
@@ -436,7 +462,9 @@ describe("public proposal setup", () => {
 
     expect(result.ok).toBe(true);
     expect(fake.files["/home/ada/.config/public-proposal/longtable-marketplace/plugin/skills/longtable-research/SKILL.md"])
-      .toContain("name: longtable-research");
+      .toContain("LongTable Research");
+    expect(fake.files["/home/ada/.config/public-proposal/longtable-marketplace/plugin/skills/scholar-research/SKILL.md"])
+      .toBeUndefined();
     expect(fake.files["/home/ada/.config/public-proposal/plugin/skills/longtable-research/SKILL.md"])
       .toBeUndefined();
   });
@@ -447,7 +475,9 @@ describe("public proposal setup", () => {
       { provider: "codex", installScope: "user", cwd: "/work", home: "/home/ada" },
       {
         ...base,
-        packageVersion: async (packageName: string) => packageName === "@longtable/cli" ? SUPPORTED_LONGTABLE_VERSION : null,
+        packageVersion: async (packageName: string) => packageName === "@longtable/cli"
+          ? SUPPORTED_LONGTABLE_VERSION
+          : base.packageVersion?.(packageName) ?? null,
         spawn: async (command, args, options) => {
           if (command === "longtable" && args.join(" ") === "--version") {
             return { code: 1, stdout: "", stderr: "Unknown command: --version" };
@@ -605,6 +635,7 @@ describe("public proposal setup", () => {
         `${installRoot}/plugin`,
         `${installRoot}/marketplace`,
         `${installRoot}/worker`,
+        `${installRoot}/longtable-marketplace`,
       ],
     });
   });
@@ -649,7 +680,7 @@ describe("public proposal setup", () => {
     expect(failed.ok).toBe(false);
     expect(failed.error?.code).toBe("PP_WORKER_PROTOCOL_MISMATCH");
     expect(fake.files[`${installRoot}/installation.json`]).toBe(legacyBytes);
-    expect(fake.removed).toEqual([`${installRoot}/worker`]);
+    expect(fake.removed).toEqual([`${installRoot}/longtable-marketplace`, `${installRoot}/worker`]);
     expect(fake.files[`${installRoot}/plugin/.codex-plugin/plugin.json`]).toContain("public-proposal");
     expect(fake.files[`${installRoot}/marketplace/.dir`]).toBe("dir");
     expect(fake.files[`${installRoot}/codex-skills/.dir`]).toBe("dir");
@@ -671,6 +702,7 @@ describe("public proposal setup", () => {
         `${installRoot}/plugin`,
         `${installRoot}/marketplace`,
         `${installRoot}/worker`,
+        `${installRoot}/longtable-marketplace`,
       ],
     });
   });
@@ -746,6 +778,19 @@ function fakeSetupDependencies(input?: {
     "/pkg/worker/uv.lock": "version = 1\n",
     "/pkg/worker/src/kpp_docx/protocol.py": "PROTOCOL_VERSION = \"1.0.0\"\n",
   };
+  if (input?.preexistingLongtableMarketplaceRegistration) {
+    const externalRoot = input.preexistingLongtableMarketplacePath ?? `${installRoot}/longtable-marketplace`;
+    files[`${externalRoot}/.agents/plugins/marketplace.json`] = JSON.stringify({
+      name: "longtable",
+      plugins: [{ name: "longtable", source: { source: "local", path: "./plugin" } }],
+    });
+    files[`${externalRoot}/plugin/.codex-plugin/plugin.json`] = JSON.stringify({
+      name: "longtable",
+      version: SUPPORTED_LONGTABLE_VERSION,
+    });
+    files[`${externalRoot}/plugin/skills/longtable/SKILL.md`] = "# LongTable\n";
+    files[`${externalRoot}/plugin/skills/longtable-research/SKILL.md`] = "# LongTable Research\n";
+  }
   const writes: string[] = [];
   const preexisting = new Set<string>();
   const renames: Array<{ from: string; to: string }> = [];
@@ -766,6 +811,12 @@ function fakeSetupDependencies(input?: {
 
   return {
     packageRoot: "/pkg",
+    packageVersion: async (packageName: string) => {
+      if (packageName === "@longtable/kpp-cli") return SUPPORTED_KPP_VERSION;
+      if (packageName === "@longtable/cli") return SUPPORTED_LONGTABLE_VERSION;
+      if (packageName === "@longtable/proposal-research-contracts") return "0.1.0";
+      return null;
+    },
     files,
     preexisting,
     writes,
@@ -793,6 +844,15 @@ function fakeSetupDependencies(input?: {
         throw Object.assign(new Error(`ENOENT ${path}`), { code: "ENOENT" });
       }
       return files[path];
+    },
+    listDir: async (path) => {
+      if (path.endsWith("/longtable-marketplace/plugin/skills") || path.startsWith("/opt/longtable/")) {
+        return [...new Set(Object.keys(files)
+          .filter((file) => file.startsWith(`${path}/`) && file.endsWith("/SKILL.md"))
+          .map((file) => file.slice(path.length + 1).split("/")[0]))].sort();
+      }
+      if (path.endsWith("/plugin/skills")) return ["korean-public-proposal", "public-proposal"];
+      throw Object.assign(new Error(`ENOENT ${path}`), { code: "ENOENT" });
     },
     writeFile: async (path, contents, mode) => {
       if (input?.realFilesystemWrites && path.startsWith(installRoot)) {
@@ -925,11 +985,12 @@ function fakeSetupDependencies(input?: {
       if (rendered.startsWith("longtable codex install-skills ")) {
         const skillRoot = args[args.indexOf("--dir") + 1];
         const legacySkill = "---\nname: scholar-research\ndescription: legacy\n---\n\n# scholar-research\n";
+        const pluginSurface = args[args.indexOf("--surface") + 1] === "plugin";
         if (input?.realFilesystemWrites && skillRoot.startsWith(installRoot)) {
           const { mkdir, writeFile } = await import("node:fs/promises");
           await mkdir(join(skillRoot, "longtable"), { recursive: true });
           await writeFile(join(skillRoot, "longtable", "SKILL.md"), "# LongTable\n", "utf8");
-          if (input?.legacyLongtableSkills) {
+          if (input?.legacyLongtableSkills && !pluginSurface) {
             await mkdir(join(skillRoot, "scholar-research"), { recursive: true });
             await writeFile(join(skillRoot, "scholar-research", "SKILL.md"), legacySkill, "utf8");
           } else {
@@ -938,7 +999,7 @@ function fakeSetupDependencies(input?: {
           }
         }
         files[`${skillRoot}/longtable/SKILL.md`] = "# LongTable\n";
-        if (input?.legacyLongtableSkills) {
+        if (input?.legacyLongtableSkills && !pluginSurface) {
           files[`${skillRoot}/scholar-research/SKILL.md`] = legacySkill;
         } else {
           files[`${skillRoot}/longtable-research/SKILL.md`] = "# LongTable Research\n";

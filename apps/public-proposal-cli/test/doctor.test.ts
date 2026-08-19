@@ -9,6 +9,28 @@ import {
 import { runDoctor, type DoctorDependencies } from "../src/commands/doctor.js";
 
 describe("public proposal doctor", () => {
+  it("reports both plugins, exact skill discovery, contract versions, and legacy conflicts as separate checks", async () => {
+    const report = await runDoctor(fakeDoctorInput(), fakeDoctorDependencies());
+
+    expect(report.checks).toEqual(expect.arrayContaining([
+      expect.objectContaining({ name: "publicProposalPlugin", status: "pass" }),
+      expect.objectContaining({ name: "longtablePlugin", status: "pass" }),
+      expect.objectContaining({ name: "skillDiscovery", status: "pass" }),
+      expect.objectContaining({ name: "contracts", status: "pass" }),
+      expect.objectContaining({ name: "legacyConflicts", status: "pass" }),
+    ]));
+  });
+
+  it("blocks when a legacy LongTable role is exposed as a user-facing installed skill", async () => {
+    const report = await runDoctor(fakeDoctorInput(), fakeDoctorDependencies({ legacySkill: "longtable-theory" }));
+
+    expect(report.ok).toBe(false);
+    expect(report.checks).toContainEqual(expect.objectContaining({
+      name: "legacyConflicts",
+      status: "blocker",
+      code: "PP_LEGACY_SKILL_CONFLICT",
+    }));
+  });
   it("fails when a required exact KPP version check is missing", async () => {
     const report = await runDoctor(fakeDoctorInput(), fakeDoctorDependencies({ kppVersion: null }));
 
@@ -229,6 +251,7 @@ function fakeDoctorDependencies(input?: {
     installedWorkerSha?: string;
     missingSkill?: string;
     codexRegistration?: boolean;
+    legacySkill?: string;
 }): FakeDoctorDependencies {
   const kppVersion = input?.kppVersion === undefined ? SUPPORTED_KPP_VERSION : input.kppVersion;
   const longtableVersion =
@@ -244,6 +267,12 @@ function fakeDoctorDependencies(input?: {
 
   return {
     packageRoot: "/pkg",
+    packageVersion: async (packageName: string) => {
+      if (packageName === "@longtable/kpp-cli") return kppVersion;
+      if (packageName === "@longtable/cli") return longtableVersion;
+      if (packageName === "@longtable/proposal-research-contracts") return "0.1.0";
+      return null;
+    },
     commands,
     sha256: async (path) => {
       if (path === "/home/ada/.config/public-proposal/plugin/.codex-plugin/plugin.json") return installedPluginSha;
@@ -321,6 +350,28 @@ function fakeDoctorDependencies(input?: {
           plugins: [{ name: "public-proposal", source: { source: "local", path: "./plugin" } }],
         });
       }
+      if (path === "/home/ada/.config/public-proposal/longtable-marketplace/.agents/plugins/marketplace.json") {
+        return JSON.stringify({
+          name: "longtable",
+          plugins: [{ name: "longtable", source: { source: "local", path: "./plugin" } }],
+        });
+      }
+      if (path === "/home/ada/.config/public-proposal/longtable-marketplace/plugin/.codex-plugin/plugin.json") {
+        return JSON.stringify({ name: "longtable", version: "0.1.72" });
+      }
+      throw Object.assign(new Error(`ENOENT ${path}`), { code: "ENOENT" });
+    },
+    listDir: async (path) => {
+      if (path === "/home/ada/.config/public-proposal/plugin/skills") {
+        return ["korean-public-proposal", "public-proposal"];
+      }
+      if (path === "/home/ada/.config/public-proposal/longtable-marketplace/plugin/skills") {
+        return [
+          ...(input?.missingSkill === "longtable" ? [] : ["longtable"]),
+          ...(input?.missingSkill === "longtable-research" ? [] : ["longtable-research"]),
+          ...(input?.legacySkill ? [input.legacySkill] : []),
+        ].sort();
+      }
       throw Object.assign(new Error(`ENOENT ${path}`), { code: "ENOENT" });
     },
     exists: async (path) => path.startsWith("/home/ada/.config/public-proposal") || path.startsWith("/pkg"),
@@ -350,10 +401,10 @@ function fakeDoctorDependencies(input?: {
       }
       if (rendered.startsWith("codex plugin marketplace list")) return input?.codexRegistration === false
         ? ok("{\"marketplaces\":[]}")
-        : ok("{\"marketplaces\":[{\"name\":\"public-proposal\",\"path\":\"/home/ada/.config/public-proposal/marketplace\"}]}");
+        : ok("{\"marketplaces\":[{\"name\":\"public-proposal\",\"path\":\"/home/ada/.config/public-proposal/marketplace\"},{\"name\":\"longtable\",\"path\":\"/home/ada/.config/public-proposal/longtable-marketplace\"}]}");
       if (rendered.startsWith("codex plugin list")) return input?.codexRegistration === false
         ? ok("{\"installed\":[],\"available\":[]}")
-        : ok("{\"installed\":[{\"pluginId\":\"public-proposal@public-proposal\",\"installed\":true}],\"available\":[]}\n");
+        : ok("{\"installed\":[{\"pluginId\":\"public-proposal@public-proposal\",\"installed\":true},{\"pluginId\":\"longtable@longtable\",\"installed\":true}],\"available\":[]}\n");
       return { code: 127, stdout: "", stderr: `unexpected host command: ${rendered}` };
     },
   };

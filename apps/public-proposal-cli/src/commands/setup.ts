@@ -33,6 +33,7 @@ export interface SetupDependencies {
   readonly mkdir: (path: string) => Promise<void>;
   readonly sha256: (path: string) => Promise<string>;
   readonly realpath?: (path: string) => Promise<string>;
+  readonly listDir?: (path: string) => Promise<string[]>;
   readonly now: () => string;
   readonly exists?: (path: string) => Promise<boolean>;
   readonly copyDir?: (from: string, to: string) => Promise<void>;
@@ -209,6 +210,7 @@ export async function runSetup(
         spawn: dependencies.spawn,
         readFile: async (path) => (path === manifest ? manifestContents : dependencies.readFile(path)),
         exists,
+        listDir: dependencies.listDir,
         realpath: dependencies.realpath,
         sha256: dependencies.sha256,
       },
@@ -311,6 +313,7 @@ async function migrateCurrentManifest(
         spawn: dependencies.spawn,
         readFile: async (path) => path === manifest ? manifestContents : dependencies.readFile(path),
         exists,
+        listDir: dependencies.listDir,
         realpath: dependencies.realpath,
         sha256: dependencies.sha256,
       },
@@ -605,25 +608,37 @@ async function migrateLegacyManifest(
   }
 
   const writes: string[] = [];
+  let longtableRegistration: RegistrationOwnership["longtable"] | undefined;
+  const stagedLegacy: Array<{ directory: string; snapshot: string }> = [];
   try {
     const worker = await installWorker(requestedRoot, dependencies.spawn, { updateManifest: false });
     writes.push(workerRoot);
-    await runRequired(dependencies.spawn, "longtable", [
-      "codex", "install-skills", "--surface", "compact", "--dir", join(requestedRoot, "plugin", "skills"),
-    ]);
-    await ensureLongTableResearchSkill(join(requestedRoot, "plugin", "skills"), dependencies, exists);
-    await dependencies.copyDir?.(
-      join(requestedRoot, "plugin", "skills"),
-      join(requestedRoot, "marketplace", "plugin", "skills"),
-    );
-    const ownedPaths = installerOwnedRoots(requestedRoot);
+    longtableRegistration = await ensureLongTableRegistered(requestedRoot, dependencies, exists);
+    const ownedPaths = installerOwnedRoots(requestedRoot, longtableRegistration.ownership === "installer_owned");
+    const registrationOwnership: RegistrationOwnership = {
+      publicProposal: {
+        ownership: "installer_owned",
+        pluginId: "public-proposal@public-proposal",
+        marketplaceName: "public-proposal",
+        marketplaceSource: await canonicalPath(join(requestedRoot, "marketplace"), dependencies.realpath),
+        ...registrationReconciliation.registrations,
+      },
+      longtable: longtableRegistration,
+    };
+    for (const directory of legacyRoleDirectories(requestedRoot)) {
+      const skillPath = join(directory, "SKILL.md");
+      if (!(await exists(skillPath))) continue;
+      const snapshot = join(dirname(directory), `.${directory.slice(dirname(directory).length + 1)}.migration-${randomUUID()}`);
+      await dependencies.rename(directory, snapshot);
+      stagedLegacy.push({ directory, snapshot });
+    }
     const installManifest = await buildManifest(
       packageRoot,
       requestedRoot,
       ownedPaths,
       worker,
       registrationReconciliation.registrations,
-      undefined,
+      registrationOwnership,
       undefined,
       dependencies,
     );
@@ -641,6 +656,7 @@ async function migrateLegacyManifest(
         spawn: dependencies.spawn,
         readFile: async (path) => (path === manifest ? manifestContents : dependencies.readFile(path)),
         exists,
+        listDir: dependencies.listDir,
         realpath: dependencies.realpath,
         sha256: dependencies.sha256,
       },
@@ -653,6 +669,7 @@ async function migrateLegacyManifest(
     await dependencies.writeFile(tempManifest, manifestContents, 0o600);
     writes.push(tempManifest);
     await dependencies.rename(tempManifest, manifest);
+    for (const legacy of stagedLegacy) await remove(legacy.snapshot);
     return {
       ok: true,
       plan: PLAN,
@@ -662,12 +679,33 @@ async function migrateLegacyManifest(
       manifest: installManifest,
     };
   } catch (error) {
-    await Promise.all([manifestTempPath(requestedRoot), workerRoot].map(async (path) => {
-      if (await exists(path)) await remove(path);
-    }));
+    const rollbackFailures: string[] = [];
+    for (const legacy of [...stagedLegacy].reverse()) {
+      try { await dependencies.rename(legacy.snapshot, legacy.directory); } catch (restoreError) {
+        rollbackFailures.push(`restore ${legacy.directory}: ${restoreError instanceof Error ? restoreError.message : String(restoreError)}`);
+      }
+    }
+    if (longtableRegistration?.pluginAdded) {
+      await compensate(dependencies.spawn, "codex", ["plugin", "remove", "longtable@longtable", "--json"], rollbackFailures);
+    }
+    if (longtableRegistration?.marketplaceAdded) {
+      await compensate(dependencies.spawn, "codex", ["plugin", "marketplace", "remove", "longtable", "--json"], rollbackFailures);
+      try { await remove(join(requestedRoot, "longtable-marketplace")); } catch (removeError) {
+        rollbackFailures.push(`remove ${join(requestedRoot, "longtable-marketplace")}: ${removeError instanceof Error ? removeError.message : String(removeError)}`);
+      }
+    }
+    for (const path of [manifestTempPath(requestedRoot), workerRoot]) {
+      try {
+        if (await exists(path)) await remove(path);
+      } catch (removeError) {
+        rollbackFailures.push(`remove ${path}: ${removeError instanceof Error ? removeError.message : String(removeError)}`);
+      }
+    }
     const code = error instanceof SetupCommandError ? error.code : "PP_SETUP_COMMAND_FAILED";
     const message = error instanceof Error ? error.message : String(error);
-    return failed(code, message, writes);
+    return rollbackFailures.length === 0
+      ? failed(code, message, writes)
+      : failed("PP_SETUP_ROLLBACK_FAILED", `${message}; rollback failed: ${rollbackFailures.join("; ")}`, writes);
   }
 }
 
@@ -1009,18 +1047,42 @@ async function ensureLongTableRegistered(
       await dependencies.mkdir(join(marketplaceRoot, "plugin", ".codex-plugin"));
       await dependencies.writeFile(join(marketplaceRoot, ".agents", "plugins", "marketplace.json"), `${JSON.stringify({
         name: "longtable",
-        plugins: [{ name: "longtable", source: { source: "local", path: "./plugin" } }],
+        interface: { displayName: "LongTable" },
+        plugins: [{
+          name: "longtable",
+          source: { source: "local", path: "./plugin" },
+          policy: { installation: "AVAILABLE", authentication: "ON_INSTALL" },
+          category: "Productivity",
+        }],
       }, null, 2)}\n`);
       await dependencies.writeFile(join(marketplaceRoot, "plugin", ".codex-plugin", "plugin.json"), `${JSON.stringify({
         name: "longtable",
         version: SUPPORTED_LONGTABLE_VERSION,
-        description: "LongTable research plugin managed by the Public Proposal installer.",
+        description: "Research and evidence service for scholarly and source-traceable work.",
+        author: { name: "Enaction Labs" },
+        homepage: "https://github.com/HosungYou/LongTable#readme",
+        repository: "https://github.com/HosungYou/LongTable",
+        license: "MIT",
+        keywords: ["longtable", "research", "evidence", "codex"],
         skills: "./skills/",
+        interface: {
+          displayName: "LongTable",
+          shortDescription: "Recover and organize traceable research evidence.",
+          longDescription: "Provides research routing and lawful scholarly evidence recovery while preserving researcher checkpoints, provenance, and unresolved evidence limits.",
+          developerName: "Enaction Labs",
+          category: "Productivity",
+          capabilities: ["Research"],
+          defaultPrompt: [
+            "Use LongTable to recover source-traceable evidence for this research question.",
+            "Audit these citation slots and identify evidence gaps.",
+          ],
+        },
       }, null, 2)}\n`);
-      await runRequired(dependencies.spawn, "longtable", [
-        "codex", "install-skills", "--surface", "compact", "--dir", join(marketplaceRoot, "plugin", "skills"),
-      ]);
-      await ensureLongTableResearchSkill(join(marketplaceRoot, "plugin", "skills"), dependencies, exists);
+      await installLongTablePluginSkills(
+        join(marketplaceRoot, "plugin", "skills"),
+        dependencies,
+        exists,
+      );
       managedSource = await canonicalPath(marketplaceRoot, dependencies.realpath);
       await runRequired(dependencies.spawn, "codex", ["plugin", "marketplace", "add", managedSource]);
       marketplaceAdded = true;
@@ -1095,6 +1157,45 @@ async function ensureLongTableResearchSkill(
     .replace(/^name:\s*scholar-research\s*$/mu, "name: longtable-research")
     .replace(/^#\s+scholar-research\s*$/mu, "# longtable-research");
   await dependencies.writeFile(canonicalPath, canonicalSkill);
+}
+
+async function installLongTablePluginSkills(
+  skillsRoot: string,
+  dependencies: SetupDependencies,
+  exists: (path: string) => Promise<boolean>,
+): Promise<void> {
+  const pluginArgs = ["codex", "install-skills", "--surface", "plugin", "--dir", skillsRoot] as const;
+  const pluginResult = await dependencies.spawn("longtable", pluginArgs);
+  if (pluginResult.code !== 0) {
+    const diagnostic = pluginResult.stderr || pluginResult.stdout;
+    if (!/invalid\s+--surface/i.test(diagnostic)) {
+      throw new SetupCommandError("PP_SETUP_COMMAND_FAILED", diagnostic || "longtable plugin skill installation failed");
+    }
+    await runRequired(dependencies.spawn, "longtable", [
+      "codex", "install-skills", "--surface", "compact", "--dir", skillsRoot,
+    ]);
+  }
+  await ensureLongTableResearchSkill(skillsRoot, dependencies, exists);
+
+  const allowed = new Set(["longtable", "longtable-research"]);
+  const installedNames = dependencies.listDir
+    ? await dependencies.listDir(skillsRoot)
+    : [
+      "scholar-research",
+      "longtable-start",
+      "longtable-interview",
+      "longtable-panel",
+      "longtable-methods",
+      "longtable-measure",
+      "longtable-theory",
+      "longtable-reviewer",
+      "longtable-voice",
+    ];
+  for (const name of installedNames) {
+    if (!allowed.has(name) && await exists(join(skillsRoot, name))) {
+      await (dependencies.remove ?? nodeFs.remove)(join(skillsRoot, name));
+    }
+  }
 }
 
 function failed(code: string, message: string, writes: readonly string[], checks: readonly DoctorCheck[] = []): SetupResult {

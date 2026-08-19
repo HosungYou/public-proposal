@@ -69,6 +69,9 @@ function replaceDirectory(source, target) {
 function buildMarketplace(pluginPath) {
   return {
     name: "public-proposal",
+    interface: {
+      displayName: "Public Proposal",
+    },
     plugins: [
       {
         name: "public-proposal",

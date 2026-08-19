@@ -43,7 +43,7 @@ test("the public proposal plugin ships a validated package copy and rewrites the
   };
   expect(sourceMarketplace.plugins).toEqual(
     expect.arrayContaining([
-      expect.objectContaining({ name: "public-proposal", source: { path: "./plugins/public-proposal" } }),
+      expect.objectContaining({ name: "public-proposal", source: { source: "local", path: "./plugins/public-proposal" } }),
     ]),
   );
   expect(packagedMarketplace.plugins).toEqual(
@@ -74,6 +74,32 @@ test("the public proposal plugin ships a validated package copy and rewrites the
     expect(sha256(packagedPayload)).toBe(entry.sha256);
     expect(packagedPayload.byteLength).toBe(entry.bytes);
   }
+});
+
+test("the Public Proposal plugin exposes exactly its two proposal skills with canonical marketplace metadata", async () => {
+  const [sourceSkills, packagedSkills] = await Promise.all([
+    skillDirectoryNames(sourcePluginRoot),
+    skillDirectoryNames(packagedPluginRoot),
+  ]);
+  expect(sourceSkills).toEqual(["korean-public-proposal", "public-proposal"]);
+  expect(packagedSkills).toEqual(sourceSkills);
+
+  const sourceMarketplace = parseJson(await readFile(".agents/plugins/marketplace.json", "utf8")) as {
+    name?: string;
+    interface?: { displayName?: string };
+    plugins?: Array<{ name?: string; source?: { source?: string; path?: string } }>;
+  };
+  const packagedMarketplace = parseJson(await readFile(packagedMarketplacePath, "utf8")) as typeof sourceMarketplace;
+  expect(sourceMarketplace).toMatchObject({
+    name: "public-proposal",
+    interface: { displayName: "Public Proposal" },
+    plugins: [{ name: "public-proposal", source: { source: "local", path: "./plugins/public-proposal" } }],
+  });
+  expect(packagedMarketplace).toMatchObject({
+    name: "public-proposal",
+    interface: { displayName: "Public Proposal" },
+    plugins: [{ name: "public-proposal", source: { source: "local", path: "./plugin" } }],
+  });
 });
 
 test("the bundle validator rejects generic absolute source path leaks in bundle payloads", async () => {
@@ -209,6 +235,13 @@ async function listFilesRecursive(root: string, baseRoot: string = root): Promis
     }),
   );
   return files.flat().sort();
+}
+
+async function skillDirectoryNames(pluginRoot: string): Promise<string[]> {
+  return (await readdir(join(pluginRoot, "skills"), { withFileTypes: true }))
+    .filter((entry) => entry.isDirectory())
+    .map((entry) => entry.name)
+    .sort();
 }
 
 interface BundleManifest {

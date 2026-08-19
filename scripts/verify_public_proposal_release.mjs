@@ -52,9 +52,12 @@ export async function runCleanEnvironmentFixture() {
   const manifest = await readJson(installationPath).catch(() => null);
   const pluginManifestPath = join(installRoot, "plugin", ".codex-plugin", "plugin.json");
   const marketplacePath = join(installRoot, "marketplace", ".agents", "plugins", "marketplace.json");
+  const publicSkillNames = await readSkillNames(join(installRoot, "plugin", "skills"));
+  const longtableSkillNames = await readSkillNames(join(installRoot, "longtable-marketplace", "plugin", "skills"));
   const registeredSkills = {
     longtable: await readFile(join(installRoot, "longtable-marketplace", "plugin", "skills", "longtable", "SKILL.md"), "utf8").then(() => true).catch(() => false),
     longtableResearch: await readFile(join(installRoot, "longtable-marketplace", "plugin", "skills", "longtable-research", "SKILL.md"), "utf8").then(() => true).catch(() => false),
+    names: [...publicSkillNames, ...longtableSkillNames].sort(),
   };
   const pluginManifest = await readJson(pluginManifestPath).catch(() => null);
   const marketplace = await readJson(marketplacePath).catch(() => null);
@@ -81,6 +84,7 @@ export async function runCleanEnvironmentFixture() {
       && marketplaceEntry?.source?.path === "./plugin"
       && registeredSkills.longtable
       && registeredSkills.longtableResearch
+      && JSON.stringify(registeredSkills.names) === JSON.stringify(["korean-public-proposal", "longtable", "longtable-research", "public-proposal"])
       && isolation.violations.length === 0
       && isolation.deniedWriteProbe.exitCode !== 0,
     fixtureRoot,
@@ -102,6 +106,17 @@ export async function runCleanEnvironmentFixture() {
   const reportPath = join(fixtureRoot, "clean-install-report.json");
   await writeFile(reportPath, `${JSON.stringify(report, null, 2)}\n`, { mode: 0o600 });
   return { exitCode: report.ok ? 0 : 1, report: { ...report, reportPath } };
+}
+
+async function readSkillNames(skillsRoot) {
+  try {
+    return (await readdir(skillsRoot, { withFileTypes: true }))
+      .filter((entry) => entry.isDirectory())
+      .map((entry) => entry.name)
+      .sort();
+  } catch {
+    return [];
+  }
 }
 
 export async function runProposalClassFixture({ proposalClass, researchLock, academicEvidence = false }) {

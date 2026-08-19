@@ -43,6 +43,7 @@ describe("public proposal clean installation", () => {
         registeredSkills: {
           longtable: true,
           longtableResearch: true,
+          names: ["korean-public-proposal", "longtable", "longtable-research", "public-proposal"],
       },
     });
     const kppDoctor = result.report.commands.find(({ name }) => name === "kpp doctor");
