@@ -38,6 +38,8 @@ interface RenderToolPaths {
   readonly pdfinfo?: string;
   readonly pdftotext?: string;
   readonly pdftoppm?: string;
+  /** Optional trusted analyzer for semantic QA of the actual PNG page bytes. */
+  readonly visualEvidenceProbe?: string;
 }
 
 export interface RenderProjectOptions {
@@ -52,11 +54,25 @@ interface PageImageArtifact {
   readonly bytes: number;
 }
 
+interface RenderExecutableIdentity extends ExecutableIdentity {
+  readonly realpath: string;
+  readonly sha256: string;
+}
+
+export interface VisualEvidencePageArtifact {
+  readonly page: number;
+  readonly path: string;
+  readonly sha256: string;
+  readonly bytes: number;
+  readonly sourcePageSha256: string;
+}
+
 interface RenderExecutables {
-  readonly soffice: ExecutableIdentity;
-  readonly pdfinfo: ExecutableIdentity;
-  readonly pdftotext: ExecutableIdentity;
-  readonly pdftoppm: ExecutableIdentity;
+  readonly soffice: RenderExecutableIdentity;
+  readonly pdfinfo: RenderExecutableIdentity;
+  readonly pdftotext: RenderExecutableIdentity;
+  readonly pdftoppm: RenderExecutableIdentity;
+  readonly visualEvidenceProbe?: RenderExecutableIdentity;
 }
 
 export interface RenderProjectResult {
@@ -66,6 +82,7 @@ export interface RenderProjectResult {
   readonly pdfPath: string;
   readonly pdfPages: number;
   readonly pageImages: readonly PageImageArtifact[];
+  readonly visualEvidencePages: readonly VisualEvidencePageArtifact[];
   readonly searchableText: string;
   readonly executables: RenderExecutables;
 }
@@ -218,6 +235,12 @@ export async function renderProject(
         };
       }),
     );
+    const visualEvidencePages = await createVisualEvidenceSidecars({
+      staging,
+      generationPath,
+      pageImages,
+      probe: executables.visualEvidenceProbe,
+    });
     const pdfHash = await sha256File(stagedPdf);
     const manifestPath = join(generationPath, "render.json");
     const manifest = {
@@ -235,6 +258,13 @@ export async function renderProject(
       },
       executables,
       raster: { dpi: PAGE_DPI, format: "png" },
+      ...(executables.visualEvidenceProbe === undefined ? {} : {
+        visualEvidence: {
+          schemaVersion: "kpp-visual-evidence-render/v1",
+          analyzer: executables.visualEvidenceProbe,
+          pages: visualEvidencePages,
+        },
+      }),
       searchableTextProof: {
         extractor: executables.pdftotext,
         textSha256: sha256Text(searchableText),
@@ -262,10 +292,16 @@ export async function renderProject(
     }
     await syncDirectory(renderedRoot);
 
-    await assertPublishedArtifacts(manifestPath, pdfPath, pageImages, docxHash, pdfHash);
+    await assertPublishedArtifacts(manifestPath, pdfPath, pageImages, visualEvidencePages, docxHash, pdfHash);
     await writeReceipt({
       stage: "RENDERED",
-      files: [canonicalDocx, manifestPath, pdfPath, ...pageImages.map((page) => page.path)],
+      files: [
+        canonicalDocx,
+        manifestPath,
+        pdfPath,
+        ...pageImages.map((page) => page.path),
+        ...visualEvidencePages.map((page) => page.path),
+      ],
       inputReceiptHashes: [await sha256File(buildReceiptPath)],
       output: renderReceiptPath,
       toolVersion: RENDER_TOOL_VERSION,
@@ -288,6 +324,7 @@ export async function renderProject(
       pdfPath,
       pdfPages,
       pageImages,
+      visualEvidencePages,
       searchableText,
       executables,
     };
@@ -313,6 +350,8 @@ export async function renderProject(
 async function resolveRenderExecutables(
   tools: RenderToolPaths = {},
 ): Promise<RenderExecutables> {
+  const visualEvidenceProbeCandidate = tools.visualEvidenceProbe
+    ?? process.env.KPP_VISUAL_EVIDENCE_PROBE_PATH;
   const sofficeCandidates = compact([
     tools.soffice,
     process.env.KPP_SOFFICE_PATH,
@@ -329,13 +368,144 @@ async function resolveRenderExecutables(
     `/usr/local/bin/${name}`,
     name,
   ]);
-  const [soffice, pdfinfo, pdftotext, pdftoppm] = await Promise.all([
+  const [soffice, pdfinfo, pdftotext, pdftoppm, visualEvidenceProbe] = await Promise.all([
     resolveVerifiedExecutable({ name: "soffice", candidates: sofficeCandidates, versionArgs: ["--version"] }),
     resolveVerifiedExecutable({ name: "pdfinfo", candidates: popplerCandidates(tools.pdfinfo, "pdfinfo"), versionArgs: ["-v"] }),
     resolveVerifiedExecutable({ name: "pdftotext", candidates: popplerCandidates(tools.pdftotext, "pdftotext"), versionArgs: ["-v"] }),
     resolveVerifiedExecutable({ name: "pdftoppm", candidates: popplerCandidates(tools.pdftoppm, "pdftoppm"), versionArgs: ["-v"] }),
+    visualEvidenceProbeCandidate === undefined
+      ? Promise.resolve(undefined)
+      : resolveVerifiedExecutable({
+        name: "visual-evidence-probe",
+        candidates: [visualEvidenceProbeCandidate],
+        versionArgs: ["--version"],
+      }),
   ]);
-  return { soffice, pdfinfo, pdftotext, pdftoppm };
+  const enriched = await Promise.all([
+    enrichExecutable(soffice),
+    enrichExecutable(pdfinfo),
+    enrichExecutable(pdftotext),
+    enrichExecutable(pdftoppm),
+    visualEvidenceProbe === undefined ? Promise.resolve(undefined) : enrichExecutable(visualEvidenceProbe),
+  ]);
+  return {
+    soffice: enriched[0],
+    pdfinfo: enriched[1],
+    pdftotext: enriched[2],
+    pdftoppm: enriched[3],
+    ...(enriched[4] === undefined ? {} : { visualEvidenceProbe: enriched[4] }),
+  };
+}
+
+async function enrichExecutable(executable: ExecutableIdentity): Promise<RenderExecutableIdentity> {
+  const canonical = await realpath(executable.path);
+  return {
+    ...executable,
+    realpath: canonical,
+    sha256: await sha256File(canonical),
+  };
+}
+
+async function createVisualEvidenceSidecars(input: {
+  readonly staging: string;
+  readonly generationPath: string;
+  readonly pageImages: readonly PageImageArtifact[];
+  readonly probe?: RenderExecutableIdentity;
+}): Promise<readonly VisualEvidencePageArtifact[]> {
+  if (input.probe === undefined) return [];
+  const sidecars: VisualEvidencePageArtifact[] = [];
+  for (const page of input.pageImages) {
+    const pageName = `page-${String(page.page).padStart(4, "0")}.png`;
+    const stagedPagePath = join(input.staging, pageName);
+    const sidecarName = `page-${String(page.page).padStart(4, "0")}.visual-evidence.json`;
+    const stagedSidecarPath = join(input.staging, sidecarName);
+    await executeFile(input.probe.path, [
+      stagedPagePath,
+      stagedSidecarPath,
+      String(page.page),
+      String(PAGE_DPI),
+    ], { timeoutMs: 120_000 });
+    await assertVisualEvidenceSidecar(stagedSidecarPath, stagedPagePath, page);
+    const metadata = await stat(stagedSidecarPath);
+    sidecars.push({
+      page: page.page,
+      path: join(input.generationPath, sidecarName),
+      sha256: await sha256File(stagedSidecarPath),
+      bytes: metadata.size,
+      sourcePageSha256: page.sha256,
+    });
+  }
+  return sidecars;
+}
+
+async function assertVisualEvidenceSidecar(
+  sidecarPath: string,
+  pagePath: string,
+  page: PageImageArtifact,
+): Promise<void> {
+  const pageBytes = await readFile(pagePath);
+  const dimensions = pngDimensions(pageBytes);
+  let value: unknown;
+  try {
+    value = JSON.parse(await readFile(sidecarPath, "utf8"));
+  } catch (error) {
+    throw new KppError("KPP_RENDER_VISUAL_EVIDENCE_INVALID", "시각 근거 분석 sidecar를 읽을 수 없습니다.", {
+      path: sidecarPath,
+      actual: error instanceof Error ? error.message : String(error),
+      stage: "BUILT",
+    });
+  }
+  if (!isVisualEvidenceAnalysis(value)
+    || value.page !== page.page
+    || value.pageSha256 !== page.sha256
+    || value.pixelWidth !== dimensions.width
+    || value.pixelHeight !== dimensions.height
+    || value.dpi !== PAGE_DPI) {
+    throw new KppError("KPP_RENDER_VISUAL_EVIDENCE_INVALID", "시각 근거 분석이 실제 PNG 페이지와 일치하지 않습니다.", {
+      path: sidecarPath,
+      actual: value,
+      stage: "BUILT",
+    });
+  }
+}
+
+function pngDimensions(bytes: Uint8Array): { readonly width: number; readonly height: number } {
+  const buffer = Buffer.from(bytes);
+  const signature = Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]);
+  if (buffer.byteLength < 24 || !buffer.subarray(0, 8).equals(signature)
+    || buffer.subarray(12, 16).toString("ascii") !== "IHDR") {
+    throw new KppError("KPP_RENDER_PAGE_IMAGE_INVALID", "페이지 이미지가 유효한 PNG가 아닙니다.", { stage: "BUILT" });
+  }
+  const width = buffer.readUInt32BE(16);
+  const height = buffer.readUInt32BE(20);
+  if (width < 1 || height < 1) {
+    throw new KppError("KPP_RENDER_PAGE_IMAGE_INVALID", "페이지 PNG 크기가 유효하지 않습니다.", { actual: { width, height }, stage: "BUILT" });
+  }
+  return { width, height };
+}
+
+function isVisualEvidenceAnalysis(value: unknown): value is {
+  readonly schemaVersion: "kpp-visual-page-analysis/v1";
+  readonly page: number;
+  readonly pageSha256: string;
+  readonly pixelWidth: number;
+  readonly pixelHeight: number;
+  readonly dpi: number;
+} {
+  if (value === null || typeof value !== "object" || Array.isArray(value)) return false;
+  const record = value as Record<string, unknown>;
+  return record.schemaVersion === "kpp-visual-page-analysis/v1"
+    && Number.isInteger(record.page) && Number(record.page) > 0
+    && typeof record.pageSha256 === "string" && /^[a-f0-9]{64}$/u.test(record.pageSha256)
+    && Number.isInteger(record.pixelWidth) && Number(record.pixelWidth) > 0
+    && Number.isInteger(record.pixelHeight) && Number(record.pixelHeight) > 0
+    && Number.isInteger(record.dpi) && Number(record.dpi) > 0
+    && Number.isFinite(record.pageWidthMm) && Number(record.pageWidthMm) > 0
+    && Number.isFinite(record.pageHeightMm) && Number(record.pageHeightMm) > 0
+    && Array.isArray(record.figures)
+    && Array.isArray(record.textBoxes)
+    && Array.isArray(record.peerFigureBoxes)
+    && Array.isArray(record.blockedDimensions);
 }
 
 async function canonicalBuiltDocx(root: string, inputPath: string): Promise<string> {
@@ -461,6 +631,7 @@ async function assertPublishedArtifacts(
   manifestPath: string,
   pdfPath: string,
   pageImages: readonly PageImageArtifact[],
+  visualEvidencePages: readonly VisualEvidencePageArtifact[],
   expectedDocxHash: string,
   expectedPdfHash: string,
 ): Promise<void> {
@@ -493,6 +664,17 @@ async function assertPublishedArtifacts(
         path: page.path,
         expected: page.sha256,
         actual: await sha256File(page.path),
+        stage: "BUILT",
+      });
+    }
+  }
+  for (const sidecar of visualEvidencePages) {
+    await assertNonemptyFile(sidecar.path, "KPP_RENDER_VISUAL_EVIDENCE_MISSING");
+    if (await sha256File(sidecar.path) !== sidecar.sha256) {
+      throw new KppError("KPP_RENDER_VISUAL_EVIDENCE_STALE", "시각 근거 분석 sidecar 해시가 manifest와 다릅니다.", {
+        path: sidecar.path,
+        expected: sidecar.sha256,
+        actual: await sha256File(sidecar.path),
         stage: "BUILT",
       });
     }

@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { readFile, realpath } from "node:fs/promises";
 import { join, relative, resolve, sep } from "node:path";
-import { sha256File, verifyReceipt } from "@longtable/kpp-core";
+import { sha256File, verifyProjectState, verifyReceipt } from "@longtable/kpp-core";
 import {
   VISUAL_EVIDENCE_RENDERER_VERSION,
   canonicalFigureInputsJson,
@@ -146,45 +146,68 @@ async function auditSvgAndPage(input: FigureSemanticAuditInput, expected: Visual
     add(findings, "PP_FIGURE_RENDER_PROVENANCE_MISSING", "Synthetic page fixtures are not final-render evidence; a canonical KPP render receipt is required.");
     return;
   }
-  if (!(await validateFinalRenderProvenance(page, input, findings))) return;
+  const pageAnalysis = await validateFinalRenderProvenance(page, input, findings);
+  if (pageAnalysis === undefined) return;
   if (page.figureId !== input.spec.figureId || page.renderPath.trim().length === 0
     || page.pageLocator.trim().length === 0 || page.bytes.byteLength === 0 || page.sha256 !== sha256Bytes(page.bytes)) {
     add(findings, "PP_FIGURE_RENDER_ARTIFACT_MISMATCH", "Actual rendered-page bytes, hash, render path, or locator are invalid.");
     return;
   }
-  if (page.format !== "svg") {
-    add(findings, "PP_FIGURE_RENDER_FORMAT_UNMEASURABLE", "Independent page QA currently requires a canonical SVG page render so geometry and text can be measured.");
+  if (page.format !== "png" || page.mediaType !== "image/png" || !page.renderPath.toLowerCase().endsWith(".png")) {
+    add(findings, "PP_FIGURE_RENDER_FORMAT_UNMEASURABLE", "Independent page QA requires the canonical PNG emitted by KPP renderProject and its receipt-bound visual analysis sidecar.");
     return;
   }
-  const pageSvg = Buffer.from(page.bytes).toString("utf8");
-  const pageMeasurement = measureActualPageSvg(pageSvg);
-  if (!page.renderPath.toLowerCase().endsWith(".svg") || page.mediaType !== "image/svg+xml"
-    || pageMeasurement.pageLocator !== page.pageLocator || pageMeasurement.figureSvgSha256 !== input.artifact.sha256
-    || pageMeasurement.embeddedFigureSha256 !== input.artifact.sha256) {
-    add(findings, "PP_FIGURE_RENDER_ARTIFACT_MISMATCH", "Actual SVG render does not bind the declared path, locator, or exact figure bytes.");
+  const figure = pageAnalysis.figures.find((candidate) => candidate.figureId === input.spec.figureId);
+  if (figure === undefined || figure.figureSvgSha256 !== input.artifact.sha256) {
+    add(findings, "PP_FIGURE_RENDER_ARTIFACT_MISMATCH", "The trusted analysis of the actual PNG does not bind the independently reconstructed figure.");
+    return;
   }
-  if (!pageMeasurement.isA4 || pageMeasurement.figureBoxes.some((box) => box.width > 180 || box.height > 247)) {
+  const expectedWidthMm = pageAnalysis.pixelWidth / pageAnalysis.dpi * 25.4;
+  const expectedHeightMm = pageAnalysis.pixelHeight / pageAnalysis.dpi * 25.4;
+  const pageIsA4 = Math.abs(expectedWidthMm - 210) <= 0.75
+    && Math.abs(expectedHeightMm - 297) <= 0.75
+    && Math.abs(pageAnalysis.pageWidthMm - expectedWidthMm) <= 0.75
+    && Math.abs(pageAnalysis.pageHeightMm - expectedHeightMm) <= 0.75;
+  if (!pageIsA4 || figure.box.widthMm > 180 || figure.box.heightMm > 247) {
     add(findings, "PP_FIGURE_A4_FOOTPRINT", "Measured actual-page geometry does not fit the governed A4 page.");
   }
-  if (!pageMeasurement.text.includes(input.spec.sourceCaption.text)) add(findings, "PP_FIGURE_CAPTION_MISSING", "The actual rendered page does not contain the governed source caption.");
-  if (!pageMeasurement.text.some((text) => text.includes(input.spec.figureId))) add(findings, "PP_FIGURE_SECTION_CALLOUT_MISSING", "The actual rendered page does not call out the governed figure.");
-  if (pageMeasurement.clipped > 0) add(findings, "PP_FIGURE_CLIPPING", "Actual-page marks or text bounding boxes are clipped.", { actual: pageMeasurement.clipped });
-  if (pageMeasurement.labelCollisions > 0) add(findings, "PP_FIGURE_LABEL_COLLISION", "Actual-page text bounding boxes collide.", { actual: pageMeasurement.labelCollisions });
-  if (pageMeasurement.repeatedGeometry > 2) add(findings, "PP_FIGURE_GEOMETRY_REPEATED", "Repeated actual-page figure geometry creates a card-wall pattern.", { actual: pageMeasurement.repeatedGeometry });
-  if (expected !== undefined && pageMeasurement.figureSvgSha256 !== expected.sha256) add(findings, "PP_FIGURE_RENDER_ARTIFACT_MISMATCH", "Actual page embeds a figure other than the independently reconstructed artifact.");
+  if (figure.caption !== input.spec.sourceCaption.text) add(findings, "PP_FIGURE_CAPTION_MISSING", "The trusted analysis of the actual PNG does not contain the governed source caption.");
+  if (!figure.sectionCallout.includes(input.spec.figureId)) add(findings, "PP_FIGURE_SECTION_CALLOUT_MISSING", "The trusted analysis of the actual PNG does not call out the governed figure.");
+  const allBoxes = [figure.box, ...pageAnalysis.peerFigureBoxes, ...pageAnalysis.textBoxes];
+  const clipped = allBoxes.filter((box) => box.xMm < 0 || box.yMm < 0 || box.widthMm <= 0 || box.heightMm <= 0
+    || box.xMm + box.widthMm > pageAnalysis.pageWidthMm || box.yMm + box.heightMm > pageAnalysis.pageHeightMm).length;
+  if (clipped > 0) add(findings, "PP_FIGURE_CLIPPING", "Actual-page marks or text bounding boxes are clipped.", { actual: clipped });
+  let labelCollisions = 0;
+  for (let left = 0; left < pageAnalysis.textBoxes.length; left += 1) {
+    for (let right = left + 1; right < pageAnalysis.textBoxes.length; right += 1) {
+      if (overlapMm(pageAnalysis.textBoxes[left]!, pageAnalysis.textBoxes[right]!)) labelCollisions += 1;
+    }
+  }
+  if (labelCollisions > 0) add(findings, "PP_FIGURE_LABEL_COLLISION", "Actual-page text bounding boxes collide.", { actual: labelCollisions });
+  const geometries = [figure.box, ...pageAnalysis.peerFigureBoxes].map((box) => `${box.widthMm}\0${box.heightMm}`);
+  const repeatedGeometry = Math.max(0, ...geometries.map((key) => geometries.filter((candidate) => candidate === key).length));
+  if (repeatedGeometry > 2) add(findings, "PP_FIGURE_GEOMETRY_REPEATED", "Repeated actual-page figure geometry creates a card-wall pattern.", { actual: repeatedGeometry });
+  if (pageAnalysis.blockedDimensions.length > 0) {
+    add(findings, "PP_FIGURE_RENDER_DIMENSION_BLOCKED", "The trusted PNG analyzer could not measure every required semantic layout dimension.", { actual: pageAnalysis.blockedDimensions });
+  }
+  if (expected !== undefined && figure.figureSvgSha256 !== expected.sha256) add(findings, "PP_FIGURE_RENDER_ARTIFACT_MISMATCH", "Actual page contains a figure other than the independently reconstructed artifact.");
 }
 
 async function validateFinalRenderProvenance(
   page: FigureA4PageArtifact,
   input: FigureSemanticAuditInput,
   findings: AuditFinding[],
-): Promise<boolean> {
+): Promise<TrustedVisualPageAnalysis | undefined> {
   try {
     if (input.projectRoot === undefined || input.renderManifestPath === undefined) throw new Error("trusted project root and render manifest are required");
     const projectRoot = await realpath(resolve(input.projectRoot));
+    const project = await verifyProjectState(projectRoot);
+    if (project.state !== "RENDERED") throw new Error(`project state is ${project.state}, not RENDERED`);
     const manifestPath = await realpath(resolve(input.renderManifestPath));
     const currentGeneration = await realpath(join(projectRoot, "rendered", "current"));
-    if (!isWithin(projectRoot, manifestPath) || !isWithin(currentGeneration, manifestPath)) throw new Error("render manifest is outside the current KPP generation");
+    const generationsRoot = await realpath(join(projectRoot, "rendered", "generations"));
+    if (!isWithin(generationsRoot, currentGeneration)
+      || manifestPath !== join(currentGeneration, "render.json")) throw new Error("render manifest is not the canonical current KPP generation manifest");
 
     const buildReceiptPath = join(projectRoot, "receipts", "build.json");
     const renderReceiptPath = join(projectRoot, "receipts", "render.json");
@@ -199,6 +222,7 @@ async function validateFinalRenderProvenance(
 
     const manifestBytes = await readFile(manifestPath);
     const manifest = parseRenderManifest(manifestBytes);
+    if (manifest.raster.format !== "png") throw new Error("render manifest raster contract is not canonical PNG");
     const manifestRecord = await matchingReceiptFile(renderVerification.receipt.files, manifestPath);
     if (manifestRecord?.sha256 !== sha256Bytes(manifestBytes)) throw new Error("render manifest is not bound by the RENDERED receipt");
 
@@ -209,43 +233,63 @@ async function validateFinalRenderProvenance(
     const pageNumber = parsePageLocator(page.pageLocator);
     const pageRecord = manifest.output.pages.find((record) => record.page === pageNumber);
     if (pageRecord === undefined || await realpath(pageRecord.path) !== outputPath) throw new Error("page locator is not present in the render manifest");
+    const visualPageRecord = manifest.visualEvidence.pages.find((record) => record.page === pageNumber);
+    if (visualPageRecord === undefined || visualPageRecord.sourcePageSha256 !== pageRecord.sha256) throw new Error("visual evidence sidecar is not bound to the selected PNG page");
+    const visualPagePath = await realpath(visualPageRecord.path);
+    if (!isWithin(currentGeneration, visualPagePath)) throw new Error("visual evidence sidecar escapes the current KPP generation");
 
-    const [sourceBytes, outputBytes, pdfBytes] = await Promise.all([readFile(sourcePath), readFile(outputPath), readFile(pdfPath)]);
+    const [sourceBytes, outputBytes, pdfBytes, visualPageBytes] = await Promise.all([
+      readFile(sourcePath), readFile(outputPath), readFile(pdfPath), readFile(visualPagePath),
+    ]);
     const sourceHash = sha256Bytes(sourceBytes);
     const outputHash = sha256Bytes(outputBytes);
     const pdfHash = sha256Bytes(pdfBytes);
     if (manifest.input.docx.sha256 !== sourceHash
       || manifest.output.pdf.sha256 !== pdfHash || manifest.output.pdf.bytes !== pdfBytes.byteLength
       || pageRecord.sha256 !== outputHash || pageRecord.bytes !== outputBytes.byteLength
+      || visualPageRecord.sha256 !== sha256Bytes(visualPageBytes) || visualPageRecord.bytes !== visualPageBytes.byteLength
       || page.sha256 !== outputHash || !Buffer.from(page.bytes).equals(outputBytes)) throw new Error("manifest or page hashes do not bind the current bytes");
+    const dimensions = pngDimensions(outputBytes);
+    const visualPage = parseVisualPageAnalysis(visualPageBytes);
+    if (visualPage.page !== pageNumber || visualPage.pageSha256 !== outputHash
+      || visualPage.pixelWidth !== dimensions.width || visualPage.pixelHeight !== dimensions.height
+      || visualPage.dpi !== manifest.raster.dpi) throw new Error("visual analysis sidecar does not describe the current PNG bytes");
 
     const buildSource = await matchingReceiptFile(buildVerification.receipt.files, sourcePath);
     const renderSource = await matchingReceiptFile(renderVerification.receipt.files, sourcePath);
     const renderPdf = await matchingReceiptFile(renderVerification.receipt.files, pdfPath);
     const renderPage = await matchingReceiptFile(renderVerification.receipt.files, outputPath);
+    const renderVisualPage = await matchingReceiptFile(renderVerification.receipt.files, visualPagePath);
     if (buildSource?.sha256 !== sourceHash || renderSource?.sha256 !== sourceHash
-      || renderPdf?.sha256 !== pdfHash || renderPage?.sha256 !== outputHash) throw new Error("document or outputs are not bound by the KPP receipt chain");
+      || renderPdf?.sha256 !== pdfHash || renderPage?.sha256 !== outputHash
+      || renderVisualPage?.sha256 !== visualPageRecord.sha256) throw new Error("document or outputs are not bound by the KPP receipt chain");
 
-    for (const executable of Object.values(manifest.executables)) {
+    for (const executable of [...Object.values(manifest.executables), manifest.visualEvidence.analyzer]) {
       const executablePath = await realpath(executable.path);
       if (executable.realpath !== executablePath || executable.sha256 !== await sha256File(executablePath)) throw new Error(`renderer executable is stale: ${executable.path}`);
     }
+    return visualPage;
   } catch (error) {
     add(findings, "PP_FIGURE_RENDER_PROVENANCE_MISMATCH", "Persisted KPP BUILT/RENDERED receipts, manifest, document, renderer, or page bytes could not be independently verified.", { actual: error instanceof Error ? error.message : String(error) });
-    return false;
+    return undefined;
   }
-  return true;
 }
 
 interface RenderPathHash { readonly path: string; readonly sha256: string }
 interface RenderManifestPage extends RenderPathHash { readonly page: number; readonly bytes: number }
-interface RenderManifestExecutable extends RenderPathHash { readonly name: string; readonly realpath: string; readonly version: string }
+interface RenderManifestExecutable extends RenderPathHash { readonly name?: string; readonly realpath: string; readonly version: string }
 interface TrustedRenderManifest {
   readonly schemaVersion: "1.0.0";
   readonly rendererVersion: "0.1.0";
   readonly input: { readonly docx: RenderPathHash };
   readonly output: { readonly pdf: RenderPathHash & { readonly bytes: number; readonly pages: number }; readonly pages: readonly RenderManifestPage[] };
   readonly executables: Readonly<Record<string, RenderManifestExecutable>>;
+  readonly raster: { readonly dpi: number; readonly format: "png" };
+  readonly visualEvidence: {
+    readonly schemaVersion: "kpp-visual-evidence-render/v1";
+    readonly analyzer: RenderManifestExecutable;
+    readonly pages: readonly (RenderManifestPage & { readonly sourcePageSha256: string })[];
+  };
 }
 
 function parseRenderManifest(bytes: Uint8Array): TrustedRenderManifest {
@@ -255,13 +299,16 @@ function parseRenderManifest(bytes: Uint8Array): TrustedRenderManifest {
     || !isRecord(value.output) || !isRecord(value.output.pdf) || !isPathHash(value.output.pdf)
     || !Number.isInteger(value.output.pdf.bytes) || Number(value.output.pdf.bytes) < 1
     || !Number.isInteger(value.output.pdf.pages) || Number(value.output.pdf.pages) < 1 || !Array.isArray(value.output.pages)
-    || !value.output.pages.every(isRenderPage) || !isRecord(value.executables)) throw new Error("render manifest structure is invalid");
+    || !value.output.pages.every(isRenderPage) || !isRecord(value.executables)
+    || !isRecord(value.raster) || !Number.isInteger(value.raster.dpi) || Number(value.raster.dpi) < 1 || value.raster.format !== "png"
+    || !isRecord(value.visualEvidence) || value.visualEvidence.schemaVersion !== "kpp-visual-evidence-render/v1"
+    || !isRenderExecutable(value.visualEvidence.analyzer) || !Array.isArray(value.visualEvidence.pages)
+    || !value.visualEvidence.pages.every(isVisualEvidencePageRecord)) throw new Error("render manifest structure is invalid");
   const pages = value.output.pages as RenderManifestPage[];
   if (pages.length !== value.output.pdf.pages || pages.some((page, index) => page.page !== index + 1)) throw new Error("render manifest page set is incomplete");
   const executableRecord = value.executables as Record<string, unknown>;
   const executables = ["soffice", "pdfinfo", "pdftotext", "pdftoppm"].map((name) => executableRecord[name]);
-  if (!executables.every((entry) => isPathHash(entry) && typeof entry.name === "string"
-    && typeof entry.realpath === "string" && typeof entry.version === "string")) throw new Error("render manifest renderer identities are invalid");
+  if (!executables.every(isRenderExecutable)) throw new Error("render manifest renderer identities are invalid");
   return value as unknown as TrustedRenderManifest;
 }
 
@@ -275,6 +322,85 @@ function isPathHash(value: unknown): value is Record<string, unknown> & RenderPa
 
 function isRenderPage(value: unknown): value is RenderManifestPage {
   return isPathHash(value) && Number.isInteger(value.page) && Number(value.page) > 0 && Number.isInteger(value.bytes) && Number(value.bytes) > 0;
+}
+
+function isVisualEvidencePageRecord(value: unknown): value is RenderManifestPage & { readonly sourcePageSha256: string } {
+  return isRecord(value) && isRenderPage(value) && typeof value.sourcePageSha256 === "string"
+    && /^[a-f0-9]{64}$/u.test(value.sourcePageSha256);
+}
+
+function isRenderExecutable(value: unknown): value is RenderManifestExecutable {
+  return isPathHash(value) && (value.name === undefined || typeof value.name === "string")
+    && typeof value.realpath === "string" && typeof value.version === "string";
+}
+
+interface MillimetreBox { readonly xMm: number; readonly yMm: number; readonly widthMm: number; readonly heightMm: number }
+interface TrustedVisualPageAnalysis {
+  readonly schemaVersion: "kpp-visual-page-analysis/v1";
+  readonly page: number;
+  readonly pageSha256: string;
+  readonly pixelWidth: number;
+  readonly pixelHeight: number;
+  readonly dpi: number;
+  readonly pageWidthMm: number;
+  readonly pageHeightMm: number;
+  readonly figures: readonly {
+    readonly figureId: string;
+    readonly figureSvgSha256: string;
+    readonly box: MillimetreBox;
+    readonly caption: string;
+    readonly sectionCallout: string;
+  }[];
+  readonly textBoxes: readonly ({ readonly text: string } & MillimetreBox)[];
+  readonly peerFigureBoxes: readonly MillimetreBox[];
+  readonly blockedDimensions: readonly string[];
+}
+
+function parseVisualPageAnalysis(bytes: Uint8Array): TrustedVisualPageAnalysis {
+  const value: unknown = JSON.parse(Buffer.from(bytes).toString("utf8"));
+  if (!isRecord(value) || value.schemaVersion !== "kpp-visual-page-analysis/v1"
+    || !Number.isInteger(value.page) || Number(value.page) < 1
+    || typeof value.pageSha256 !== "string" || !/^[a-f0-9]{64}$/u.test(value.pageSha256)
+    || !Number.isInteger(value.pixelWidth) || Number(value.pixelWidth) < 1
+    || !Number.isInteger(value.pixelHeight) || Number(value.pixelHeight) < 1
+    || !Number.isInteger(value.dpi) || Number(value.dpi) < 1
+    || !isPositiveNumber(value.pageWidthMm) || !isPositiveNumber(value.pageHeightMm)
+    || !Array.isArray(value.figures) || !value.figures.every(isVisualFigure)
+    || !Array.isArray(value.textBoxes) || !value.textBoxes.every((entry) => isRecord(entry) && isMillimetreBox(entry) && typeof entry.text === "string")
+    || !Array.isArray(value.peerFigureBoxes) || !value.peerFigureBoxes.every(isMillimetreBox)
+    || !Array.isArray(value.blockedDimensions) || !value.blockedDimensions.every((entry) => typeof entry === "string" && entry.length > 0)) {
+    throw new Error("visual evidence sidecar structure is invalid");
+  }
+  return value as unknown as TrustedVisualPageAnalysis;
+}
+
+function isVisualFigure(value: unknown): boolean {
+  return isRecord(value) && typeof value.figureId === "string" && value.figureId.length > 0
+    && typeof value.figureSvgSha256 === "string" && /^[a-f0-9]{64}$/u.test(value.figureSvgSha256)
+    && isMillimetreBox(value.box) && typeof value.caption === "string" && typeof value.sectionCallout === "string";
+}
+
+function isMillimetreBox(value: unknown): value is MillimetreBox {
+  return isRecord(value) && isFiniteNumber(value.xMm) && isFiniteNumber(value.yMm)
+    && isPositiveNumber(value.widthMm) && isPositiveNumber(value.heightMm);
+}
+
+function isFiniteNumber(value: unknown): value is number { return typeof value === "number" && Number.isFinite(value); }
+function isPositiveNumber(value: unknown): value is number { return isFiniteNumber(value) && value > 0; }
+function overlapMm(left: MillimetreBox, right: MillimetreBox): boolean {
+  return left.xMm < right.xMm + right.widthMm && left.xMm + left.widthMm > right.xMm
+    && left.yMm < right.yMm + right.heightMm && left.yMm + left.heightMm > right.yMm;
+}
+
+function pngDimensions(bytes: Uint8Array): { readonly width: number; readonly height: number } {
+  const buffer = Buffer.from(bytes);
+  const signature = Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]);
+  if (buffer.byteLength < 24 || !buffer.subarray(0, 8).equals(signature)
+    || buffer.subarray(12, 16).toString("ascii") !== "IHDR") throw new Error("selected page is not a measurable PNG");
+  const width = buffer.readUInt32BE(16);
+  const height = buffer.readUInt32BE(20);
+  if (width < 1 || height < 1) throw new Error("selected PNG has invalid dimensions");
+  return { width, height };
 }
 
 function parsePageLocator(locator: string): number {
@@ -331,75 +457,6 @@ function measureSvg(svg: string): { clipped: number; minimumContrast: number; gr
   const grayscaleDistinct = new Set(inks.map((color) => Math.round(luminance(color) * 100))).size >= 2;
   return { clipped, minimumContrast, grayscaleDistinct, ...(scale === undefined ? {} : { scale }) };
 }
-
-interface MeasuredBox { readonly x: number; readonly y: number; readonly width: number; readonly height: number }
-
-function measureActualPageSvg(svg: string): {
-  readonly isA4: boolean;
-  readonly pageLocator?: string;
-  readonly figureSvgSha256?: string;
-  readonly embeddedFigureSha256?: string;
-  readonly figureBoxes: readonly MeasuredBox[];
-  readonly text: readonly string[];
-  readonly clipped: number;
-  readonly labelCollisions: number;
-  readonly repeatedGeometry: number;
-} {
-  const root = /<svg\b([^>]*)>/u.exec(svg)?.[1] ?? "";
-  const viewBox = attribute(root, "viewBox")?.split(/\s+/u).map(Number);
-  const isA4 = attribute(root, "width") === "210mm" && attribute(root, "height") === "297mm"
-    && viewBox?.length === 4 && viewBox[0] === 0 && viewBox[1] === 0 && viewBox[2] === 210 && viewBox[3] === 297;
-  const pageLocator = attribute(root, "data-page-locator");
-  const figureSvgSha256 = attribute(root, "data-figure-svg-sha256");
-  const figureImages = [...svg.matchAll(/<image\b([^>]*)data-kpp-role="figure"([^>]*)>/gu)].map((match) => `${match[1]} ${match[2]}`);
-  const figureBoxes = figureImages.map(elementBox).filter(isMeasuredBox);
-  const embeddedHref = figureImages.length === 1 ? attribute(figureImages[0]!, "href") : undefined;
-  const embeddedFigureSha256 = embeddedHref?.startsWith("data:image/svg+xml;base64,") === true
-    ? sha256Bytes(Buffer.from(embeddedHref.slice("data:image/svg+xml;base64,".length), "base64"))
-    : undefined;
-  const peerBoxes = [...svg.matchAll(/<rect\b([^>]*)data-kpp-role="peer-figure-box"([^>]*)>/gu)].map((match) => elementBox(`${match[1]} ${match[2]}`)).filter(isMeasuredBox);
-  const textMatches = [...svg.matchAll(/<text\b([^>]*)>([\s\S]*?)<\/text>/gu)];
-  const text = textMatches.map((match) => decodeXml(match[2]!.replace(/<[^>]+>/gu, "")));
-  const textBoxes = textMatches.map((match) => textBox(match[1]!, decodeXml(match[2]!.replace(/<[^>]+>/gu, "")))).filter(isMeasuredBox);
-  const allBoxes = [...figureBoxes, ...peerBoxes, ...textBoxes];
-  const clipped = allBoxes.filter((box) => box.x < 0 || box.y < 0 || box.width <= 0 || box.height <= 0 || box.x + box.width > 210 || box.y + box.height > 297).length;
-  let labelCollisions = 0;
-  for (let left = 0; left < textBoxes.length; left += 1) {
-    for (let right = left + 1; right < textBoxes.length; right += 1) {
-      if (overlap(textBoxes[left]!, textBoxes[right]!)) labelCollisions += 1;
-    }
-  }
-  const dimensions = [...figureBoxes, ...peerBoxes].map((box) => `${box.width}\0${box.height}`);
-  const repeatedGeometry = Math.max(0, ...dimensions.map((key) => dimensions.filter((candidate) => candidate === key).length));
-  return { isA4, ...(pageLocator === undefined ? {} : { pageLocator }), ...(figureSvgSha256 === undefined ? {} : { figureSvgSha256 }), ...(embeddedFigureSha256 === undefined ? {} : { embeddedFigureSha256 }), figureBoxes, text, clipped, labelCollisions, repeatedGeometry };
-}
-
-function textBox(attributes: string, text: string): MeasuredBox | undefined {
-  const explicit = {
-    x: Number(attribute(attributes, "data-bbox-x")),
-    y: Number(attribute(attributes, "data-bbox-y")),
-    width: Number(attribute(attributes, "data-bbox-width")),
-    height: Number(attribute(attributes, "data-bbox-height")),
-  };
-  if (Object.values(explicit).every(Number.isFinite)) return explicit;
-  const x = Number(attribute(attributes, "x"));
-  const baseline = Number(attribute(attributes, "y"));
-  if (!Number.isFinite(x) || !Number.isFinite(baseline)) return undefined;
-  return { x, y: baseline - 4, width: Math.max(1, [...text].length * 2.2), height: 6 };
-}
-
-function elementBox(attributes: string): MeasuredBox | undefined {
-  const box = { x: Number(attribute(attributes, "x")), y: Number(attribute(attributes, "y")), width: Number(attribute(attributes, "width")), height: Number(attribute(attributes, "height")) };
-  return Object.values(box).every(Number.isFinite) ? box : undefined;
-}
-
-function attribute(attributes: string, name: string): string | undefined {
-  return new RegExp(`(?:^|\\s)${name}="([^"]*)"`, "u").exec(attributes)?.[1];
-}
-
-function isMeasuredBox(value: MeasuredBox | undefined): value is MeasuredBox { return value !== undefined; }
-function overlap(left: MeasuredBox, right: MeasuredBox): boolean { return left.x < right.x + right.width && left.x + left.width > right.x && left.y < right.y + right.height && left.y + left.height > right.y; }
-function decodeXml(value: string): string { return value.replaceAll("&lt;", "<").replaceAll("&gt;", ">").replaceAll("&quot;", '"').replaceAll("&apos;", "'").replaceAll("&amp;", "&"); }
 
 function contrast(left: string, right: string): number { const [dark, light] = [luminance(left), luminance(right)].sort((a, b) => a - b); return (light! + 0.05) / (dark! + 0.05); }
 function luminance(color: string): number { const channels = [1, 3, 5].map((offset) => Number.parseInt(color.slice(offset, offset + 2), 16) / 255).map((channel) => channel <= 0.04045 ? channel / 12.92 : ((channel + 0.055) / 1.055) ** 2.4); return 0.2126 * channels[0]! + 0.7152 * channels[1]! + 0.0722 * channels[2]!; }

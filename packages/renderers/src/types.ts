@@ -243,7 +243,7 @@ export interface FigureA4Context {
 
 interface FigureA4PageBytes {
   readonly figureId: string;
-  readonly format: "svg" | "pdf" | "docx-render";
+  readonly format: "svg" | "png" | "pdf" | "docx-render";
   readonly mediaType: string;
   readonly renderPath: string;
   readonly pageLocator: string;
@@ -279,6 +279,9 @@ export interface FigureA4PageArtifact extends FigureA4PageBytes {
   readonly provenance: {
     readonly schemaVersion: "visual-evidence-page-provenance/v1";
     readonly renderReceipt: KppFinalRenderReceipt;
+  } | {
+    /** Authority is derived from the verified KPP project/generation, never this reference. */
+    readonly schemaVersion: "visual-evidence-page-provenance/v2";
   };
 }
 
