@@ -11,7 +11,9 @@ import {
   type FigurePointLineage,
   type FigureRelationship,
   type GovernedFigureReference,
+  type LegacySemanticFigureCompatibility,
   type SemanticFigureSpecV1,
+  type SemanticFigureSpecV1_1,
   type VisualEvidenceData,
   type VisualEvidenceIrFamily,
 } from "./types.js";
@@ -54,7 +56,7 @@ export interface CanonicalFigureInputs {
 }
 
 export function buildCanonicalFigureIR(
-  spec: SemanticFigureSpecV1,
+  spec: SemanticFigureSpecV1_1,
   data: VisualEvidenceData,
   references: readonly GovernedFigureReference[],
 ): CanonicalFigureInputs {
@@ -128,13 +130,25 @@ export function canonicalFigureInputsJson(value: unknown): string {
 }
 
 /** Approval is a downstream governance fact, not a render-semantic input. */
-export function semanticFigureCompileInput(spec: SemanticFigureSpecV1): Omit<SemanticFigureSpecV1, "approvalStatus"> {
+export function semanticFigureCompileInput(spec: SemanticFigureSpecV1_1): Omit<SemanticFigureSpecV1_1, "approvalStatus"> {
   const { approvalStatus: _approvalStatus, ...semanticInput } = spec;
   return semanticInput;
 }
 
-function assertSemanticFigureSpec(spec: SemanticFigureSpecV1): void {
-  if (spec.schemaVersion !== "semantic-figure-spec/v1") throw new Error("Unsupported semantic figure spec version");
+export function adaptLegacySemanticFigureSpec(
+  spec: SemanticFigureSpecV1,
+  compatibility: LegacySemanticFigureCompatibility,
+): SemanticFigureSpecV1_1 {
+  return {
+    ...spec,
+    schemaVersion: "semantic-figure-spec/v1.1",
+    evidenceIds: [...compatibility.evidenceIds],
+    rendererFingerprint: compatibility.rendererFingerprint,
+  };
+}
+
+function assertSemanticFigureSpec(spec: SemanticFigureSpecV1_1): void {
+  if (spec.schemaVersion !== "semantic-figure-spec/v1.1") throw new Error("vNext visual compilation requires semantic-figure-spec/v1.1; adapt legacy v1 explicitly");
   for (const [field, value] of Object.entries({
     figureId: spec.figureId,
     analyticalQuestion: spec.analyticalQuestion,
@@ -164,10 +178,18 @@ function assertSemanticFigureSpec(spec: SemanticFigureSpecV1): void {
     || fingerprint.tokenProfile.sha256 !== R08_TOKEN_PROFILE_SHA256
     || fingerprint.fontProfile.id !== VISUAL_EVIDENCE_FONT_PROFILE
     || fingerprint.fontProfile.sha256 !== VISUAL_EVIDENCE_FONT_PROFILE_SHA256
+    || !validFileFingerprints(fingerprint.fontProfile.files)
     || fingerprint.rasterizer.name !== "LibreOffice"
     || fingerprint.rasterizer.executablePath.trim().length === 0
     || !SHA256.test(fingerprint.rasterizer.executableSha256)
-    || !/^LibreOffice\s+\d+/u.test(fingerprint.rasterizer.version)) {
+    || !/^LibreOffice\s+\d+/u.test(fingerprint.rasterizer.version)
+    || fingerprint.rasterizer.bundlePath.trim().length === 0
+    || !validFileFingerprints(fingerprint.rasterizer.bundleResources)
+    || fingerprint.environment.locale.trim().length === 0
+    || fingerprint.environment.operatingSystem.trim().length === 0
+    || fingerprint.environment.architecture.trim().length === 0
+    || fingerprint.environment.runtime.name.trim().length === 0
+    || fingerprint.environment.runtime.version.trim().length === 0) {
     throw new Error("Semantic renderer fingerprint is missing or does not match the locked renderer, token, font, and LibreOffice identities");
   }
   if (spec.targetSurface !== "A4_DOCX" && spec.targetSurface !== "A4_PDF") throw new Error("Semantic figure target surface must be A4 DOCX or PDF");
@@ -196,7 +218,7 @@ function assertVisualEvidenceData(data: VisualEvidenceData): void {
 }
 
 function assertGovernedReferences(
-  spec: SemanticFigureSpecV1,
+  spec: SemanticFigureSpecV1_1,
   references: readonly GovernedFigureReference[],
 ): readonly GovernedFigureReference[] {
   if (references.length === 0) throw new Error("At least one approved reference binding is required");
@@ -214,18 +236,32 @@ function assertGovernedReferences(
     if (reference.referenceFamily !== spec.referenceFamily) throw new Error("Approved reference family does not match the semantic spec");
     if (reference.storageClass === "public_canonical_fixture"
       && (!reference.synthetic || !reference.publiclyReleasable
-        || reference.sourceLineageClass !== "public" || reference.rightsStatus === "project_private")) {
-      throw new Error("Public canonical fixtures must be synthetic, publicly releasable, public-lineage references");
+        || reference.sourceLineageClass !== "public"
+        || !new Set(["licensed", "public_domain"]).has(reference.rightsStatus))) {
+      throw new Error("Public canonical fixtures must be synthetic, publicly releasable, public-lineage, and carry public rights");
     }
-    if (reference.sourceLineageClass === "project_private"
-      && reference.publiclyReleasable) {
-      throw new Error("Project-private source lineage must remain non-public");
+    if (reference.storageClass === "private_source_reference"
+      && (reference.synthetic || reference.publiclyReleasable
+        || reference.sourceLineageClass !== "project_private" || reference.rightsStatus !== "project_private")) {
+      throw new Error("Private source references must remain non-synthetic, non-public, project-private lineage and rights");
+    }
+    if (reference.sourceLineageClass === "project_private" && reference.publiclyReleasable
+      && (reference.storageClass !== "extracted_visual_pattern"
+        || !reference.humanPromoted || reference.transferBoundary.trim().length === 0
+        || !new Set(["approved", "licensed"]).has(reference.rightsStatus))) {
+      throw new Error("Private-source lineage may be released only as a bounded, human-promoted extracted pattern");
     }
     if (reference.rightsStatus === "project_private" && reference.sourceLineageClass !== "project_private") {
       throw new Error("Project-private rights require project-private source lineage");
     }
   }
   return sorted;
+}
+
+function validFileFingerprints(files: readonly { readonly path: string; readonly sha256: string }[] | undefined): boolean {
+  return Array.isArray(files) && files.length > 0
+    && new Set(files.map((file) => file.path)).size === files.length
+    && files.every((file) => file.path.trim().length > 0 && SHA256.test(file.sha256));
 }
 
 function assertFamilyData(relationship: FigureRelationship, marks: readonly CanonicalFigureMark[]): void {

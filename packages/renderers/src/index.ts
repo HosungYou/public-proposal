@@ -53,7 +53,9 @@ export {
   compileFigureExpected,
   compileFigurePng,
   inspectLibreOfficeFingerprint,
+  inspectSemanticRendererFingerprint,
   renderFigureA4Page,
+  type RendererEnvironmentInput,
 } from "./visual-evidence-compiler.js";
 export { renderFramework } from "./framework.js";
 export { renderGantt } from "./gantt.js";

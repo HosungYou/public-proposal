@@ -30,11 +30,18 @@ export const VISUAL_EVIDENCE_FONT_PROFILE_SHA256 = createHash("sha256")
   }))
   .digest("hex");
 
+export interface RenderFileFingerprint {
+  readonly path: string;
+  readonly sha256: string;
+}
+
 export interface LibreOfficeFingerprint {
   readonly name: "LibreOffice";
   readonly executablePath: string;
   readonly executableSha256: string;
   readonly version: string;
+  readonly bundlePath: string;
+  readonly bundleResources: readonly RenderFileFingerprint[];
 }
 
 export interface SemanticRendererFingerprint {
@@ -49,8 +56,18 @@ export interface SemanticRendererFingerprint {
   readonly fontProfile: {
     readonly id: typeof VISUAL_EVIDENCE_FONT_PROFILE;
     readonly sha256: typeof VISUAL_EVIDENCE_FONT_PROFILE_SHA256;
+    readonly files: readonly RenderFileFingerprint[];
   };
   readonly rasterizer: LibreOfficeFingerprint;
+  readonly environment: {
+    readonly locale: string;
+    readonly operatingSystem: string;
+    readonly architecture: string;
+    readonly runtime: {
+      readonly name: string;
+      readonly version: string;
+    };
+  };
 }
 
 export type FigureRelationship =
@@ -61,12 +78,11 @@ export type FigureRelationship =
   | "process"
   | "framework";
 
-/** Structurally identical to the research bridge's SemanticFigureSpecV1. */
+/** Unchanged research-bridge contract retained for compatibility. */
 export interface SemanticFigureSpecV1 {
   readonly schemaVersion: "semantic-figure-spec/v1";
   readonly figureId: string;
   readonly requirementIds: readonly string[];
-  readonly evidenceIds: readonly string[];
   readonly analyticalQuestion: string;
   readonly readerTask: string;
   readonly supportedTakeaway: string;
@@ -81,8 +97,21 @@ export interface SemanticFigureSpecV1 {
   readonly targetSurface: "A4_DOCX" | "A4_PDF";
   readonly referenceFamily: string;
   readonly rendererVersion: string;
-  readonly rendererFingerprint: SemanticRendererFingerprint;
   readonly approvalStatus: "candidate" | "reviewed" | "human_approved";
+}
+
+/** vNext compiler contract. New mandatory lineage/environment fields require a new wire version. */
+export interface SemanticFigureSpecV1_1 extends Omit<SemanticFigureSpecV1, "schemaVersion"> {
+  readonly schemaVersion: "semantic-figure-spec/v1.1";
+  readonly evidenceIds: readonly string[];
+  readonly rendererFingerprint: SemanticRendererFingerprint;
+}
+
+export type SemanticFigureSpec = SemanticFigureSpecV1 | SemanticFigureSpecV1_1;
+
+export interface LegacySemanticFigureCompatibility {
+  readonly evidenceIds: readonly string[];
+  readonly rendererFingerprint: SemanticRendererFingerprint;
 }
 
 export interface VisualEvidenceObservation {
@@ -138,6 +167,7 @@ export interface GovernedFigureReference {
   readonly synthetic: boolean;
   readonly publiclyReleasable: boolean;
   readonly sourceLineageClass: "public" | "project_private";
+  readonly humanPromoted: boolean;
 }
 
 export type VisualEvidenceIrFamily =
@@ -210,13 +240,14 @@ export interface FigureA4Context {
 }
 
 export interface FigureA4PageArtifact {
-  readonly schemaVersion: "visual-evidence-a4-page/v1";
+  readonly schemaVersion: "visual-evidence-rendered-page/v1";
   readonly figureId: string;
+  readonly format: "svg" | "pdf" | "docx-render";
+  readonly mediaType: string;
+  readonly renderPath: string;
   readonly pageLocator: string;
-  readonly pageSvg: string;
+  readonly bytes: Uint8Array;
   readonly sha256: string;
-  readonly figureSvgSha256: string;
-  readonly contextSha256: string;
 }
 
 export interface HumanFigureReview {
@@ -244,7 +275,7 @@ export interface VisualEvidenceFigureArtifact {
   readonly rendererVersion: string;
   readonly rendererFingerprint: SemanticRendererFingerprint;
   readonly rendererFingerprintSha256: string;
-  readonly approvalStatus: SemanticFigureSpecV1["approvalStatus"];
+  readonly approvalStatus: SemanticFigureSpecV1_1["approvalStatus"];
   readonly compilerApproval: "not_authorized";
   readonly ir: CanonicalFigureIR;
   readonly pointLineage: readonly FigurePointLineage[];

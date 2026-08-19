@@ -8,6 +8,7 @@ export const ProposalResearchRequestVersionSchema = z.literal("proposal-research
 export const EvidenceDataBundleVersionSchema = z.literal("proposal-evidence-bundle/v1");
 export const TransformationLineageVersionSchema = z.literal("transformation-lineage/v1");
 export const SemanticFigureSpecVersionSchema = z.literal("semantic-figure-spec/v1");
+export const SemanticFigureSpecV1_1VersionSchema = z.literal("semantic-figure-spec/v1.1");
 
 export const ResearchProposalClassSchema = z.enum([
   "academic_research",
@@ -197,11 +198,9 @@ export const FigureRelationshipSchema = z.enum([
   "framework",
 ]);
 
-export const SemanticFigureSpecV1Schema = z.object({
-  schemaVersion: SemanticFigureSpecVersionSchema,
+const SemanticFigureSpecCommonSchema = z.object({
   figureId: IdentifierSchema,
   requirementIds: z.array(IdentifierSchema),
-  evidenceIds: z.array(IdentifierSchema).min(1),
   analyticalQuestion: IdentifierSchema,
   readerTask: IdentifierSchema,
   supportedTakeaway: IdentifierSchema,
@@ -213,19 +212,41 @@ export const SemanticFigureSpecV1Schema = z.object({
   targetSurface: z.enum(["A4_DOCX", "A4_PDF"]),
   referenceFamily: IdentifierSchema,
   rendererVersion: IdentifierSchema,
+  approvalStatus: z.enum(["candidate", "reviewed", "human_approved"]),
+});
+
+export const SemanticFigureSpecV1Schema = SemanticFigureSpecCommonSchema.extend({
+  schemaVersion: SemanticFigureSpecVersionSchema,
+}).strict();
+
+export const SemanticFigureSpecV1_1Schema = SemanticFigureSpecCommonSchema.extend({
+  schemaVersion: SemanticFigureSpecV1_1VersionSchema,
+  evidenceIds: z.array(IdentifierSchema).min(1),
   rendererFingerprint: z.object({
     renderer: z.object({ name: z.literal("@longtable/kpp-renderers"), version: z.literal("1.0.0") }).strict(),
     tokenProfile: z.object({ id: z.literal("R08-approved-project-profile"), sha256: z.literal("c6d87996c7ad2dfcce67b6d45373f30ff7026e33ba6fd05a22b1944cfa6f7afa") }).strict(),
-    fontProfile: z.object({ id: z.literal("Noto-Sans-CJK-KR-2.004"), sha256: z.literal("0d0f75a19d1f9993378f58314cdbd7b3926ed6780fd6be2b031a0c67ddf9cd48") }).strict(),
+    fontProfile: z.object({ id: z.literal("Noto-Sans-CJK-KR-2.004"), sha256: z.literal("0d0f75a19d1f9993378f58314cdbd7b3926ed6780fd6be2b031a0c67ddf9cd48"), files: z.array(z.object({ path: IdentifierSchema, sha256: Sha256Schema }).strict()).min(1) }).strict(),
     rasterizer: z.object({
       name: z.literal("LibreOffice"),
       executablePath: IdentifierSchema,
       executableSha256: Sha256Schema,
       version: z.string().regex(/^LibreOffice\s+\d+/),
+      bundlePath: IdentifierSchema,
+      bundleResources: z.array(z.object({ path: IdentifierSchema, sha256: Sha256Schema }).strict()).min(1),
+    }).strict(),
+    environment: z.object({
+      locale: IdentifierSchema,
+      operatingSystem: IdentifierSchema,
+      architecture: IdentifierSchema,
+      runtime: z.object({ name: IdentifierSchema, version: IdentifierSchema }).strict(),
     }).strict(),
   }).strict(),
-  approvalStatus: z.enum(["candidate", "reviewed", "human_approved"]),
 }).strict();
+
+export const SemanticFigureSpecSchema = z.discriminatedUnion("schemaVersion", [
+  SemanticFigureSpecV1Schema,
+  SemanticFigureSpecV1_1Schema,
+]);
 
 export const ResearchGapV1Schema = z.object({
   gapId: IdentifierSchema,
@@ -257,7 +278,7 @@ export const EvidenceDataBundleV1Schema = z.object({
   datasets: z.array(NormalizedDatasetV1Schema),
   transformations: z.array(TransformationLineageV1Schema),
   claims: z.array(ClaimCandidateV1Schema),
-  figures: z.array(SemanticFigureSpecV1Schema),
+  figures: z.array(SemanticFigureSpecSchema),
   gaps: z.array(ResearchGapV1Schema),
   status: EvidenceBundleStatusSchema,
 }).strict().superRefine((bundle, context) => {
@@ -359,6 +380,8 @@ export type NormalizedDatasetV1 = z.infer<typeof NormalizedDatasetV1Schema>;
 export type TransformationLineageV1 = z.infer<typeof TransformationLineageV1Schema>;
 export type ClaimCandidateV1 = z.infer<typeof ClaimCandidateV1Schema>;
 export type SemanticFigureSpecV1 = z.infer<typeof SemanticFigureSpecV1Schema>;
+export type SemanticFigureSpecV1_1 = z.infer<typeof SemanticFigureSpecV1_1Schema>;
+export type SemanticFigureSpec = z.infer<typeof SemanticFigureSpecSchema>;
 export type ResearchGapV1 = z.infer<typeof ResearchGapV1Schema>;
 export type EvidenceDataBundleV1 = z.infer<typeof EvidenceDataBundleV1Schema>;
 

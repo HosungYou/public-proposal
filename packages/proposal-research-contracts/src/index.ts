@@ -14,6 +14,9 @@ export {
   ResearchProposalClassSchema,
   ResearchRoutingDecisionSchema,
   SemanticFigureSpecV1Schema,
+  SemanticFigureSpecV1_1Schema,
+  SemanticFigureSpecSchema,
+  SemanticFigureSpecV1_1VersionSchema,
   SemanticFigureSpecVersionSchema,
   SourceClassSchema,
   SourceRecordV1Schema,
@@ -30,6 +33,8 @@ export {
   type ProposalResearchHandoffV1,
   type ResearchGapV1,
   type SemanticFigureSpecV1,
+  type SemanticFigureSpecV1_1,
+  type SemanticFigureSpec,
   type SourceRecordV1,
   type TransformationLineageV1,
 } from "./schemas.js";

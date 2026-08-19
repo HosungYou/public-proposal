@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vitest";
-import { realpath } from "node:fs/promises";
+import { chmod, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { join } from "node:path";
+import { tmpdir } from "node:os";
 import {
   R08_TOKEN_PROFILE,
   R08_TOKEN_PROFILE_SHA256,
@@ -8,23 +10,26 @@ import {
   VISUAL_EVIDENCE_RENDERER_VERSION,
   compileFigure,
   compileFigurePng,
-  inspectLibreOfficeFingerprint,
+  adaptLegacySemanticFigureSpec,
+  inspectSemanticRendererFingerprint,
   type GovernedFigureReference,
-  type SemanticFigureSpecV1,
+  type RendererEnvironmentInput,
+  type SemanticFigureSpecV1_1,
   type VisualEvidenceData,
 } from "../src/index.js";
 import {
+  GovernedFigureReferenceSchema,
   SemanticFigureSpecSchema,
   SemanticFigureSpecV1Schema,
+  SemanticFigureSpecV1_1Schema,
 } from "../../schemas/src/figure-spec.js";
-import { resolveTool } from "../../../tests/support/tool-paths.js";
 
 const SOURCE_SHA = "1".repeat(64);
 const REFERENCE_SHA = "2".repeat(64);
 const TEST_EXECUTABLE_SHA = "3".repeat(64);
 
-const validSpec: SemanticFigureSpecV1 = {
-  schemaVersion: "semantic-figure-spec/v1",
+const validSpec: SemanticFigureSpecV1_1 = {
+  schemaVersion: "semantic-figure-spec/v1.1",
   figureId: "FIG-TREND-001",
   requirementIds: ["REQ-001"],
   analyticalQuestion: "최근 8개 분기의 처리량은 어떻게 변했는가?",
@@ -42,13 +47,16 @@ const validSpec: SemanticFigureSpecV1 = {
   rendererFingerprint: {
     renderer: { name: "@longtable/kpp-renderers", version: VISUAL_EVIDENCE_RENDERER_VERSION },
     tokenProfile: { id: R08_TOKEN_PROFILE, sha256: R08_TOKEN_PROFILE_SHA256 },
-    fontProfile: { id: VISUAL_EVIDENCE_FONT_PROFILE, sha256: VISUAL_EVIDENCE_FONT_PROFILE_SHA256 },
+    fontProfile: { id: VISUAL_EVIDENCE_FONT_PROFILE, sha256: VISUAL_EVIDENCE_FONT_PROFILE_SHA256, files: [{ path: "/test/font.otf", sha256: "5".repeat(64) }] },
     rasterizer: {
       name: "LibreOffice",
       executablePath: "/test/soffice",
       executableSha256: TEST_EXECUTABLE_SHA,
       version: "LibreOffice 26.2.4.2 20(Build:2)",
+      bundlePath: "/test/libreoffice",
+      bundleResources: [{ path: "/test/program/resource.dat", sha256: "4".repeat(64) }],
     },
+    environment: { locale: "ko-KR", operatingSystem: "test-os", architecture: "test-arch", runtime: { name: "node", version: "26.5.0" } },
   },
   approvalStatus: "reviewed",
 };
@@ -83,12 +91,13 @@ const validReferences: readonly GovernedFigureReference[] = [{
   synthetic: false,
   publiclyReleasable: false,
   sourceLineageClass: "project_private",
+  humanPromoted: true,
   approved: true,
 }];
 
 describe("visual evidence compiler", () => {
   it("accepts the additive vNext schema while retaining legacy Gantt mappings", () => {
-    expect(SemanticFigureSpecV1Schema.safeParse(validSpec).success).toBe(true);
+    expect(SemanticFigureSpecV1_1Schema.safeParse(validSpec).success).toBe(true);
     expect(SemanticFigureSpecSchema.safeParse({
       figureId: "FIG-GANTT-LEGACY",
       requirementId: "REQ-001",
@@ -105,17 +114,32 @@ describe("visual evidence compiler", () => {
   });
 
   it("rejects vNext relationship/reference-family and renderer-version mismatches", () => {
-    expect(SemanticFigureSpecV1Schema.safeParse({ ...validSpec, referenceFamily: "matrix" }).success).toBe(false);
-    expect(SemanticFigureSpecV1Schema.safeParse({ ...validSpec, rendererVersion: "0.0.0" }).success).toBe(false);
+    expect(SemanticFigureSpecV1_1Schema.safeParse({ ...validSpec, referenceFamily: "matrix" }).success).toBe(false);
+    expect(SemanticFigureSpecV1_1Schema.safeParse({ ...validSpec, rendererVersion: "0.0.0" }).success).toBe(false);
     const { rendererFingerprint: _fingerprint, ...missingFingerprint } = validSpec;
-    expect(SemanticFigureSpecV1Schema.safeParse(missingFingerprint).success).toBe(false);
-    expect(SemanticFigureSpecV1Schema.safeParse({
+    expect(SemanticFigureSpecV1_1Schema.safeParse(missingFingerprint).success).toBe(false);
+    expect(SemanticFigureSpecV1_1Schema.safeParse({
+      ...validSpec,
+      rendererFingerprint: {
+        ...validSpec.rendererFingerprint,
+        fontProfile: { ...validSpec.rendererFingerprint.fontProfile, files: [] },
+      },
+    }).success).toBe(false);
+    expect(SemanticFigureSpecV1_1Schema.safeParse({
       ...validSpec,
       rendererFingerprint: {
         ...validSpec.rendererFingerprint,
         rasterizer: { ...validSpec.rendererFingerprint.rasterizer, version: "LibreOffice 25.0.0" },
       },
     }).success).toBe(true);
+  });
+
+  it("keeps legacy v1 parsing unchanged and requires an explicit v1.1 compatibility adapter", async () => {
+    const { evidenceIds: _evidence, rendererFingerprint: _renderer, ...legacyFields } = validSpec;
+    const legacy = { ...legacyFields, schemaVersion: "semantic-figure-spec/v1" as const };
+    expect(SemanticFigureSpecV1Schema.safeParse(legacy).success).toBe(true);
+    const adapted = adaptLegacySemanticFigureSpec(legacy, { evidenceIds: validSpec.evidenceIds, rendererFingerprint: validSpec.rendererFingerprint });
+    expect((await compileFigure(adapted, validData, validReferences)).figureId).toBe(legacy.figureId);
   });
 
   it("renders the same spec and data to the same SVG hash", async () => {
@@ -128,27 +152,28 @@ describe("visual evidence compiler", () => {
   });
 
   it("rasterizes the same canonical SVG to the same locked PNG hash", async () => {
-    const sofficePath = await resolveTool("soffice");
-    const rasterizer = await inspectLibreOfficeFingerprint(sofficePath);
-    const svg = await compileFigure({
-      ...validSpec,
-      rendererFingerprint: { ...validSpec.rendererFingerprint, rasterizer },
-    }, validData, validReferences);
-    const first = await compileFigurePng(svg, { sofficePath });
-    const second = await compileFigurePng(svg, { sofficePath });
-
-    expect(first.sha256).toBe(second.sha256);
-    expect(Buffer.compare(first.png, second.png)).toBe(0);
-    expect(first.sourceSvgSha256).toBe(svg.sha256);
-    expect(first.rasterizer.path).toBe(await realpath(sofficePath));
-    const stalePin = await compileFigure({
-      ...validSpec,
-      rendererFingerprint: {
-        ...validSpec.rendererFingerprint,
-        rasterizer: { ...rasterizer, version: `${rasterizer.version} stale` },
-      },
-    }, validData, validReferences);
-    await expect(compileFigurePng(stalePin, { sofficePath })).rejects.toThrow(/identity|version|fingerprint/i);
+    const fixture = await fakeRendererEnvironment();
+    try {
+      const fingerprint = await inspectSemanticRendererFingerprint(fixture.environment);
+      const svg = await compileFigure({ ...validSpec, rendererFingerprint: fingerprint }, validData, validReferences);
+      const first = await compileFigurePng(svg, { environment: fixture.environment });
+      const second = await compileFigurePng(svg, { environment: fixture.environment });
+      expect(first.sha256).toBe(second.sha256);
+      expect(Buffer.compare(first.png, second.png)).toBe(0);
+      expect(first.sourceSvgSha256).toBe(svg.sha256);
+      const stalePin = await compileFigure({
+        ...validSpec,
+        rendererFingerprint: { ...fingerprint, environment: { ...fingerprint.environment, locale: `${fingerprint.environment.locale}-stale` } },
+      }, validData, validReferences);
+      await expect(compileFigurePng(stalePin, { environment: fixture.environment })).rejects.toThrow(/locale|fingerprint|environment/i);
+      await writeFile(join(fixture.root, "resource.dat"), "tampered-resource-bytes", "utf8");
+      await expect(compileFigurePng(svg, { environment: fixture.environment })).rejects.toThrow(/resource|fingerprint|environment/i);
+      await writeFile(join(fixture.root, "resource.dat"), "locked-libreoffice-resource", "utf8");
+      await writeFile(fixture.environment.fontFilePaths[0]!, "tampered-font-bytes", "utf8");
+      await expect(compileFigurePng(svg, { environment: fixture.environment })).rejects.toThrow(/font|fingerprint|environment/i);
+    } finally {
+      await rm(fixture.root, { recursive: true, force: true });
+    }
   }, 60_000);
 
   it.each([
@@ -249,6 +274,22 @@ describe("visual evidence compiler", () => {
     )).rejects.toThrow(/fingerprint|token/i);
   });
 
+  it.each([
+    ["public fixture with generic approval rights", { ...validReferences[0]!, storageClass: "public_canonical_fixture", rightsStatus: "approved", synthetic: true, publiclyReleasable: true, sourceLineageClass: "public" }],
+    ["public fixture with private lineage", { ...validReferences[0]!, storageClass: "public_canonical_fixture", rightsStatus: "licensed", synthetic: true, publiclyReleasable: true, sourceLineageClass: "project_private" }],
+    ["private source claimed releasable", { ...validReferences[0]!, storageClass: "private_source_reference", rightsStatus: "project_private", publiclyReleasable: true, sourceLineageClass: "project_private" }],
+    ["unpromoted private extracted pattern", { ...validReferences[0]!, storageClass: "extracted_visual_pattern", rightsStatus: "approved", publiclyReleasable: true, sourceLineageClass: "project_private", humanPromoted: false }],
+  ] as const)("rejects the invalid rights matrix row: %s", async (_name, reference) => {
+    expect(GovernedFigureReferenceSchema.safeParse(reference).success).toBe(false);
+    await expect(compileFigure(validSpec, validData, [reference])).rejects.toThrow(/public|private|rights|promot|reference/i);
+  });
+
+  it("allows only a bounded human-promoted extracted pattern to release private lineage", async () => {
+    const promoted = { ...validReferences[0]!, publiclyReleasable: true, humanPromoted: true };
+    expect(GovernedFigureReferenceSchema.safeParse(promoted).success).toBe(true);
+    await expect(compileFigure(validSpec, validData, [promoted])).resolves.toEqual(expect.objectContaining({ figureId: validSpec.figureId }));
+  });
+
   it("never promotes reviewed input to human approval", async () => {
     const artifact = await compileFigure(validSpec, validData, validReferences);
 
@@ -257,7 +298,7 @@ describe("visual evidence compiler", () => {
   });
 });
 
-function dataFor(relationship: SemanticFigureSpecV1["relationship"]): VisualEvidenceData {
+function dataFor(relationship: SemanticFigureSpecV1_1["relationship"]): VisualEvidenceData {
   if (relationship === "trend") return validData;
   const common = {
     sourceId: "SRC-001",
@@ -293,5 +334,33 @@ function dataFor(relationship: SemanticFigureSpecV1["relationship"]): VisualEvid
       denominator: relationship === "composition" ? "전체 예산" : "동일 지표",
       observations,
     }],
+  };
+}
+
+async function fakeRendererEnvironment(): Promise<{ root: string; environment: RendererEnvironmentInput }> {
+  const root = await mkdtemp(join(tmpdir(), "kpp-renderer-env-"));
+  const sofficePath = join(root, "soffice");
+  const resourcePath = join(root, "resource.dat");
+  const fontPath = join(root, "NotoSansCJKkr-Regular.otf");
+  const script = `#!/usr/bin/env node
+const fs = require("node:fs");
+const path = require("node:path");
+if (process.argv.includes("--version")) { console.log("LibreOffice 26.2.4.2 20(Build:2)"); process.exit(0); }
+const outdir = process.argv[process.argv.indexOf("--outdir") + 1];
+fs.writeFileSync(path.join(outdir, "figure.png"), Buffer.from([137,80,78,71,13,10,26,10,0,0,0,0]));
+`;
+  await Promise.all([
+    writeFile(sofficePath, script, "utf8"),
+    writeFile(resourcePath, "locked-libreoffice-resource", "utf8"),
+    writeFile(fontPath, "locked-font-bytes", "utf8"),
+  ]);
+  await chmod(sofficePath, 0o755);
+  return {
+    root,
+    environment: {
+      sofficePath,
+      libreOfficeBundlePath: root,
+      fontFilePaths: [fontPath],
+    },
   };
 }

@@ -3,15 +3,24 @@ import { EvidenceBindingSchema } from "./evidence.js";
 
 const IdentifierSchema = z.string().trim().min(1);
 const Sha256Schema = z.string().regex(/^[a-f0-9]{64}$/);
+const RenderFileFingerprintSchema = z.object({ path: IdentifierSchema, sha256: Sha256Schema }).strict();
 const SemanticRendererFingerprintSchema = z.object({
   renderer: z.object({ name: z.literal("@longtable/kpp-renderers"), version: z.literal("1.0.0") }).strict(),
   tokenProfile: z.object({ id: z.literal("R08-approved-project-profile"), sha256: z.literal("c6d87996c7ad2dfcce67b6d45373f30ff7026e33ba6fd05a22b1944cfa6f7afa") }).strict(),
-  fontProfile: z.object({ id: z.literal("Noto-Sans-CJK-KR-2.004"), sha256: z.literal("0d0f75a19d1f9993378f58314cdbd7b3926ed6780fd6be2b031a0c67ddf9cd48") }).strict(),
+  fontProfile: z.object({ id: z.literal("Noto-Sans-CJK-KR-2.004"), sha256: z.literal("0d0f75a19d1f9993378f58314cdbd7b3926ed6780fd6be2b031a0c67ddf9cd48"), files: z.array(RenderFileFingerprintSchema).min(1) }).strict(),
   rasterizer: z.object({
     name: z.literal("LibreOffice"),
     executablePath: IdentifierSchema,
     executableSha256: Sha256Schema,
     version: z.string().regex(/^LibreOffice\s+\d+/),
+    bundlePath: IdentifierSchema,
+    bundleResources: z.array(RenderFileFingerprintSchema).min(1),
+  }).strict(),
+  environment: z.object({
+    locale: IdentifierSchema,
+    operatingSystem: IdentifierSchema,
+    architecture: IdentifierSchema,
+    runtime: z.object({ name: IdentifierSchema, version: IdentifierSchema }).strict(),
   }).strict(),
 }).strict();
 
@@ -183,11 +192,9 @@ export const SourceCaptionV1Schema = z.object({
   sourceIds: z.array(IdentifierSchema).min(1),
 }).strict();
 
-export const SemanticFigureSpecV1Schema = z.object({
-  schemaVersion: z.literal("semantic-figure-spec/v1"),
+const SemanticFigureSpecCommonSchema = z.object({
   figureId: IdentifierSchema,
   requirementIds: z.array(IdentifierSchema),
-  evidenceIds: z.array(IdentifierSchema).min(1),
   analyticalQuestion: IdentifierSchema,
   readerTask: IdentifierSchema,
   supportedTakeaway: IdentifierSchema,
@@ -199,8 +206,18 @@ export const SemanticFigureSpecV1Schema = z.object({
   targetSurface: z.enum(["A4_DOCX", "A4_PDF"]),
   referenceFamily: IdentifierSchema,
   rendererVersion: IdentifierSchema,
-  rendererFingerprint: SemanticRendererFingerprintSchema,
   approvalStatus: z.enum(["candidate", "reviewed", "human_approved"]),
+});
+
+/** Unchanged wire schema retained for existing research bundles. */
+export const SemanticFigureSpecV1Schema = SemanticFigureSpecCommonSchema.extend({
+  schemaVersion: z.literal("semantic-figure-spec/v1"),
+}).strict();
+
+export const SemanticFigureSpecV1_1Schema = SemanticFigureSpecCommonSchema.extend({
+  schemaVersion: z.literal("semantic-figure-spec/v1.1"),
+  evidenceIds: z.array(IdentifierSchema).min(1),
+  rendererFingerprint: SemanticRendererFingerprintSchema,
 }).strict().superRefine((spec, context) => {
   const allowedFamilies = VNEXT_REFERENCE_FAMILIES[spec.relationship];
   if (!allowedFamilies.includes(spec.referenceFamily)) {
@@ -235,15 +252,21 @@ export const GovernedFigureReferenceSchema = z.object({
   synthetic: z.boolean(),
   publiclyReleasable: z.boolean(),
   sourceLineageClass: z.enum(["public", "project_private"]),
+  humanPromoted: z.boolean(),
 }).strict().superRefine((reference, context) => {
   if (reference.storageClass === "public_canonical_fixture"
     && (!reference.synthetic || !reference.publiclyReleasable
-      || reference.sourceLineageClass !== "public" || reference.rightsStatus === "project_private")) {
-    context.addIssue({ code: "custom", message: "public canonical fixtures must be synthetic, publicly releasable, and public-lineage", path: ["storageClass"] });
+      || reference.sourceLineageClass !== "public" || !["licensed", "public_domain"].includes(reference.rightsStatus))) {
+    context.addIssue({ code: "custom", message: "public canonical fixtures require synthetic public lineage and public rights", path: ["storageClass"] });
   }
-  if (reference.sourceLineageClass === "project_private"
-    && reference.publiclyReleasable) {
-    context.addIssue({ code: "custom", message: "project-private lineage must remain non-public", path: ["sourceLineageClass"] });
+  if (reference.storageClass === "private_source_reference"
+    && (reference.synthetic || reference.publiclyReleasable || reference.sourceLineageClass !== "project_private" || reference.rightsStatus !== "project_private")) {
+    context.addIssue({ code: "custom", message: "private source references must remain project-private", path: ["storageClass"] });
+  }
+  if (reference.sourceLineageClass === "project_private" && reference.publiclyReleasable
+    && (reference.storageClass !== "extracted_visual_pattern" || !reference.humanPromoted
+      || reference.transferBoundary.trim().length === 0 || !["approved", "licensed"].includes(reference.rightsStatus))) {
+    context.addIssue({ code: "custom", message: "private lineage requires a bounded human-promoted extracted pattern", path: ["publiclyReleasable"] });
   }
   if (reference.rightsStatus === "project_private" && reference.sourceLineageClass !== "project_private") {
     context.addIssue({ code: "custom", message: "project-private rights require project-private source lineage", path: ["rightsStatus"] });
@@ -279,6 +302,7 @@ export type SemanticFigureFamily = z.infer<typeof SemanticFigureFamilySchema>;
 export type SemanticFigureRequest = z.infer<typeof SemanticFigureRequestSchema>;
 export type SemanticFigureSpec = z.infer<typeof SemanticFigureSpecSchema>;
 export type SemanticFigureSpecV1 = z.infer<typeof SemanticFigureSpecV1Schema>;
+export type SemanticFigureSpecV1_1 = z.infer<typeof SemanticFigureSpecV1_1Schema>;
 export type TopologyStudyRequest = z.infer<typeof TopologyStudyRequestSchema>;
 export type VisualReferencePage = z.infer<typeof VisualReferencePageSchema>;
 export type VisualReferenceClassification = z.infer<typeof VisualReferenceClassificationSchema>;

@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { execFile } from "node:child_process";
-import { mkdtemp, mkdir, readFile, realpath, rm, stat, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { mkdtemp, mkdir, readFile, readdir, realpath, rm, stat, writeFile } from "node:fs/promises";
+import { arch as osArchitecture, platform as osPlatform, release as osRelease, tmpdir } from "node:os";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { promisify } from "node:util";
@@ -20,7 +20,9 @@ import {
   type FigureA4Context,
   type FigureA4PageArtifact,
   type LibreOfficeFingerprint,
-  type SemanticFigureSpecV1,
+  type RenderFileFingerprint,
+  type SemanticFigureSpecV1_1,
+  type SemanticRendererFingerprint,
   type VisualEvidenceData,
   type VisualEvidenceFigureArtifact,
   type VisualEvidencePngArtifact,
@@ -41,8 +43,14 @@ const APPROVED_SOFFICE_PATHS = [
   "/snap/bin/libreoffice",
 ] as const;
 
+export interface RendererEnvironmentInput {
+  readonly sofficePath: string;
+  readonly libreOfficeBundlePath: string;
+  readonly fontFilePaths: readonly string[];
+}
+
 export async function compileFigure(
-  spec: SemanticFigureSpecV1,
+  spec: SemanticFigureSpecV1_1,
   data: VisualEvidenceData,
   references: readonly GovernedFigureReference[],
 ): Promise<VisualEvidenceFigureArtifact> {
@@ -51,7 +59,7 @@ export async function compileFigure(
 
 /** Pure reconstruction entrypoint used by independent QA. */
 export function compileFigureExpected(
-  spec: SemanticFigureSpecV1,
+  spec: SemanticFigureSpecV1_1,
   data: VisualEvidenceData,
   references: readonly GovernedFigureReference[],
 ): VisualEvidenceFigureArtifact {
@@ -101,6 +109,7 @@ export function compileFigureExpected(
 export function renderFigureA4Page(
   artifact: VisualEvidenceFigureArtifact,
   context: FigureA4Context,
+  options: { readonly renderPath: string },
 ): FigureA4PageArtifact {
   const image = Buffer.from(artifact.svg, "utf8").toString("base64");
   const box = context.figureBox;
@@ -110,36 +119,38 @@ export function renderFigureA4Page(
   const pageSvg = [
     `<svg xmlns="http://www.w3.org/2000/svg" width="${context.pageWidthMm}mm" height="${context.pageHeightMm}mm" viewBox="0 0 ${context.pageWidthMm} ${context.pageHeightMm}" data-page-locator="${escapeXml(context.pageLocator)}" data-figure-svg-sha256="${artifact.sha256}">`,
     `  <rect width="${context.pageWidthMm}" height="${context.pageHeightMm}" fill="${R08_RENDERER_TOKENS.paper}"/>`,
-    `  <text data-kpp-role="section-callout" x="20" y="28">${escapeXml(context.sectionCallout)}</text>`,
+    `  <text data-kpp-role="section-callout" data-bbox-x="20" data-bbox-y="23" data-bbox-width="${estimatedTextWidth(context.sectionCallout)}" data-bbox-height="6" x="20" y="28">${escapeXml(context.sectionCallout)}</text>`,
     `  <image data-kpp-role="figure" x="${box.xMm}" y="${box.yMm}" width="${box.widthMm}" height="${box.heightMm}" href="data:image/svg+xml;base64,${image}"/>`,
-    `  <text data-kpp-role="caption" x="${box.xMm}" y="${box.yMm + box.heightMm + 6}">${escapeXml(context.caption)}</text>`,
+    `  <text data-kpp-role="caption" data-bbox-x="${box.xMm}" data-bbox-y="${box.yMm + box.heightMm + 1}" data-bbox-width="${estimatedTextWidth(context.caption)}" data-bbox-height="6" x="${box.xMm}" y="${box.yMm + box.heightMm + 6}">${escapeXml(context.caption)}</text>`,
     ...peers,
     "</svg>",
     "",
   ].join("\n");
+  const bytes = Buffer.from(pageSvg, "utf8");
   return {
-    schemaVersion: "visual-evidence-a4-page/v1",
+    schemaVersion: "visual-evidence-rendered-page/v1",
     figureId: artifact.figureId,
+    format: "svg",
+    mediaType: "image/svg+xml",
+    renderPath: options.renderPath,
     pageLocator: context.pageLocator,
-    pageSvg,
-    sha256: hash(pageSvg),
-    figureSvgSha256: artifact.sha256,
-    contextSha256: hash(canonicalFigureInputsJson(context)),
+    bytes,
+    sha256: hash(bytes),
   };
 }
 
 /** Deterministically rasterize canonical SVG bytes with an identified locked tool. */
 export async function compileFigurePng(
   artifact: VisualEvidenceFigureArtifact,
-  options: { readonly sofficePath?: string } = {},
+  options: { readonly environment: RendererEnvironmentInput },
 ): Promise<VisualEvidencePngArtifact> {
   if (artifact.sha256 !== hash(artifact.svg) || artifact.hashes.outputSha256 !== artifact.sha256) {
     throw new Error("Cannot rasterize a visual evidence artifact with mismatched SVG lineage");
   }
-  const fingerprint = await inspectLibreOfficeFingerprint(options.sofficePath);
-  const sofficePath = fingerprint.executablePath;
-  if (canonicalFigureInputsJson(fingerprint) !== canonicalFigureInputsJson(artifact.rendererFingerprint.rasterizer)) {
-    throw new Error("LibreOffice executable identity or version does not match the semantic renderer fingerprint");
+  const fingerprint = await inspectSemanticRendererFingerprint(options.environment);
+  const sofficePath = fingerprint.rasterizer.executablePath;
+  if (canonicalFigureInputsJson(fingerprint) !== canonicalFigureInputsJson(artifact.rendererFingerprint)) {
+    throw new Error("LibreOffice, resource, font, locale, OS, runtime, renderer, or token fingerprint does not match the semantic renderer fingerprint");
   }
 
   const temporary = await mkdtemp(join(tmpdir(), "kpp-visual-evidence-png-"));
@@ -170,7 +181,7 @@ export async function compileFigurePng(
       sha256: hash(png),
       sourceSvgSha256: artifact.sha256,
       rendererVersion: artifact.rendererVersion,
-      rasterizer: { path: sofficePath, executableSha256: fingerprint.executableSha256, version: fingerprint.version },
+      rasterizer: { path: sofficePath, executableSha256: fingerprint.rasterizer.executableSha256, version: fingerprint.rasterizer.version },
       lineage: artifact.lineage,
     };
   } finally {
@@ -178,7 +189,10 @@ export async function compileFigurePng(
   }
 }
 
-export async function inspectLibreOfficeFingerprint(configured?: string): Promise<LibreOfficeFingerprint> {
+export async function inspectLibreOfficeFingerprint(
+  configured: string,
+  bundlePath: string,
+): Promise<LibreOfficeFingerprint> {
   const executablePath = await resolveSoffice(configured);
   const [identity, executable] = await Promise.all([
     execFileAsync(executablePath, ["--version"], {
@@ -190,10 +204,38 @@ export async function inspectLibreOfficeFingerprint(configured?: string): Promis
   ]);
   const version = `${identity.stdout}${identity.stderr}`.trim();
   if (!/^LibreOffice\s+\d+/u.test(version)) throw new Error(`Unsupported LibreOffice rasterizer identity: ${version}`);
-  return { name: "LibreOffice", executablePath, executableSha256: hash(executable), version };
+  return {
+    name: "LibreOffice",
+    executablePath,
+    executableSha256: hash(executable),
+    version,
+    bundlePath: await realpath(bundlePath),
+    bundleResources: await inspectDirectory(bundlePath),
+  };
 }
 
-function renderCanonicalFigure(ir: CanonicalFigureIR, spec: SemanticFigureSpecV1): string {
+export async function inspectSemanticRendererFingerprint(
+  input: RendererEnvironmentInput,
+): Promise<SemanticRendererFingerprint> {
+  return {
+    renderer: { name: "@longtable/kpp-renderers", version: VISUAL_EVIDENCE_RENDERER_VERSION },
+    tokenProfile: { id: R08_TOKEN_PROFILE, sha256: R08_TOKEN_PROFILE_SHA256 },
+    fontProfile: {
+      id: VISUAL_EVIDENCE_FONT_PROFILE,
+      sha256: VISUAL_EVIDENCE_FONT_PROFILE_SHA256,
+      files: await inspectFiles(input.fontFilePaths),
+    },
+    rasterizer: await inspectLibreOfficeFingerprint(input.sofficePath, input.libreOfficeBundlePath),
+    environment: {
+      locale: Intl.DateTimeFormat().resolvedOptions().locale,
+      operatingSystem: `${osPlatform()} ${osRelease()}`,
+      architecture: osArchitecture(),
+      runtime: { name: "node", version: process.version },
+    },
+  };
+}
+
+function renderCanonicalFigure(ir: CanonicalFigureIR, spec: SemanticFigureSpecV1_1): string {
   const lines = openSvg(ir, spec);
   if (ir.family === "time-trend") renderTrend(lines, ir);
   else if (ir.family === "comparison") renderComparison(lines, ir);
@@ -209,7 +251,7 @@ function renderCanonicalFigure(ir: CanonicalFigureIR, spec: SemanticFigureSpecV1
   return `${lines.join("\n")}\n`;
 }
 
-function openSvg(ir: CanonicalFigureIR, spec: SemanticFigureSpecV1): string[] {
+function openSvg(ir: CanonicalFigureIR, spec: SemanticFigureSpecV1_1): string[] {
   return [
     `<svg xmlns="http://www.w3.org/2000/svg" width="${WIDTH}" height="${HEIGHT}" viewBox="0 0 ${WIDTH} ${HEIGHT}" role="img" aria-labelledby="title description" data-kpp-family="${ir.family}" data-renderer-version="${VISUAL_EVIDENCE_RENDERER_VERSION}" data-spec-version="${spec.schemaVersion}" data-target-surface="${spec.targetSurface}" data-token-profile="${R08_TOKEN_PROFILE}" data-token-hash="${R08_TOKEN_PROFILE_SHA256}" data-font-profile="${VISUAL_EVIDENCE_FONT_PROFILE}" data-font-hash="${VISUAL_EVIDENCE_FONT_PROFILE_SHA256}" data-renderer-fingerprint-sha256="${hash(canonicalFigureInputsJson(spec.rendererFingerprint))}">`,
     `  <title id="title">${escapeXml(ir.analyticalQuestion)}</title>`,
@@ -362,6 +404,40 @@ function sortedUnique(values: readonly string[]): string[] {
 
 function round(value: number): number {
   return Math.round(value * 100) / 100;
+}
+
+function estimatedTextWidth(value: string): number {
+  return Math.min(170, round(Math.max(1, [...value].length) * 2.2));
+}
+
+async function inspectFiles(paths: readonly string[]): Promise<readonly RenderFileFingerprint[]> {
+  if (paths.length === 0) throw new Error("Renderer byte fingerprint requires at least one injected file path");
+  const fingerprints = await Promise.all(paths.map(async (path) => {
+    const resolved = await realpath(path);
+    return { path: resolved, sha256: hash(await readFile(resolved)) };
+  }));
+  fingerprints.sort((left, right) => left.path < right.path ? -1 : left.path > right.path ? 1 : 0);
+  if (new Set(fingerprints.map((item) => item.path)).size !== fingerprints.length) {
+    throw new Error("Renderer byte fingerprint paths must be unique");
+  }
+  return fingerprints;
+}
+
+async function inspectDirectory(root: string): Promise<readonly RenderFileFingerprint[]> {
+  const resolvedRoot = await realpath(root);
+  if (!(await stat(resolvedRoot)).isDirectory()) throw new Error("LibreOffice bundle path must be a directory");
+  const files: string[] = [];
+  async function visit(directory: string): Promise<void> {
+    const entries = await readdir(directory, { withFileTypes: true });
+    entries.sort((left, right) => left.name < right.name ? -1 : left.name > right.name ? 1 : 0);
+    for (const entry of entries) {
+      const path = join(directory, entry.name);
+      if (entry.isDirectory()) await visit(path);
+      else if (entry.isFile()) files.push(path);
+    }
+  }
+  await visit(resolvedRoot);
+  return inspectFiles(files);
 }
 
 async function resolveSoffice(configured: string | undefined): Promise<string> {

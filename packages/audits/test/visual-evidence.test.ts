@@ -12,7 +12,7 @@ import {
   type FigureA4Context,
   type GovernedFigureReference,
   type HumanFigureReview,
-  type SemanticFigureSpecV1,
+  type SemanticFigureSpecV1_1,
   type VisualEvidenceData,
   type VisualEvidenceFigureArtifact,
 } from "@longtable/kpp-renderers";
@@ -21,8 +21,8 @@ import { auditFigureSemantics, type FigureSemanticAuditInput } from "../src/inde
 const SOURCE_SHA = "1".repeat(64);
 const REFERENCE_SHA = "2".repeat(64);
 
-const validSpec: SemanticFigureSpecV1 = {
-  schemaVersion: "semantic-figure-spec/v1",
+const validSpec: SemanticFigureSpecV1_1 = {
+  schemaVersion: "semantic-figure-spec/v1.1",
   figureId: "FIG-TREND-001",
   requirementIds: ["REQ-001"],
   analyticalQuestion: "최근 8개 분기의 처리량은 어떻게 변했는가?",
@@ -40,13 +40,16 @@ const validSpec: SemanticFigureSpecV1 = {
   rendererFingerprint: {
     renderer: { name: "@longtable/kpp-renderers", version: VISUAL_EVIDENCE_RENDERER_VERSION },
     tokenProfile: { id: R08_TOKEN_PROFILE, sha256: R08_TOKEN_PROFILE_SHA256 },
-    fontProfile: { id: VISUAL_EVIDENCE_FONT_PROFILE, sha256: VISUAL_EVIDENCE_FONT_PROFILE_SHA256 },
+    fontProfile: { id: VISUAL_EVIDENCE_FONT_PROFILE, sha256: VISUAL_EVIDENCE_FONT_PROFILE_SHA256, files: [{ path: "/test/font.otf", sha256: "5".repeat(64) }] },
     rasterizer: {
       name: "LibreOffice",
       executablePath: "/test/soffice",
       executableSha256: "3".repeat(64),
       version: "LibreOffice 26.2.4.2 20(Build:2)",
+      bundlePath: "/test/libreoffice",
+      bundleResources: [{ path: "/test/resource.dat", sha256: "4".repeat(64) }],
     },
+    environment: { locale: "ko-KR", operatingSystem: "test-os", architecture: "test-arch", runtime: { name: "node", version: "26.5.0" } },
   },
   approvalStatus: "reviewed",
 };
@@ -81,6 +84,7 @@ const validReferences: readonly GovernedFigureReference[] = [{
   synthetic: false,
   publiclyReleasable: false,
   sourceLineageClass: "project_private",
+  humanPromoted: true,
   approved: true,
 }];
 
@@ -95,6 +99,36 @@ const validPageContext: FigureA4Context = {
 };
 
 describe("independent visual evidence audit", () => {
+  it("blocks when no actual rendered-page artifact is supplied", async () => {
+    const input = await validAuditInput();
+    const { pageArtifact: _pageArtifact, ...missing } = input;
+    const report = auditFigureSemantics(missing as FigureSemanticAuditInput);
+
+    expect(report.status).toBe("BLOCKED");
+    expect(report.findings).toContainEqual(expect.objectContaining({ code: "PP_FIGURE_RENDER_ARTIFACT_MISSING" }));
+  });
+
+  it("rejects a self-consistent but incorrect actual rendered page", async () => {
+    const input = await validAuditInput();
+    const pageSvg = Buffer.from(input.pageArtifact!.bytes).toString("utf8")
+      .replace(input.artifact.sha256, "0".repeat(64));
+    const pageArtifact = { ...input.pageArtifact!, bytes: Buffer.from(pageSvg), sha256: sha256(pageSvg) };
+    const report = auditFigureSemantics({ ...input, pageArtifact });
+
+    expect(report.status).toBe("BLOCKED");
+    expect(report.findings).toContainEqual(expect.objectContaining({ code: "PP_FIGURE_RENDER_ARTIFACT_MISMATCH" }));
+  });
+
+  it("measures text bounding-box collisions from actual page bytes", async () => {
+    const input = await validAuditInput();
+    const pageSvg = Buffer.from(input.pageArtifact!.bytes).toString("utf8")
+      .replace(/data-bbox-x="20" data-bbox-y="23"/u, 'data-bbox-x="20" data-bbox-y="159"');
+    const pageArtifact = { ...input.pageArtifact!, bytes: Buffer.from(pageSvg), sha256: sha256(pageSvg) };
+    const report = auditFigureSemantics({ ...input, pageArtifact });
+
+    expect(report.findings).toContainEqual(expect.objectContaining({ code: "PP_FIGURE_LABEL_COLLISION" }));
+  });
+
   it("passes a reconstructed traceable figure without granting human approval", async () => {
     const input = await validAuditInput();
     const report = auditFigureSemantics(input);
@@ -130,7 +164,7 @@ describe("independent visual evidence audit", () => {
         outputSha256: sha256(svg),
       },
     };
-    const pageArtifact = renderFigureA4Page(artifact, input.pageContext);
+    const pageArtifact = renderFigureA4Page(artifact, validPageContext, { renderPath: "/rendered/proposal-page-5.svg" });
     const report = auditFigureSemantics({ ...input, artifact, pageArtifact });
 
     expect(report.status).toBe("BLOCKED");
@@ -181,14 +215,15 @@ describe("independent visual evidence audit", () => {
 
   it.each([
     ["A4 overflow", { figureBox: { ...validPageContext.figureBox, widthMm: 190 } }, "PP_FIGURE_A4_FOOTPRINT"],
+    ["actual clipping", { figureBox: { ...validPageContext.figureBox, xMm: 200 } }, "PP_FIGURE_CLIPPING"],
     ["missing caption", { caption: "" }, "PP_FIGURE_CAPTION_MISSING"],
     ["missing section callout", { sectionCallout: "" }, "PP_FIGURE_SECTION_CALLOUT_MISSING"],
     ["repeated geometry", { peerFigureBoxes: [validPageContext.figureBox, validPageContext.figureBox] }, "PP_FIGURE_GEOMETRY_REPEATED"],
   ] as const)("blocks %s from the measured final-page artifact", async (_name, override, code) => {
     const input = await validAuditInput();
-    const pageContext = { ...input.pageContext, ...override };
-    const pageArtifact = renderFigureA4Page(input.artifact, pageContext);
-    const report = auditFigureSemantics({ ...input, pageContext, pageArtifact });
+    const pageContext = { ...validPageContext, ...override };
+    const pageArtifact = renderFigureA4Page(input.artifact, pageContext, { renderPath: "/rendered/proposal-page.svg" });
+    const report = auditFigureSemantics({ ...input, pageArtifact });
 
     expect(report.findings).toContainEqual(expect.objectContaining({ code }));
   });
@@ -208,12 +243,11 @@ describe("independent visual evidence audit", () => {
   it("rejects stale human review after final page bytes or locator change", async () => {
     const input = await validAuditInput();
     const reviews = [reviewReceipt(input, "reviewer-1"), reviewReceipt(input, "reviewer-2")];
-    const pageContext = { ...input.pageContext, pageLocator: "page:6", sectionCallout: `${input.pageContext.sectionCallout} 수정` };
-    const pageArtifact = renderFigureA4Page(input.artifact, pageContext);
+    const pageContext = { ...validPageContext, pageLocator: "page:6", sectionCallout: `${validPageContext.sectionCallout} 수정` };
+    const pageArtifact = renderFigureA4Page(input.artifact, pageContext, { renderPath: "/rendered/proposal-page-6.svg" });
     const report = auditFigureSemantics({
       ...input,
       spec: { ...input.spec, approvalStatus: "human_approved" },
-      pageContext,
       pageArtifact,
       humanReviews: reviews,
     });
@@ -250,17 +284,30 @@ describe("independent visual evidence audit", () => {
     expect(report.status).toBe("BLOCKED");
     expect(report.findings).toContainEqual(expect.objectContaining({ code: "PP_FIGURE_REFERENCE_UNGOVERNED" }));
   });
+
+  it("rejects a private source reference falsely marked publicly releasable", async () => {
+    const input = await validAuditInput();
+    const references = [{
+      ...validReferences[0]!,
+      storageClass: "private_source_reference" as const,
+      rightsStatus: "project_private" as const,
+      publiclyReleasable: true,
+      humanPromoted: true,
+    }];
+    const report = auditFigureSemantics({ ...input, references });
+
+    expect(report.findings).toContainEqual(expect.objectContaining({ code: "PP_FIGURE_REFERENCE_UNGOVERNED" }));
+  });
 });
 
 async function validAuditInput(): Promise<FigureSemanticAuditInput> {
   const artifact = await compileFigure(validSpec, validData, validReferences);
-  const pageArtifact = renderFigureA4Page(artifact, validPageContext);
+  const pageArtifact = renderFigureA4Page(artifact, validPageContext, { renderPath: "/rendered/proposal-page-5.svg" });
   return {
     spec: validSpec,
     data: validData,
     references: validReferences,
     artifact,
-    pageContext: validPageContext,
     pageArtifact,
     humanReviews: [],
   };
@@ -273,8 +320,8 @@ function reviewReceipt(input: FigureSemanticAuditInput, reviewerId: string): Hum
     reviewedAt: "2026-08-19T10:00:00.000Z",
     reviewedFigureSvgSha256: input.artifact.sha256,
     reviewedFigureIrSha256: input.artifact.hashes.irSha256,
-    reviewedPageRenderSha256: input.pageArtifact.sha256,
-    pageLocator: input.pageContext.pageLocator,
+    reviewedPageRenderSha256: input.pageArtifact!.sha256,
+    pageLocator: input.pageArtifact!.pageLocator,
     renderedInA4Context: true,
     meaning: true,
     trustworthiness: true,

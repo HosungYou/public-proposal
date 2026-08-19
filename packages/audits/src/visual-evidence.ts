@@ -3,24 +3,21 @@ import {
   VISUAL_EVIDENCE_RENDERER_VERSION,
   canonicalFigureInputsJson,
   compileFigureExpected,
-  renderFigureA4Page,
-  type FigureA4Context,
   type FigureA4PageArtifact,
   type GovernedFigureReference,
   type HumanFigureReview,
-  type SemanticFigureSpecV1,
+  type SemanticFigureSpecV1_1,
   type VisualEvidenceData,
   type VisualEvidenceFigureArtifact,
 } from "@longtable/kpp-renderers";
 import type { AuditFinding, AuditStatus } from "./source.js";
 
 export interface FigureSemanticAuditInput {
-  readonly spec: SemanticFigureSpecV1;
+  readonly spec: SemanticFigureSpecV1_1;
   readonly data: VisualEvidenceData;
   readonly references: readonly GovernedFigureReference[];
   readonly artifact: VisualEvidenceFigureArtifact;
-  readonly pageContext: FigureA4Context;
-  readonly pageArtifact: FigureA4PageArtifact;
+  readonly pageArtifact?: FigureA4PageArtifact;
   readonly humanReviews?: readonly HumanFigureReview[];
 }
 
@@ -31,7 +28,7 @@ export interface FigureAuditReport {
   readonly findings: readonly AuditFinding[];
   readonly auditorBoundary: "INDEPENDENT_QA_ONLY";
   readonly compilerApproval: "NOT_ACCEPTED";
-  readonly humanApprovalStatus: SemanticFigureSpecV1["approvalStatus"];
+  readonly humanApprovalStatus: SemanticFigureSpecV1_1["approvalStatus"];
 }
 
 /** Independent QA reconstructs the expected artifact from governed inputs. */
@@ -132,26 +129,44 @@ function auditSvgAndPage(input: FigureSemanticAuditInput, expected: VisualEviden
     const max = Math.max(...values);
     if (measurement.scale.min > min || measurement.scale.max < max || (min >= 0 && (!measurement.scale.includeZero || measurement.scale.min > 0))) add(findings, "PP_FIGURE_SCALE_DISHONEST", "Measured SVG scale clips values or exaggerates a nonnegative comparison.");
   }
-  const context = input.pageContext;
-  const box = context.figureBox;
-  const pageInvalid = context.pageWidthMm !== 210 || context.pageHeightMm !== 297 || box.widthMm <= 0 || box.heightMm <= 0 || box.widthMm > 180 || box.heightMm > 247 || box.xMm < 0 || box.yMm < 0 || box.xMm + box.widthMm > context.pageWidthMm || box.yMm + box.heightMm > context.pageHeightMm;
-  if (pageInvalid) add(findings, "PP_FIGURE_A4_FOOTPRINT", "Measured figure geometry does not fit the governed A4 page.", { actual: context });
-  if (context.caption.trim().length === 0 || !input.pageArtifact.pageSvg.includes(escapeXml(context.caption))) add(findings, "PP_FIGURE_CAPTION_MISSING", "A source-bearing figure caption is required in the final page artifact.");
-  if (context.sectionCallout.trim().length === 0 || !input.pageArtifact.pageSvg.includes(escapeXml(context.sectionCallout))) add(findings, "PP_FIGURE_SECTION_CALLOUT_MISSING", "The connected section must call out and interpret the figure.");
-  const sameGeometry = [context.figureBox, ...context.peerFigureBoxes].filter((peer) => peer.widthMm === box.widthMm && peer.heightMm === box.heightMm).length;
-  if (sameGeometry > 2) add(findings, "PP_FIGURE_GEOMETRY_REPEATED", "Repeated page-level figure geometry creates a card-wall pattern.", { actual: sameGeometry });
-  if (expected !== undefined) {
-    const expectedPage = renderFigureA4Page(expected, context);
-    if (canonicalFigureInputsJson(input.pageArtifact) !== canonicalFigureInputsJson(expectedPage)) add(findings, "PP_FIGURE_PAGE_ARTIFACT_MISMATCH", "Final A4 page bytes, figure binding, locator, or geometry differ from reconstruction.");
+  const page = input.pageArtifact;
+  if (page === undefined) {
+    add(findings, "PP_FIGURE_RENDER_ARTIFACT_MISSING", "Independent QA requires actual final-page render bytes, path, hash, and page locator.");
+    return;
   }
+  if (page.schemaVersion !== "visual-evidence-rendered-page/v1" || page.figureId !== input.spec.figureId || page.renderPath.trim().length === 0
+    || page.pageLocator.trim().length === 0 || page.bytes.byteLength === 0 || page.sha256 !== sha256Bytes(page.bytes)) {
+    add(findings, "PP_FIGURE_RENDER_ARTIFACT_MISMATCH", "Actual rendered-page bytes, hash, render path, or locator are invalid.");
+    return;
+  }
+  if (page.format !== "svg") {
+    add(findings, "PP_FIGURE_RENDER_FORMAT_UNMEASURABLE", "Independent page QA currently requires a canonical SVG page render so geometry and text can be measured.");
+    return;
+  }
+  const pageSvg = Buffer.from(page.bytes).toString("utf8");
+  const pageMeasurement = measureActualPageSvg(pageSvg);
+  if (!page.renderPath.toLowerCase().endsWith(".svg") || page.mediaType !== "image/svg+xml"
+    || pageMeasurement.pageLocator !== page.pageLocator || pageMeasurement.figureSvgSha256 !== input.artifact.sha256
+    || pageMeasurement.embeddedFigureSha256 !== input.artifact.sha256) {
+    add(findings, "PP_FIGURE_RENDER_ARTIFACT_MISMATCH", "Actual SVG render does not bind the declared path, locator, or exact figure bytes.");
+  }
+  if (!pageMeasurement.isA4 || pageMeasurement.figureBoxes.some((box) => box.width > 180 || box.height > 247)) {
+    add(findings, "PP_FIGURE_A4_FOOTPRINT", "Measured actual-page geometry does not fit the governed A4 page.");
+  }
+  if (!pageMeasurement.text.includes(input.spec.sourceCaption.text)) add(findings, "PP_FIGURE_CAPTION_MISSING", "The actual rendered page does not contain the governed source caption.");
+  if (!pageMeasurement.text.some((text) => text.includes(input.spec.figureId))) add(findings, "PP_FIGURE_SECTION_CALLOUT_MISSING", "The actual rendered page does not call out the governed figure.");
+  if (pageMeasurement.clipped > 0) add(findings, "PP_FIGURE_CLIPPING", "Actual-page marks or text bounding boxes are clipped.", { actual: pageMeasurement.clipped });
+  if (pageMeasurement.labelCollisions > 0) add(findings, "PP_FIGURE_LABEL_COLLISION", "Actual-page text bounding boxes collide.", { actual: pageMeasurement.labelCollisions });
+  if (pageMeasurement.repeatedGeometry > 2) add(findings, "PP_FIGURE_GEOMETRY_REPEATED", "Repeated actual-page figure geometry creates a card-wall pattern.", { actual: pageMeasurement.repeatedGeometry });
+  if (expected !== undefined && pageMeasurement.figureSvgSha256 !== expected.sha256) add(findings, "PP_FIGURE_RENDER_ARTIFACT_MISMATCH", "Actual page embeds a figure other than the independently reconstructed artifact.");
 }
 
 function auditHumanApproval(input: FigureSemanticAuditInput, expected: VisualEvidenceFigureArtifact | undefined, findings: AuditFinding[]): void {
   if (input.spec.approvalStatus !== "human_approved") return;
-  const expectedPage = expected === undefined ? undefined : renderFigureA4Page(expected, input.pageContext);
+  const expectedPage = input.pageArtifact;
   const complete = (input.humanReviews ?? []).filter((review) => {
     const { approvalReceiptSha256: _receipt, ...payload } = review;
-    const current = expected !== undefined && expectedPage !== undefined && review.reviewedFigureSvgSha256 === expected.sha256 && review.reviewedFigureIrSha256 === expected.hashes.irSha256 && review.reviewedPageRenderSha256 === expectedPage.sha256 && review.pageLocator === input.pageContext.pageLocator && review.approvalReceiptSha256 === sha256(canonicalFigureInputsJson(payload));
+    const current = expected !== undefined && expectedPage !== undefined && expectedPage.sha256 === sha256Bytes(expectedPage.bytes) && review.reviewedFigureSvgSha256 === expected.sha256 && review.reviewedFigureIrSha256 === expected.hashes.irSha256 && review.reviewedPageRenderSha256 === expectedPage.sha256 && review.pageLocator === expectedPage.pageLocator && review.approvalReceiptSha256 === sha256(canonicalFigureInputsJson(payload));
     if (!current) add(findings, "PP_FIGURE_HUMAN_APPROVAL_STALE", "Human approval receipt does not bind the current figure and final page bytes.", { actual: review.reviewId });
     return current && review.reviewerId.trim().length > 0 && review.renderedInA4Context && review.meaning && review.trustworthiness && review.documentFit && review.sendReady;
   });
@@ -182,12 +197,81 @@ function measureSvg(svg: string): { clipped: number; minimumContrast: number; gr
   return { clipped, minimumContrast, grayscaleDistinct, ...(scale === undefined ? {} : { scale }) };
 }
 
+interface MeasuredBox { readonly x: number; readonly y: number; readonly width: number; readonly height: number }
+
+function measureActualPageSvg(svg: string): {
+  readonly isA4: boolean;
+  readonly pageLocator?: string;
+  readonly figureSvgSha256?: string;
+  readonly embeddedFigureSha256?: string;
+  readonly figureBoxes: readonly MeasuredBox[];
+  readonly text: readonly string[];
+  readonly clipped: number;
+  readonly labelCollisions: number;
+  readonly repeatedGeometry: number;
+} {
+  const root = /<svg\b([^>]*)>/u.exec(svg)?.[1] ?? "";
+  const viewBox = attribute(root, "viewBox")?.split(/\s+/u).map(Number);
+  const isA4 = attribute(root, "width") === "210mm" && attribute(root, "height") === "297mm"
+    && viewBox?.length === 4 && viewBox[0] === 0 && viewBox[1] === 0 && viewBox[2] === 210 && viewBox[3] === 297;
+  const pageLocator = attribute(root, "data-page-locator");
+  const figureSvgSha256 = attribute(root, "data-figure-svg-sha256");
+  const figureImages = [...svg.matchAll(/<image\b([^>]*)data-kpp-role="figure"([^>]*)>/gu)].map((match) => `${match[1]} ${match[2]}`);
+  const figureBoxes = figureImages.map(elementBox).filter(isMeasuredBox);
+  const embeddedHref = figureImages.length === 1 ? attribute(figureImages[0]!, "href") : undefined;
+  const embeddedFigureSha256 = embeddedHref?.startsWith("data:image/svg+xml;base64,") === true
+    ? sha256Bytes(Buffer.from(embeddedHref.slice("data:image/svg+xml;base64,".length), "base64"))
+    : undefined;
+  const peerBoxes = [...svg.matchAll(/<rect\b([^>]*)data-kpp-role="peer-figure-box"([^>]*)>/gu)].map((match) => elementBox(`${match[1]} ${match[2]}`)).filter(isMeasuredBox);
+  const textMatches = [...svg.matchAll(/<text\b([^>]*)>([\s\S]*?)<\/text>/gu)];
+  const text = textMatches.map((match) => decodeXml(match[2]!.replace(/<[^>]+>/gu, "")));
+  const textBoxes = textMatches.map((match) => textBox(match[1]!, decodeXml(match[2]!.replace(/<[^>]+>/gu, "")))).filter(isMeasuredBox);
+  const allBoxes = [...figureBoxes, ...peerBoxes, ...textBoxes];
+  const clipped = allBoxes.filter((box) => box.x < 0 || box.y < 0 || box.width <= 0 || box.height <= 0 || box.x + box.width > 210 || box.y + box.height > 297).length;
+  let labelCollisions = 0;
+  for (let left = 0; left < textBoxes.length; left += 1) {
+    for (let right = left + 1; right < textBoxes.length; right += 1) {
+      if (overlap(textBoxes[left]!, textBoxes[right]!)) labelCollisions += 1;
+    }
+  }
+  const dimensions = [...figureBoxes, ...peerBoxes].map((box) => `${box.width}\0${box.height}`);
+  const repeatedGeometry = Math.max(0, ...dimensions.map((key) => dimensions.filter((candidate) => candidate === key).length));
+  return { isA4, ...(pageLocator === undefined ? {} : { pageLocator }), ...(figureSvgSha256 === undefined ? {} : { figureSvgSha256 }), ...(embeddedFigureSha256 === undefined ? {} : { embeddedFigureSha256 }), figureBoxes, text, clipped, labelCollisions, repeatedGeometry };
+}
+
+function textBox(attributes: string, text: string): MeasuredBox | undefined {
+  const explicit = {
+    x: Number(attribute(attributes, "data-bbox-x")),
+    y: Number(attribute(attributes, "data-bbox-y")),
+    width: Number(attribute(attributes, "data-bbox-width")),
+    height: Number(attribute(attributes, "data-bbox-height")),
+  };
+  if (Object.values(explicit).every(Number.isFinite)) return explicit;
+  const x = Number(attribute(attributes, "x"));
+  const baseline = Number(attribute(attributes, "y"));
+  if (!Number.isFinite(x) || !Number.isFinite(baseline)) return undefined;
+  return { x, y: baseline - 4, width: Math.max(1, [...text].length * 2.2), height: 6 };
+}
+
+function elementBox(attributes: string): MeasuredBox | undefined {
+  const box = { x: Number(attribute(attributes, "x")), y: Number(attribute(attributes, "y")), width: Number(attribute(attributes, "width")), height: Number(attribute(attributes, "height")) };
+  return Object.values(box).every(Number.isFinite) ? box : undefined;
+}
+
+function attribute(attributes: string, name: string): string | undefined {
+  return new RegExp(`(?:^|\\s)${name}="([^"]*)"`, "u").exec(attributes)?.[1];
+}
+
+function isMeasuredBox(value: MeasuredBox | undefined): value is MeasuredBox { return value !== undefined; }
+function overlap(left: MeasuredBox, right: MeasuredBox): boolean { return left.x < right.x + right.width && left.x + left.width > right.x && left.y < right.y + right.height && left.y + left.height > right.y; }
+function decodeXml(value: string): string { return value.replaceAll("&lt;", "<").replaceAll("&gt;", ">").replaceAll("&quot;", '"').replaceAll("&apos;", "'").replaceAll("&amp;", "&"); }
+
 function contrast(left: string, right: string): number { const [dark, light] = [luminance(left), luminance(right)].sort((a, b) => a - b); return (light! + 0.05) / (dark! + 0.05); }
 function luminance(color: string): number { const channels = [1, 3, 5].map((offset) => Number.parseInt(color.slice(offset, offset + 2), 16) / 255).map((channel) => channel <= 0.04045 ? channel / 12.92 : ((channel + 0.055) / 1.055) ** 2.4); return 0.2126 * channels[0]! + 0.7152 * channels[1]! + 0.0722 * channels[2]!; }
-function escapeXml(value: string): string { return value.replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;").replaceAll('"', "&quot;").replaceAll("'", "&apos;"); }
 function artifactSemanticBytes(artifact: VisualEvidenceFigureArtifact): Omit<VisualEvidenceFigureArtifact, "approvalStatus"> { const { approvalStatus: _approval, ...semantic } = artifact; return semantic; }
 function add(findings: AuditFinding[], code: string, message: string, detail: Omit<AuditFinding, "code" | "message"> = {}): void { findings.push({ code, message, ...detail }); }
 function sha256(value: string): string { return createHash("sha256").update(value, "utf8").digest("hex"); }
+function sha256Bytes(value: Uint8Array): string { return createHash("sha256").update(value).digest("hex"); }
 function sortedUnique(values: readonly string[]): string[] { return [...new Set(values)].sort(); }
 function sameStrings(left: readonly string[], right: readonly string[]): boolean { return left.length === right.length && left.every((value, index) => value === right[index]); }
 function isString(value: string | undefined): value is string { return typeof value === "string" && value.length > 0; }

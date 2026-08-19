@@ -418,7 +418,7 @@ function validBundleParts(): Pick<
       caveats: [],
     }],
     figures: [{
-      schemaVersion: "semantic-figure-spec/v1",
+      schemaVersion: "semantic-figure-spec/v1.1",
       figureId: "FIG-INSTITUTION-TREND",
       requirementIds: ["REQ-INSTITUTION-METRIC"],
       evidenceIds: ["EVIDENCE-INSTITUTION-METRIC"],
@@ -433,7 +433,7 @@ function validBundleParts(): Pick<
       targetSurface: "A4_DOCX",
       referenceFamily: "comparison_chart",
       rendererVersion: "1.0.0",
-      rendererFingerprint: { renderer: { name: "@longtable/kpp-renderers", version: "1.0.0" }, tokenProfile: { id: "R08-approved-project-profile", sha256: "c6d87996c7ad2dfcce67b6d45373f30ff7026e33ba6fd05a22b1944cfa6f7afa" }, fontProfile: { id: "Noto-Sans-CJK-KR-2.004", sha256: "0d0f75a19d1f9993378f58314cdbd7b3926ed6780fd6be2b031a0c67ddf9cd48" }, rasterizer: { name: "LibreOffice", executablePath: "/test/soffice", executableSha256: "3333333333333333333333333333333333333333333333333333333333333333", version: "LibreOffice 26.2.4.2 20(Build:2)" } },
+      rendererFingerprint: { renderer: { name: "@longtable/kpp-renderers", version: "1.0.0" }, tokenProfile: { id: "R08-approved-project-profile", sha256: "c6d87996c7ad2dfcce67b6d45373f30ff7026e33ba6fd05a22b1944cfa6f7afa" }, fontProfile: { id: "Noto-Sans-CJK-KR-2.004", sha256: "0d0f75a19d1f9993378f58314cdbd7b3926ed6780fd6be2b031a0c67ddf9cd48", files: [{ path: "/test/font.otf", sha256: "5555555555555555555555555555555555555555555555555555555555555555" }] }, rasterizer: { name: "LibreOffice", executablePath: "/test/soffice", executableSha256: "3333333333333333333333333333333333333333333333333333333333333333", version: "LibreOffice 26.2.4.2 20(Build:2)", bundlePath: "/test/libreoffice", bundleResources: [{ path: "/test/resource.dat", sha256: "4444444444444444444444444444444444444444444444444444444444444444" }] }, environment: { locale: "ko-KR", operatingSystem: "test-os", architecture: "test-arch", runtime: { name: "node", version: "test-node" } } },
       approvalStatus: "reviewed",
     }],
   };

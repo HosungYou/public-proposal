@@ -28,11 +28,12 @@ For conceptual or research frameworks, first classify the figure and lock its re
 
 ## Visual Evidence Compiler vNext
 
-- Compile the six beta relationships—time trend, comparison, composition, requirement matrix, process, and research framework—from `SemanticFigureSpecV1`, declared datasets, and approved governed references.
-- A governed reference records storage class, rights status, source SHA-256, page locator, transfer boundary, reference family, and explicit approval. Private source pages remain project-private; only extracted patterns or synthetic canonical fixtures may be reusable.
+- Keep `semantic-figure-spec/v1` unchanged for existing research bundles. Compile the six beta relationships—time trend, comparison, composition, requirement matrix, process, and research framework—from `semantic-figure-spec/v1.1`, declared datasets, and approved governed references; legacy v1 input requires an explicit compatibility adapter.
+- A governed reference records storage class, rights status, source SHA-256, page locator, transfer boundary, reference family, explicit approval, release status, lineage class, and human promotion. A public canonical fixture must be synthetic, public-lineage, publicly releasable, and licensed or public domain. A private source cannot be declared public; only a bounded extracted pattern with explicit human promotion may cross that boundary.
 - The canonical IR owns final Korean labels, values, scale, nodes, edges, captions, data IDs, source IDs, and claim IDs. Candidate generation may explore two or three distinct reading strategies, but generated pixels never supply final facts or text.
-- The same semantic input, data, approved references, and renderer version must produce identical SVG bytes and hashes. Locked rasterization may derive PNG for DOCX placement, and its bytes must remain linked to the canonical SVG hash.
-- Every plotted point, cell, node, and edge must retain raw locator, source hash, data ID, and claim IDs. Never accept a visual-only provenance statement.
+- The same semantic input, data, approved references, and renderer environment must produce identical SVG bytes and hashes. The fingerprint includes renderer/token versions, soffice executable bytes, the complete LibreOffice bundle resource inventory, actual font-file bytes, locale, operating system, architecture, and runtime. Locked rasterization may derive PNG only after the actual environment exactly matches the pin.
+- Every plotted point, cell, node, and edge must retain raw locator, source hash, data ID, claim IDs, and evidence IDs. Never accept a visual-only provenance statement.
+- Independent page QA requires actual final-render bytes, hash, canonical render path, and page locator. For measurable SVG page renders it reads figure/image bindings, text and mark geometry, bounding boxes, collisions, and clipping directly from the render; a caller-authored layout status or fictitious page context is not evidence.
 - Compiler output is `not_authorized` to self-approve. Independent audit and human approval are separate gates.
 
 ## Final-use gates

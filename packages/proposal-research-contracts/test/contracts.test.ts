@@ -8,6 +8,29 @@ import {
 } from "../src/index.js";
 
 describe("proposal research contracts", () => {
+  it("parses an unchanged legacy semantic-figure-spec/v1 bundle", () => {
+    const legacy = validBundle({
+      figures: [{
+        schemaVersion: "semantic-figure-spec/v1",
+        figureId: "figure-1",
+        requirementIds: [],
+        analyticalQuestion: "무엇을 비교하는가?",
+        readerTask: "추세를 확인한다.",
+        supportedTakeaway: "연도별 추세를 확인할 수 있다.",
+        dataIds: ["dataset-1"],
+        relationship: "trend",
+        minimumDataConditions: {},
+        uncertainty: [],
+        sourceCaption: { text: "출처: 기관 자료", sourceIds: ["source-1"] },
+        targetSurface: "A4_DOCX",
+        referenceFamily: "line",
+        rendererVersion: "1.0.0",
+        approvalStatus: "candidate",
+      }],
+    });
+    expect(EvidenceDataBundleV1Schema.safeParse(legacy).success).toBe(true);
+  });
+
   it("accepts a request with explicit institution, field, source, and artifact boundaries", () => {
     const result = ProposalResearchRequestV1Schema.safeParse({
       schemaVersion: "proposal-research-request/v1",
@@ -125,7 +148,7 @@ function validBundle(overrides: Record<string, unknown> = {}) {
     datasets: [{ datasetId: "dataset-1", name: "연도별 건수", sourceIds: ["source-1"], fieldIds: ["field-1"], records: [] }],
     transformations: [{ transformationId: "transform-1", inputDatasetIds: ["dataset-1"], outputDatasetId: "dataset-1", rawLocator: "source-1:table-1", normalizationSteps: ["identity"], derivedFormula: null, outputCellOrRow: "row-1", claimIds: ["claim-1"], figureIds: ["figure-1"] }],
     claims: [{ claimId: "claim-1", text: "기관의 건수는 확인된다.", requirementIds: [], sourceIds: ["source-1"], dataIds: ["dataset-1"], status: "candidate", caveats: [] }],
-    figures: [{ schemaVersion: "semantic-figure-spec/v1", figureId: "figure-1", requirementIds: [], evidenceIds: ["evidence-1"], analyticalQuestion: "무엇을 비교하는가?", readerTask: "추세를 확인한다.", supportedTakeaway: "연도별 추세를 확인할 수 있다.", dataIds: ["dataset-1"], relationship: "trend", minimumDataConditions: {}, uncertainty: [], sourceCaption: { text: "출처: 기관 자료", sourceIds: ["source-1"] }, targetSurface: "A4_DOCX", referenceFamily: "line", rendererVersion: "1.0.0", rendererFingerprint: { renderer: { name: "@longtable/kpp-renderers", version: "1.0.0" }, tokenProfile: { id: "R08-approved-project-profile", sha256: "c6d87996c7ad2dfcce67b6d45373f30ff7026e33ba6fd05a22b1944cfa6f7afa" }, fontProfile: { id: "Noto-Sans-CJK-KR-2.004", sha256: "0d0f75a19d1f9993378f58314cdbd7b3926ed6780fd6be2b031a0c67ddf9cd48" }, rasterizer: { name: "LibreOffice", executablePath: "/test/soffice", executableSha256: "3333333333333333333333333333333333333333333333333333333333333333", version: "LibreOffice 26.2.4.2 20(Build:2)" } }, approvalStatus: "candidate" }],
+    figures: [{ schemaVersion: "semantic-figure-spec/v1.1", figureId: "figure-1", requirementIds: [], evidenceIds: ["evidence-1"], analyticalQuestion: "무엇을 비교하는가?", readerTask: "추세를 확인한다.", supportedTakeaway: "연도별 추세를 확인할 수 있다.", dataIds: ["dataset-1"], relationship: "trend", minimumDataConditions: {}, uncertainty: [], sourceCaption: { text: "출처: 기관 자료", sourceIds: ["source-1"] }, targetSurface: "A4_DOCX", referenceFamily: "line", rendererVersion: "1.0.0", rendererFingerprint: { renderer: { name: "@longtable/kpp-renderers", version: "1.0.0" }, tokenProfile: { id: "R08-approved-project-profile", sha256: "c6d87996c7ad2dfcce67b6d45373f30ff7026e33ba6fd05a22b1944cfa6f7afa" }, fontProfile: { id: "Noto-Sans-CJK-KR-2.004", sha256: "0d0f75a19d1f9993378f58314cdbd7b3926ed6780fd6be2b031a0c67ddf9cd48", files: [{ path: "/test/font.otf", sha256: "5555555555555555555555555555555555555555555555555555555555555555" }] }, rasterizer: { name: "LibreOffice", executablePath: "/test/soffice", executableSha256: "3333333333333333333333333333333333333333333333333333333333333333", version: "LibreOffice 26.2.4.2 20(Build:2)", bundlePath: "/test/libreoffice", bundleResources: [{ path: "/test/resource.dat", sha256: "4444444444444444444444444444444444444444444444444444444444444444" }] }, environment: { locale: "ko-KR", operatingSystem: "test-os", architecture: "test-arch", runtime: { name: "node", version: "test-node" } } }, approvalStatus: "candidate" }],
     gaps: [],
     status: "complete",
     ...overrides,
