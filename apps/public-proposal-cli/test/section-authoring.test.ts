@@ -5,21 +5,22 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
 import { afterEach, describe, expect, it } from "vitest";
-import { sha256File, verifyReceipt, writeReceipt } from "@longtable/kpp-core";
-import type { SectionPlanItemV1 } from "@longtable/kpp-schemas";
 import {
   approveRepresentativeSections,
   authorFullDocument,
-  buildAgentPacket,
   createTestAgentExecutionIntegrityAdapter,
   createSectionPlan,
   adjudicate,
-  mergeApprovedPatch,
   recordAgentRun,
   recordAutomaticSectionRevision,
   recordFindingRebuttal,
   recordReviewerFinding,
-} from "../src/section-authoring.js";
+  sha256File,
+  verifyReceipt,
+  writeReceipt,
+} from "@longtable/kpp-core";
+import type { SectionPlanItemV1 } from "@longtable/kpp-schemas";
+import { buildAgentPacket, mergeApprovedPatch } from "../src/section-authoring.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -149,8 +150,11 @@ describe("section-centered authoring", () => {
     await approveRepresentativeSections(root, approvals);
 
     const anchorPath = join(root, "receipts", "agent-execution-integrity.json");
+    const anchor = await verifyReceipt(anchorPath);
     const receipt = await verifyReceipt(join(root, "receipts", "representative-review.json"));
+    expect(anchor.receipt.toolVersion).toBe("kpp-agent-execution/v1");
     expect(receipt.valid).toBe(true);
+    expect(receipt.receipt.toolVersion).toBe("kpp-agent-execution/v1");
     expect(receipt.receipt.inputReceiptHashes).toEqual(expect.arrayContaining([await sha256File(designReceiptPath), await sha256File(anchorPath)]));
     expect(receipt.receipt.inputs).toContainEqual({ name: "agent-execution-integrity", path: anchorPath, sha256: await sha256File(anchorPath) });
   });
@@ -453,7 +457,7 @@ async function persistAdjudicationEvidence(
 type ChildMutation = "recordAgentRun" | "recordFindingRebuttal" | "recordAutomaticSectionRevision";
 
 async function runMutationInChild(method: ChildMutation, root: string, input: Record<string, unknown>): Promise<string> {
-  const moduleUrl = new URL("../src/section-authoring.ts", import.meta.url).href;
+  const moduleUrl = new URL("../../../packages/core/src/section-authoring.ts", import.meta.url).href;
   const program = [
     `import { ${method} } from ${JSON.stringify(moduleUrl)};`,
     "try {",

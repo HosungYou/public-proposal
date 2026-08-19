@@ -182,9 +182,13 @@ describe("kpp CLI", () => {
   });
 
   it("does not pass worker protocol when only the version environment value is set", async () => {
+    const isolatedHome = await mkdtemp(join(tmpdir(), "kpp-doctor-home-"));
+    temporaryDirectories.push(isolatedHome);
     const result = await runProcess(process.execPath, ["apps/kpp-cli/dist/main.js", "doctor", "--json"], {
+      HOME: isolatedHome,
       KPP_WORKER_PATH: undefined,
       KPP_WORKER_PROTOCOL_VERSION: "1.0.0",
+      PUBLIC_PROPOSAL_INSTALLATION_MANIFEST: undefined,
     });
 
     expect(result).toMatchObject({ code: 0, stderr: "" });
