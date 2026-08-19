@@ -26,6 +26,15 @@ For conceptual or research frameworks, first classify the figure and lock its re
 - Do not use ImageGen for charts, Gantt, RACI, evidence matrices, tables, or simple structured flows. Use it only for topology exploration permitted by `academic-framework-grammar.md`, then rebuild deterministically.
 - When editing DOCX prose, never assign text to a run that contains `w:drawing`, `w:pict`, `w:object`, or equation XML. Preserve the non-text children and verify drawing counts before and after mutation.
 
+## Visual Evidence Compiler vNext
+
+- Compile the six beta relationships—time trend, comparison, composition, requirement matrix, process, and research framework—from `SemanticFigureSpecV1`, declared datasets, and approved governed references.
+- A governed reference records storage class, rights status, source SHA-256, page locator, transfer boundary, reference family, and explicit approval. Private source pages remain project-private; only extracted patterns or synthetic canonical fixtures may be reusable.
+- The canonical IR owns final Korean labels, values, scale, nodes, edges, captions, data IDs, source IDs, and claim IDs. Candidate generation may explore two or three distinct reading strategies, but generated pixels never supply final facts or text.
+- The same semantic input, data, approved references, and renderer version must produce identical SVG bytes and hashes. Locked rasterization may derive PNG for DOCX placement, and its bytes must remain linked to the canonical SVG hash.
+- Every plotted point, cell, node, and edge must retain raw locator, source hash, data ID, and claim IDs. Never accept a visual-only provenance statement.
+- Compiler output is `not_authorized` to self-approve. Independent audit and human approval are separate gates.
+
 ## Final-use gates
 
 1. Every label and number matches the locked input.
@@ -37,5 +46,9 @@ For conceptual or research frameworks, first classify the figure and lock its re
 7. A human compares the render with the input and approves it.
 8. Caption count, drawing-object count, figure-ledger count, and visible rendered-figure count agree.
 9. No orphan image relationship, orphan media file, or zero-size drawing remains.
+10. Time-trend lines have at least eight temporal observations; otherwise use an honest fallback form.
+11. Units, denominators, scale, caption sources, and section callout agree with the bound datasets.
+12. Automated QA checks collision, clipping, contrast, grayscale, A4 footprint, repeated geometry, and hash-linked lineage.
+13. `human_approved` requires two independent reviewers to approve meaning, trustworthiness, document fit, and send-ready usability in final A4 page context.
 
 If any gate fails, do not place the figure in the proposal. Simplify or reconstruct it.

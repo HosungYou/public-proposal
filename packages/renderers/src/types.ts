@@ -18,6 +18,182 @@ export const R08_TOKEN_PROFILE_SHA256 = createHash("sha256")
   .update(stableCanonicalJson(R08_RENDERER_TOKENS))
   .digest("hex");
 
+/** The version is part of every vNext visual artifact hash. */
+export const VISUAL_EVIDENCE_RENDERER_VERSION = "1.0.0" as const;
+
+export type FigureRelationship =
+  | "trend"
+  | "comparison"
+  | "composition"
+  | "matrix"
+  | "process"
+  | "framework";
+
+/** Structurally identical to the research bridge's SemanticFigureSpecV1. */
+export interface SemanticFigureSpecV1 {
+  readonly schemaVersion: "semantic-figure-spec/v1";
+  readonly figureId: string;
+  readonly requirementIds: readonly string[];
+  readonly analyticalQuestion: string;
+  readonly readerTask: string;
+  readonly supportedTakeaway: string;
+  readonly dataIds: readonly string[];
+  readonly relationship: FigureRelationship;
+  readonly minimumDataConditions: Readonly<Record<string, number | boolean | string>>;
+  readonly uncertainty: readonly string[];
+  readonly sourceCaption: {
+    readonly text: string;
+    readonly sourceIds: readonly string[];
+  };
+  readonly targetSurface: "A4_DOCX" | "A4_PDF";
+  readonly referenceFamily: string;
+  readonly rendererVersion: string;
+  readonly approvalStatus: "candidate" | "reviewed" | "human_approved";
+}
+
+export interface VisualEvidenceObservation {
+  readonly observationId: string;
+  readonly label: string;
+  readonly value?: number;
+  readonly period?: string;
+  readonly category?: string;
+  readonly row?: string;
+  readonly column?: string;
+  readonly nodeId?: string;
+  readonly layer?: string;
+  readonly from?: string;
+  readonly to?: string;
+  readonly sourceId: string;
+  readonly sourceSha256: string;
+  readonly rawLocator: string;
+  readonly claimIds: readonly string[];
+}
+
+export interface VisualEvidenceDataset {
+  readonly dataId: string;
+  readonly sourceIds: readonly string[];
+  readonly unit?: string;
+  readonly denominator?: string;
+  readonly observations: readonly VisualEvidenceObservation[];
+}
+
+export interface VisualEvidenceData {
+  readonly datasets: readonly VisualEvidenceDataset[];
+}
+
+export type FigureReferenceStorageClass =
+  | "private_source_reference"
+  | "extracted_visual_pattern"
+  | "public_canonical_fixture";
+
+export type FigureReferenceRightsStatus =
+  | "approved"
+  | "licensed"
+  | "public_domain"
+  | "project_private";
+
+export interface GovernedFigureReference {
+  readonly referenceId: string;
+  readonly referenceFamily: string;
+  readonly storageClass: FigureReferenceStorageClass;
+  readonly rightsStatus: FigureReferenceRightsStatus;
+  readonly sourceSha256: string;
+  readonly pageLocator: string;
+  readonly transferBoundary: string;
+  readonly approved: boolean;
+}
+
+export type VisualEvidenceIrFamily =
+  | "time-trend"
+  | "comparison"
+  | "composition"
+  | "requirement-matrix"
+  | "process"
+  | "research-framework";
+
+export interface CanonicalFigureMark {
+  readonly id: string;
+  readonly label: string;
+  readonly value?: number;
+  readonly period?: string;
+  readonly category?: string;
+  readonly row?: string;
+  readonly column?: string;
+  readonly nodeId?: string;
+  readonly layer?: string;
+  readonly from?: string;
+  readonly to?: string;
+  readonly dataId: string;
+  readonly sourceId: string;
+  readonly sourceSha256: string;
+  readonly rawLocator: string;
+  readonly claimIds: readonly string[];
+}
+
+export interface CanonicalFigureIR {
+  readonly schemaVersion: "visual-evidence-ir/v1";
+  readonly figureId: string;
+  readonly family: VisualEvidenceIrFamily;
+  readonly analyticalQuestion: string;
+  readonly readerTask: string;
+  readonly supportedTakeaway: string;
+  readonly sourceCaption: string;
+  readonly uncertainty: readonly string[];
+  readonly unit?: string;
+  readonly denominator?: string;
+  readonly marks: readonly CanonicalFigureMark[];
+}
+
+export interface FigurePointLineage {
+  readonly dataId: string;
+  readonly observationId: string;
+  readonly sourceId: string;
+  readonly sourceSha256: string;
+  readonly rawLocator: string;
+  readonly claimIds: readonly string[];
+}
+
+export interface VisualEvidenceFigureArtifact {
+  readonly schemaVersion: "visual-evidence-artifact/v1";
+  readonly figureId: string;
+  readonly format: "svg";
+  readonly svg: string;
+  readonly sha256: string;
+  readonly rendererVersion: string;
+  readonly approvalStatus: SemanticFigureSpecV1["approvalStatus"];
+  readonly compilerApproval: "not_authorized";
+  readonly ir: CanonicalFigureIR;
+  readonly pointLineage: readonly FigurePointLineage[];
+  readonly lineage: {
+    readonly dataIds: readonly string[];
+    readonly sourceIds: readonly string[];
+    readonly claimIds: readonly string[];
+    readonly referenceIds: readonly string[];
+  };
+  readonly hashes: {
+    readonly specSha256: string;
+    readonly dataSha256: string;
+    readonly referencesSha256: string;
+    readonly irSha256: string;
+    readonly outputSha256: string;
+  };
+}
+
+export interface VisualEvidencePngArtifact {
+  readonly schemaVersion: "visual-evidence-png-artifact/v1";
+  readonly figureId: string;
+  readonly format: "png";
+  readonly png: Buffer;
+  readonly sha256: string;
+  readonly sourceSvgSha256: string;
+  readonly rendererVersion: string;
+  readonly rasterizer: {
+    readonly path: string;
+    readonly version: string;
+  };
+  readonly lineage: VisualEvidenceFigureArtifact["lineage"];
+}
+
 interface BaseFigureSpec {
   readonly figureId: string;
   readonly title: string;

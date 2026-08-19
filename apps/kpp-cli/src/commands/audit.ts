@@ -9,7 +9,12 @@ import {
   verifyProjectState,
   writeReceipt,
 } from "@longtable/kpp-core";
-import { auditProposal, type FigureAuditInput, type ProposalAuditReport } from "@longtable/kpp-audits";
+import {
+  auditProposal,
+  type FigureAuditInput,
+  type FigureSemanticAuditInput,
+  type ProposalAuditReport,
+} from "@longtable/kpp-audits";
 import { success, type CliEnvelope } from "../output.js";
 
 export interface AuditProjectOptions {
@@ -17,6 +22,8 @@ export interface AuditProjectOptions {
   readonly buildManifestPath: string;
   readonly renderManifestPath: string;
   readonly figures: readonly FigureAuditInput[];
+  /** Programmatic vNext inputs; CLI file transport remains a separate integration concern. */
+  readonly semanticFigures?: readonly FigureSemanticAuditInput[];
   readonly trustedPdftotextPath?: string;
 }
 
@@ -83,6 +90,7 @@ export async function auditProject(rootInput: string, options: AuditProjectOptio
         svgPath: await regularFile(root, figure.svgPath, "KPP_AUDIT_FIGURE_INVALID"),
         manifestPath: await regularFile(root, figure.manifestPath, "KPP_AUDIT_FIGURE_INVALID"),
       }))),
+      semanticFigures: options.semanticFigures,
       outputPath: auditPath,
     });
     if (report.status !== "PASS") {

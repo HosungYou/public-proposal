@@ -157,15 +157,92 @@ export const TopologyStudyRequestSchema = z.object({
   topologyOnly: z.literal(true),
 });
 
+/** Additive vNext schema; legacy SemanticFigureSpecSchema remains unchanged. */
+export const EvidenceFigureRelationshipSchema = z.enum([
+  "trend",
+  "comparison",
+  "composition",
+  "matrix",
+  "process",
+  "framework",
+]);
+
+export const SourceCaptionV1Schema = z.object({
+  text: IdentifierSchema,
+  sourceIds: z.array(IdentifierSchema).min(1),
+}).strict();
+
+export const SemanticFigureSpecV1Schema = z.object({
+  schemaVersion: z.literal("semantic-figure-spec/v1"),
+  figureId: IdentifierSchema,
+  requirementIds: z.array(IdentifierSchema),
+  analyticalQuestion: IdentifierSchema,
+  readerTask: IdentifierSchema,
+  supportedTakeaway: IdentifierSchema,
+  dataIds: z.array(IdentifierSchema).min(1),
+  relationship: EvidenceFigureRelationshipSchema,
+  minimumDataConditions: z.record(z.string().trim().min(1), z.union([z.number().finite(), z.boolean(), IdentifierSchema])),
+  uncertainty: z.array(IdentifierSchema),
+  sourceCaption: SourceCaptionV1Schema,
+  targetSurface: z.enum(["A4_DOCX", "A4_PDF"]),
+  referenceFamily: IdentifierSchema,
+  rendererVersion: IdentifierSchema,
+  approvalStatus: z.enum(["candidate", "reviewed", "human_approved"]),
+}).strict().superRefine((spec, context) => {
+  const allowedFamilies = VNEXT_REFERENCE_FAMILIES[spec.relationship];
+  if (!allowedFamilies.includes(spec.referenceFamily)) {
+    context.addIssue({
+      code: "custom",
+      message: "semantic relationship and reference family must agree",
+      path: ["referenceFamily"],
+    });
+  }
+  if (spec.rendererVersion !== "1.0.0") {
+    context.addIssue({
+      code: "custom",
+      message: "semantic figure renderer version does not match the vNext compiler",
+      path: ["rendererVersion"],
+    });
+  }
+});
+
+export const GovernedFigureReferenceSchema = z.object({
+  referenceId: IdentifierSchema,
+  referenceFamily: IdentifierSchema,
+  storageClass: z.enum([
+    "private_source_reference",
+    "extracted_visual_pattern",
+    "public_canonical_fixture",
+  ]),
+  rightsStatus: z.enum(["approved", "licensed", "public_domain", "project_private"]),
+  sourceSha256: Sha256Schema,
+  pageLocator: IdentifierSchema,
+  transferBoundary: IdentifierSchema,
+  approved: z.boolean(),
+}).strict();
+
+export const HumanFigureReviewSchema = z.object({
+  reviewerId: IdentifierSchema,
+  renderedInA4Context: z.boolean(),
+  meaning: z.boolean(),
+  trustworthiness: z.boolean(),
+  documentFit: z.boolean(),
+  sendReady: z.boolean(),
+}).strict();
+
 export type DeterministicFigureRenderer = z.infer<typeof DeterministicFigureRendererSchema>;
 export type FigureDataShape = z.infer<typeof FigureDataShapeSchema>;
 export type FigureIntent = z.infer<typeof FigureIntentSchema>;
+export type EvidenceFigureRelationship = z.infer<typeof EvidenceFigureRelationshipSchema>;
+export type GovernedFigureReference = z.infer<typeof GovernedFigureReferenceSchema>;
+export type HumanFigureReview = z.infer<typeof HumanFigureReviewSchema>;
 export type LockedResearchLogic = z.infer<typeof LockedResearchLogicSchema>;
 export type RequestedFigureFamily = z.infer<typeof RequestedFigureFamilySchema>;
 export type RequirementFigureSpec = z.infer<typeof RequirementFigureSpecSchema>;
 export type SemanticFigureFamily = z.infer<typeof SemanticFigureFamilySchema>;
 export type SemanticFigureRequest = z.infer<typeof SemanticFigureRequestSchema>;
 export type SemanticFigureSpec = z.infer<typeof SemanticFigureSpecSchema>;
+export type SemanticFigureSpecV1 = z.infer<typeof SemanticFigureSpecV1Schema>;
 export type TopologyStudyRequest = z.infer<typeof TopologyStudyRequestSchema>;
 export type VisualReferencePage = z.infer<typeof VisualReferencePageSchema>;
 export type VisualReferenceClassification = z.infer<typeof VisualReferenceClassificationSchema>;
@@ -228,4 +305,13 @@ const RENDERER_BY_FAMILY: Readonly<Record<z.infer<typeof SemanticFigureFamilySch
   evidence_chain: "svg-evidence-chain",
   framework: "svg-academic-framework",
   flow: "svg-flow",
+};
+
+const VNEXT_REFERENCE_FAMILIES: Readonly<Record<z.infer<typeof EvidenceFigureRelationshipSchema>, readonly string[]>> = {
+  trend: ["line", "time_trend", "time-trend", "gantt"],
+  comparison: ["comparison", "comparison_chart", "bar"],
+  composition: ["composition", "stacked_bar"],
+  matrix: ["matrix", "requirement_matrix", "raci"],
+  process: ["process", "flow", "evidence_chain"],
+  framework: ["framework", "research_framework"],
 };

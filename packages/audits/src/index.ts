@@ -36,6 +36,13 @@ export {
   type ReleaseArtifactBindings,
 } from "./release.js";
 export {
+  auditFigureSemantics,
+  type FigureAuditReport,
+  type FigureRenderContext,
+  type FigureSemanticAuditInput,
+  type HumanFigureReview,
+} from "./visual-evidence.js";
+export {
   type AuditArtifact,
   type AuditFinding,
   type AuditSlice,
@@ -48,6 +55,7 @@ import { auditFigureArtifacts, auditFigureDocumentBindings, type FigureAuditInpu
 import { auditReleaseReadiness, type ReleaseArtifactBindings } from "./release.js";
 import { blocked, combineSlices, inspectArtifact, makeSlice, readJsonObject, writeStableJson, type AuditArtifact, type AuditFinding, type AuditStatus } from "./source.js";
 import { auditRenderArtifacts } from "./surface-lineage.js";
+import { auditFigureSemantics, type FigureSemanticAuditInput } from "./visual-evidence.js";
 
 export interface ProposalAuditInput {
   readonly root: string;
@@ -55,6 +63,7 @@ export interface ProposalAuditInput {
   readonly renderManifestPath: string;
   readonly trustedPdftotextPath?: string;
   readonly figures: readonly FigureAuditInput[];
+  readonly semanticFigures?: readonly FigureSemanticAuditInput[];
   readonly outputPath: string;
 }
 
@@ -74,6 +83,10 @@ export async function auditProposal(input: ProposalAuditInput): Promise<Proposal
     auditFigureArtifacts(input.figures),
     auditReleaseReadiness(resolve(input.root), receiptBindings),
     auditCrossSurfaceLineage(input.docx.docxPath, input.renderManifestPath),
+    ...(input.semanticFigures ?? []).map((figure) => {
+      const report = auditFigureSemantics(figure);
+      return makeSlice(report.findings, []);
+    }),
   ];
   slices.push(auditFigureDocumentBindings({
     figures: input.figures,

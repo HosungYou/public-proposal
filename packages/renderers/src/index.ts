@@ -10,6 +10,7 @@ import {
   type FigureSpec,
 } from "./types.js";
 
+/** Legacy Gantt/RACI/framework renderer manifest version. */
 export const FIGURE_RENDERER_VERSION = "0.1.0" as const;
 
 export interface FigureManifest {
@@ -46,6 +47,8 @@ export interface FigureArtifact {
 }
 
 export * from "./types.js";
+export * from "./figure-specs.js";
+export { compileFigure, compileFigurePng } from "./visual-evidence-compiler.js";
 export { renderFramework } from "./framework.js";
 export { renderGantt } from "./gantt.js";
 export { renderRaci } from "./raci.js";
