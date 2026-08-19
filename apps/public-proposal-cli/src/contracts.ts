@@ -1,7 +1,7 @@
 import { z } from "zod";
 
 export const INSTALL_MANIFEST_SCHEMA_VERSION = "1.0.0";
-export const SUPPORTED_KPP_VERSION = "0.2.1";
+export const SUPPORTED_KPP_VERSION = "0.2.2";
 export const SUPPORTED_LONGTABLE_VERSION = "0.1.72";
 export const WORKER_PROTOCOL_VERSION = "1.0.0";
 const sha256Schema = z.string().regex(/^sha256:[a-f0-9]{64}$/u);

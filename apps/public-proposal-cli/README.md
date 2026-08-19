@@ -26,19 +26,22 @@ npm run verify:public-proposal
 
 The verifier installs the complete local workspace tarball set in an isolated fixture and checks the separate `public-proposal@public-proposal` and `longtable@longtable` registrations. A local tarball or `npx --package <tarball>` run is not evidence of npm registry identity.
 
-## Future vNext registry command
+## Published vNext beta (`0.2.0-beta.0`)
 
-Future vNext registry command, only after a new version is published and its exact `dist.integrity` is verified:
+The vNext beta is published under the `beta` dist-tag. Pin the exact version while blinded effectiveness evaluation remains open:
 
 ```bash
-npx --yes @longtable/public-proposal@<vnext-version> setup --provider codex
+npx --yes @longtable/public-proposal@0.2.0-beta.0 setup --provider codex
+npx --yes @longtable/public-proposal@0.2.0-beta.0 doctor --json
+npx --yes @longtable/public-proposal@0.2.0-beta.0 update
+npx --yes @longtable/public-proposal@0.2.0-beta.0 uninstall
 ```
 
-`<vnext-version>` is intentionally not an invented or currently available version. Until publication and integrity verification pass, use the local verifier rather than a registry command.
+The beta is not promoted to `latest`; effectiveness remains gated on the versioned blinded evaluation. Confirm the exact registry `dist.integrity` with the bounded verifier before clean-machine use.
 
-## vNext-only adoption (unavailable until publication)
+## Adoption (vNext beta)
 
-Adoption is a vNext-only command and is unavailable from published 0.1.3 until vNext publication and integrity verification. Existing proposal work is adopted through KPP only after that gate:
+Adoption is available from the verified vNext beta KPP binary and remains unavailable from published 0.1.3. Existing proposal work is adopted through KPP:
 
 ```bash
 kpp adopt <legacy-project> --source <source-packet> --master <working-master> --json
@@ -50,8 +53,8 @@ This release coordinates the following exact contract:
 
 | Component | Version / protocol | Authority |
 | --- | --- | --- |
-| `@longtable/public-proposal` | `0.1.3` | Installer and installation receipt |
-| `@longtable/kpp-cli` | `0.2.1` | Proposal state, receipts, build, audit, approval, release |
+| `@longtable/public-proposal` | `0.2.0-beta.0` | Installer and installation receipt |
+| `@longtable/kpp-cli` | `0.2.2` | Proposal state, receipts, build, audit, approval, release |
 | `@longtable/cli` | `0.1.72` | Conditional LongTable research and evidence service |
 | managed DOCX worker | protocol `1.0.0` | Deterministic DOCX construction and OOXML checks |
 | bundled `korean-public-proposal` | plugin `0.1.0` snapshot | Korean public-document rules and visual/prose baseline |

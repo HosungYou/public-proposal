@@ -22,7 +22,7 @@ export const R08_TOKEN_PROFILE_SHA256 = createHash("sha256")
 export const VISUAL_EVIDENCE_RENDERER_VERSION = "1.0.0" as const;
 export const VISUAL_EVIDENCE_RENDERER_NAME = "@longtable/kpp-renderers" as const;
 export const KPP_FINAL_RENDERER_NAME = "@longtable/kpp-cli" as const;
-export const KPP_FINAL_RENDERER_VERSION = "0.2.1" as const;
+export const KPP_FINAL_RENDERER_VERSION = "0.2.2" as const;
 export const VISUAL_EVIDENCE_FONT_PROFILE = "Noto-Sans-CJK-KR-2.004" as const;
 export const VISUAL_EVIDENCE_FONT_PROFILE_SHA256 = createHash("sha256")
   .update(stableCanonicalJson({

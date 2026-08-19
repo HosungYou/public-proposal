@@ -28,7 +28,7 @@ describe("public proposal clean installation", () => {
         publicDoctor: { ok: true },
       },
       manifest: {
-        kppVersion: "0.2.1",
+        kppVersion: "0.2.2",
         longtableVersion: "0.1.72",
         workerProtocol: "1.0.0",
         registrationOwnership: {

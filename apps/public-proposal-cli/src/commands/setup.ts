@@ -44,7 +44,7 @@ export interface SetupDependencies {
 const PLAN = [
   "public-proposal plugin",
   "longtable plugin (external compatible registration reused, otherwise installer-owned)",
-  "@longtable/kpp-cli@0.2.1",
+  "@longtable/kpp-cli@0.2.2",
   "@longtable/cli@0.1.72",
   "managed worker protocol 1.0.0",
 ];

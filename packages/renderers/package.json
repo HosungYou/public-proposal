@@ -1,6 +1,6 @@
 {
   "name": "@longtable/kpp-renderers",
-  "version": "0.2.1",
+  "version": "0.2.2",
   "description": "Deterministic SVG figure renderers for Korean public proposals.",
   "repository": {
     "type": "git",

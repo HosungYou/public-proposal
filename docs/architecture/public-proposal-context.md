@@ -62,7 +62,7 @@ The current public package family is published under the `@longtable` scope. The
 
 All next-version package metadata must point to this GitHub repository. NPM publication is a separate release action and must follow tarball inspection, clean-install verification, scope authorization, and explicit publish approval.
 
-The current compatibility contract pins `@longtable/kpp-cli@0.2.1`, `@longtable/cli@0.1.72`, and worker protocol `1.0.0`; [the matrix](../installation/compatibility-matrix.json) records the installer and runtime bounds. NPM availability and clean-machine installation are separate release checks.
+The vNext beta compatibility contract pins `@longtable/kpp-cli@0.2.2`, `@longtable/cli@0.1.72`, and worker protocol `1.0.0`; [the matrix](../installation/compatibility-matrix.json) records the installer and runtime bounds. The beta is published under `beta`, not promoted to `latest` until effectiveness evidence passes.
 
 ## Context contract
 

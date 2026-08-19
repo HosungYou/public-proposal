@@ -26,19 +26,22 @@ npm run verify:public-proposal
 
 The verifier builds and installs the complete local workspace tarball set in an isolated fixture and checks the independent `public-proposal@public-proposal` and `longtable@longtable` registrations. A local `npm pack` or `npx --package <tarball>` run proves only local bytes; it does not prove npm visibility.
 
-## Future vNext registry command
+## Published vNext beta (`0.2.0-beta.0`)
 
-Only after a new vNext version has been published and the exact registry `dist.integrity` matches the verified local tarball may the future version-pinned command be used:
+The vNext beta is published under the `beta` dist-tag. Pin the exact version while the blinded effectiveness gate remains open:
 
 ```bash
-npx --yes @longtable/public-proposal@<vnext-version> setup --provider codex
+npx --yes @longtable/public-proposal@0.2.0-beta.0 setup --provider codex
+npx --yes @longtable/public-proposal@0.2.0-beta.0 doctor --json
+npx --yes @longtable/public-proposal@0.2.0-beta.0 update
+npx --yes @longtable/public-proposal@0.2.0-beta.0 uninstall
 ```
 
-`<vnext-version>` is a placeholder, not an invented release. Until that gate passes, this document does not provide a registry command for vNext.
+The exact registry `dist.integrity` must match the verified local tarball. The beta is not promoted to `latest` while `effectivenessValidated` remains false.
 
-## vNext-only adoption (unavailable until publication)
+## Adoption (vNext beta)
 
-Adoption is a vNext-only command and is unavailable from published 0.1.3 until vNext publication and integrity verification. Once that gate passes, use the KPP binary from the verified vNext installation:
+Adoption is available from the verified vNext beta KPP binary and remains unavailable from published 0.1.3. Use the KPP binary from the beta installation:
 
 ```bash
 kpp adopt <legacy-project> --source <source-packet> --master <working-master> --json

@@ -1,6 +1,6 @@
 {
   "name": "@longtable/kpp-cli",
-  "version": "0.2.1",
+  "version": "0.2.2",
   "description": "KPP CLI for evidence-bound Korean public proposal generation.",
   "repository": {
     "type": "git",
@@ -37,9 +37,9 @@
   },
   "dependencies": {
     "@longtable/proposal-research-contracts": "0.1.0",
-    "@longtable/kpp-audits": "0.2.1",
-    "@longtable/kpp-core": "0.2.1",
-    "@longtable/kpp-schemas": "0.2.1",
+    "@longtable/kpp-audits": "0.2.2",
+    "@longtable/kpp-core": "0.2.2",
+    "@longtable/kpp-schemas": "0.2.2",
     "commander": "15.0.0",
     "yaml": "2.9.0"
   }

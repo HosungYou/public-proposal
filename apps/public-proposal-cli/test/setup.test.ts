@@ -29,7 +29,7 @@ describe("public proposal setup", () => {
     expect(result.plan).toEqual(
       expect.arrayContaining([
         "public-proposal plugin",
-        "@longtable/kpp-cli@0.2.1",
+        "@longtable/kpp-cli@0.2.2",
         "@longtable/cli@0.1.72",
         "managed worker protocol 1.0.0",
       ]),
@@ -544,7 +544,7 @@ describe("public proposal setup", () => {
     fake.files["/home/ada/.config/public-proposal/installation.json"] = JSON.stringify({
       schemaVersion: "1.0.0",
       packageVersion: "0.1.0",
-      kppVersion: "0.2.1",
+      kppVersion: "0.2.2",
       longtableVersion: "0.1.72",
       pluginVersion: "0.1.0",
       workerProtocol: "1.0.0",
@@ -1043,7 +1043,7 @@ function task3Manifest(installRoot: string): Record<string, unknown> {
   return {
     schemaVersion: "1.0.0",
     packageVersion: "0.1.0",
-    kppVersion: "0.2.1",
+    kppVersion: "0.2.2",
     longtableVersion: "0.1.72",
     pluginVersion: "0.1.0",
     workerProtocol: "1.0.0",
@@ -1067,7 +1067,7 @@ function fakeManifest(input?: Partial<{
   return {
     schemaVersion: "1.0.0",
     packageVersion: "0.1.0",
-    kppVersion: "0.2.1",
+    kppVersion: "0.2.2",
     longtableVersion: "0.1.72",
     pluginVersion: "0.1.0",
     workerProtocol: "1.0.0",

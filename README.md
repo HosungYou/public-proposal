@@ -30,15 +30,18 @@ npm run verify:public-proposal
 
 It builds and installs the complete local workspace tarball set in an isolated fixture, then checks the independent `public-proposal@public-proposal` and `longtable@longtable` registrations. A local `npm pack` or `npx --package <tarball>` run proves only local bytes; it does not prove npm visibility or registry identity.
 
-### Future vNext registry command
+### Published vNext beta (`0.2.0-beta.0`)
 
-After a new vNext version has been published and its exact registry `dist.integrity` has been independently verified, the future version-pinned command will be:
+The vNext beta is published under the `beta` dist-tag. Pin the exact beta version while the blinded effectiveness gate remains open:
 
 ```bash
-npx --yes @longtable/public-proposal@<vnext-version> setup --provider codex
+npx --yes @longtable/public-proposal@0.2.0-beta.0 setup --provider codex
+npx --yes @longtable/public-proposal@0.2.0-beta.0 doctor --json
+npx --yes @longtable/public-proposal@0.2.0-beta.0 update
+npx --yes @longtable/public-proposal@0.2.0-beta.0 uninstall
 ```
 
-`<vnext-version>` is deliberately a placeholder, not a version available today. Until that gate passes, use the local verifier above rather than presenting a registry command as vNext.
+The beta is not a `latest` promotion: `effectivenessValidated` remains false until the versioned blinded Owner, Procurement, and Research/Editorial evaluation passes. Verify the exact registry `dist.integrity` with `npm run verify:public-proposal` before using the command on a clean machine.
 
 The vNext source keeps Public Proposal and LongTable as independent Codex registrations. Setup reuses a compatible external `longtable@longtable` registration or creates a separately receipted installer-owned LongTable marketplace; uninstall never removes an externally owned registration. Node `>=22 <27` and Python `>=3.11 <3.15` are compatibility requirements. The current setup and doctor commands verify that the required executables are available; they do not yet enforce those runtime version ranges.
 
@@ -94,9 +97,9 @@ See [the benchmark protocol](docs/BENCHMARKING.md) for fixed budgets, scorer fie
 
 `npm run verify:public-proposal` writes a local release report with four separate booleans: `localArtifactVerified`, `registryAvailable`, `effectivenessValidated`, and `releaseReady`. The default deterministic benchmark is machine-only, so `effectivenessValidated` and `releaseReady` remain false. A local tarball or `npx --package <tarball>` run does not prove that npm can resolve the same artifact; the verifier checks the exact version and `dist.integrity` separately with `npm view @longtable/public-proposal@<version>`. See [the vNext beta gate](docs/VNEXT-BETA.md).
 
-### Adopt an existing draft (vNext; unavailable until publication)
+### Adopt an existing draft (vNext beta)
 
-Adoption is a vNext-only command and is unavailable from published 0.1.3 until vNext publication and integrity verification. After that gate, use `adopt` when a legacy proposal directory has no KPP state:
+Adoption is available from the verified vNext beta KPP binary, not from published 0.1.3. Use `adopt` when a legacy proposal directory has no KPP state:
 
 ```bash
 kpp adopt <legacy-project> --source <rfp-or-source-packet> --master <working-master> --json

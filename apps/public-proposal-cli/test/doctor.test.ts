@@ -366,7 +366,7 @@ function fakeDoctorDependencies(input?: {
         return JSON.stringify({
           schemaVersion: "1.0.0",
           packageVersion: "0.1.0",
-          kppVersion: "0.2.1",
+          kppVersion: "0.2.2",
           longtableVersion: "0.1.72",
           pluginVersion: "0.1.0",
           workerProtocol: "1.0.0",
