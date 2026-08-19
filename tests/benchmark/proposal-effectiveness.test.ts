@@ -198,7 +198,7 @@ describe("proposal effectiveness benchmark", () => {
       .rejects.toThrow(/duplicate human judgment/u);
   });
 
-  it("reports the no-research promotion threshold as failed on any invocation", async () => {
+  it("rejects a run envelope with tampered no-research invocation evidence", async () => {
     const out = await temporaryOutput();
     await runBenchmark({ fixtureSet, out, seeds: [1] });
     const runPath = join(out, "run.json");
@@ -208,9 +208,82 @@ describe("proposal effectiveness benchmark", () => {
     ordinary.longTableInvocations = 1;
     await writeFile(runPath, `${JSON.stringify(run, null, 2)}\n`);
 
-    const report = await scoreBenchmark({ input: out, output: join(out, "report.json") });
-    expect(report.thresholds.noUnexpectedResearchInvocation).toMatchObject({ passed: false, actual: 1, maximum: 0 });
-    expect(report.effectivenessValidated).toBe(false);
+    await expect(scoreBenchmark({ input: out, output: join(out, "report.json") }))
+      .rejects.toThrow(/Raw benchmark binding mismatch/u);
+  });
+
+  it("rejects a run envelope with tampered wall-time evidence", async () => {
+    const out = await temporaryOutput();
+    await runBenchmark({ fixtureSet, out, seeds: [1] });
+    const runPath = join(out, "run.json");
+    const run = JSON.parse(await readFile(runPath, "utf8")) as { arms: Array<Record<string, unknown>> };
+    const candidate = run.arms.find((arm) => arm.arm === "C");
+    if (candidate === undefined) throw new Error("candidate arm missing");
+    candidate.wallTimeMilliseconds = 99_999_999;
+    await writeFile(runPath, `${JSON.stringify(run, null, 2)}\n`);
+
+    await expect(scoreBenchmark({ input: out, output: join(out, "report.json") }))
+      .rejects.toThrow(/Raw benchmark binding mismatch/u);
+  });
+
+  it("rejects a run envelope with tampered cost evidence", async () => {
+    const out = await temporaryOutput();
+    await runBenchmark({ fixtureSet, out, seeds: [1] });
+    const runPath = join(out, "run.json");
+    const run = JSON.parse(await readFile(runPath, "utf8")) as { arms: Array<Record<string, unknown>> };
+    const candidate = run.arms.find((arm) => arm.arm === "C");
+    if (candidate === undefined) throw new Error("candidate arm missing");
+    candidate.cost = { currency: "USD", amount: 999, status: "tampered" };
+    await writeFile(runPath, `${JSON.stringify(run, null, 2)}\n`);
+
+    await expect(scoreBenchmark({ input: out, output: join(out, "report.json") }))
+      .rejects.toThrow(/Raw benchmark binding mismatch/u);
+  });
+
+  it("rejects raw evidence whose exact recorded bytes were changed", async () => {
+    const out = await temporaryOutput();
+    const run = await runBenchmark({ fixtureSet, out, fixture: "general-procurement", seeds: [1] });
+    const target = run.arms.find((arm) => arm.arm === "C");
+    if (target === undefined) throw new Error("candidate arm missing");
+    const raw = JSON.parse(await readFile(target.rawOutputPath, "utf8")) as Record<string, unknown>;
+    raw.longTableInvocations = 1;
+    await writeFile(target.rawOutputPath, `${JSON.stringify(raw, null, 2)}\n`);
+
+    await expect(scoreBenchmark({ input: out, output: join(out, "report.json") }))
+      .rejects.toThrow(/Raw benchmark binding mismatch/u);
+  });
+
+  it("rejects a blinded human packet that reveals workflow metadata", async () => {
+    const out = await temporaryOutput();
+    const run = await runBenchmark({ fixtureSet, out, fixture: "research-service", seeds: [1] });
+    const roles = ["owner", "procurement", "research_editorial"] as const;
+    const judgments = run.arms.flatMap(({ outputId }) => roles.map((evaluatorRole) => ({
+      outputId,
+      evaluatorRole,
+      workflow: "vnext-conditional-longtable",
+      compositeScore: 80,
+      coreDimensions: {
+        requirementDirectness: 80,
+        evidenceConfidence: 80,
+        researchOperationsLogic: 80,
+      },
+      evaluatorUsefulness: 4,
+      koreanNaturalness: 4,
+      sendReady: true,
+      revisionBurdenMinutes: 40,
+    })));
+    const humanPath = join(out, "workflow-revealing-human.json");
+    await writeFile(humanPath, `${JSON.stringify({
+      protocolVersion: BENCHMARK_PROTOCOL_VERSION,
+      scorerVersion: SCORE_PROTOCOL_VERSION,
+      benchmarkRunId: run.runId,
+      blinded: true,
+      structuredReviewConfigured: true,
+      judgments,
+    }, null, 2)}\n`);
+
+    await expect(scoreBenchmark({ input: out, output: join(out, "report.json"), humanPacket: humanPath }))
+      .rejects.toThrow(/blinded human evaluation packet/u);
   });
 
   it("makes release verification treat machine-only benchmark evidence as incomplete", () => {

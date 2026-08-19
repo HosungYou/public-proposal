@@ -18,11 +18,16 @@ export interface BenchmarkArm {
   readonly harness: "deterministic-placeholder";
   readonly modelExecution: "not-run";
   readonly humanEvaluationRequired: true;
+  readonly rawOutputSha256: string;
   readonly longTableInvocations: number;
+  readonly researchInvocationExpected: number;
   readonly wallTimeMilliseconds: number;
   readonly tokenUsage: number;
   readonly toolCalls: number;
+  readonly duplicateArtifactCount: number;
+  readonly unusedResearchCount: number;
   readonly cost: { readonly currency: "USD"; readonly amount: number; readonly status: string };
+  readonly structuredReviewConfigured: boolean;
 }
 
 export interface BenchmarkRun {

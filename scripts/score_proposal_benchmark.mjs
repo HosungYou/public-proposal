@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 
+import { createHash } from "node:crypto";
 import { access, mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -8,6 +9,36 @@ import { BENCHMARK_PROTOCOL_VERSION } from "./run_proposal_benchmark.mjs";
 export const SCORE_PROTOCOL_VERSION = "1.0.0";
 const REQUIRED_EVALUATOR_ROLES = ["owner", "procurement", "research_editorial"];
 const REQUIRED_CORE_DIMENSIONS = ["evidenceConfidence", "requirementDirectness", "researchOperationsLogic"];
+const HUMAN_PACKET_KEYS = new Set(["protocolVersion", "scorerVersion", "benchmarkRunId", "blinded", "judgments"]);
+const HUMAN_JUDGMENT_KEYS = new Set([
+  "outputId",
+  "evaluatorRole",
+  "compositeScore",
+  "coreDimensions",
+  "evaluatorUsefulness",
+  "koreanNaturalness",
+  "sendReady",
+  "revisionBurdenMinutes",
+]);
+const RAW_BOUND_FIELDS = [
+  "outputId",
+  "arm",
+  "fixtureId",
+  "inputHash",
+  "seed",
+  "harness",
+  "workflow",
+  "structuredReviewConfigured",
+  "budgets",
+  "longTableInvocations",
+  "researchInvocationExpected",
+  "wallTimeMilliseconds",
+  "tokenUsage",
+  "toolCalls",
+  "duplicateArtifactCount",
+  "unusedResearchCount",
+  "cost",
+];
 
 export function scoreArm(output) {
   const requirements = output.requirementAnswers ?? [];
@@ -62,15 +93,14 @@ export async function scoreBenchmark({ input, output, humanPacket }) {
   }
   const scoredArms = [];
   for (const arm of run.arms) {
-    const raw = JSON.parse(await readFile(arm.rawOutputPath, "utf8"));
-    if (raw.outputId !== arm.outputId || raw.inputHash !== arm.inputHash) {
-      throw new Error(`Raw benchmark binding mismatch: ${arm.outputId}`);
-    }
-    scoredArms.push({ ...arm, machine: scoreArm(raw) });
+    const rawBytes = await readFile(arm.rawOutputPath);
+    const raw = JSON.parse(rawBytes.toString("utf8"));
+    const verifiedArm = verifyRawArmBinding(arm, raw, rawBytes);
+    scoredArms.push({ ...verifiedArm, machine: scoreArm(raw) });
   }
 
   const human = humanPacket === undefined ? null : await loadHumanPacket(humanPacket, run, scoredArms);
-  const thresholds = evaluateThresholds(run, scoredArms, human);
+  const thresholds = evaluateThresholds(scoredArms, human);
   const effectivenessValidated = human !== null && Object.values(thresholds).every(({ passed }) => passed === true);
   const humanScores = human === null ? [] : summarizeHumanScores(scoredArms, human.judgments);
   const report = {
@@ -103,7 +133,7 @@ export async function scoreBenchmark({ input, output, humanPacket }) {
   return report;
 }
 
-function evaluateThresholds(run, arms, human) {
+function evaluateThresholds(arms, human) {
   const generalInvocations = arms
     .filter(({ fixtureId }) => fixtureId === "general-procurement")
     .reduce((sum, arm) => sum + arm.longTableInvocations, 0);
@@ -115,7 +145,7 @@ function evaluateThresholds(run, arms, human) {
   const wrongInstitution = candidateArms.reduce((sum, arm) => sum + arm.machine.wrongInstitutionClaims, 0);
   const mandatoryTraceability = minimum(candidateArms.map((arm) => arm.machine.mandatoryClaimTraceability));
   const figureLineage = minimum(candidateArms.map((arm) => arm.machine.figureLineage));
-  const humanThresholds = human === null ? { improvement: null, coreRegression: null } : scoreHumanThresholds(run, human);
+  const humanThresholds = human === null ? { improvement: null, coreRegression: null } : scoreHumanThresholds(arms, human);
 
   return {
     compositeHumanImprovement: {
@@ -139,7 +169,9 @@ function evaluateThresholds(run, arms, human) {
 
 async function loadHumanPacket(path, run, arms) {
   const packet = JSON.parse(await readFile(resolve(path), "utf8"));
-  const validEnvelope = packet.protocolVersion === BENCHMARK_PROTOCOL_VERSION
+  const validEnvelope = isRecord(packet)
+    && hasOnlyKeys(packet, HUMAN_PACKET_KEYS)
+    && packet.protocolVersion === BENCHMARK_PROTOCOL_VERSION
     && packet.scorerVersion === SCORE_PROTOCOL_VERSION
     && packet.benchmarkRunId === run.runId
     && packet.blinded === true
@@ -150,8 +182,8 @@ async function loadHumanPacket(path, run, arms) {
   const outputIds = new Set(arms.map(({ outputId }) => outputId));
   const judgmentKeys = new Set();
   for (const judgment of packet.judgments) {
-    if ("arm" in judgment || "evaluatorIdentity" in judgment || !outputIds.has(judgment.outputId)) {
-      throw new Error("Expected a versioned blinded human evaluation packet without arm or evaluator identity.");
+    if (!isRecord(judgment) || !hasOnlyKeys(judgment, HUMAN_JUDGMENT_KEYS) || !outputIds.has(judgment.outputId)) {
+      throw new Error("Expected a versioned blinded human evaluation packet without arm, workflow, or evaluator identity metadata.");
     }
     if (!REQUIRED_EVALUATOR_ROLES.includes(judgment.evaluatorRole)
       || !bounded(judgment.compositeScore, 0, 100)
@@ -191,8 +223,8 @@ function summarizeHumanScores(arms, judgments) {
   });
 }
 
-function scoreHumanThresholds(run, packet) {
-  const armByOutput = new Map(run.arms.map(({ outputId, arm }) => [outputId, arm]));
+function scoreHumanThresholds(arms, packet) {
+  const armByOutput = new Map(arms.map(({ outputId, arm }) => [outputId, arm]));
   const baseline = packet.judgments.filter(({ outputId }) => armByOutput.get(outputId) === "A");
   const candidate = packet.judgments.filter(({ outputId }) => armByOutput.get(outputId) === "C");
   const baselineComposite = average(baseline.map(({ compositeScore }) => compositeScore));
@@ -208,6 +240,38 @@ function isCoreDimensions(value) {
   if (value === null || typeof value !== "object" || Array.isArray(value) || Object.keys(value).length === 0) return false;
   if (JSON.stringify(Object.keys(value).sort()) !== JSON.stringify(REQUIRED_CORE_DIMENSIONS)) return false;
   return Object.values(value).every((score) => bounded(score, 0, 100));
+}
+
+function verifyRawArmBinding(arm, raw, rawBytes) {
+  if (!isRecord(arm) || !isRecord(raw) || typeof arm.rawOutputSha256 !== "string"
+    || sha256(rawBytes) !== arm.rawOutputSha256) {
+    throw new Error(`Raw benchmark binding mismatch: ${String(arm?.outputId ?? "unknown")}`);
+  }
+  for (const field of RAW_BOUND_FIELDS) {
+    if (!sameJson(arm[field], raw[field])) {
+      throw new Error(`Raw benchmark binding mismatch: ${arm.outputId} (${field})`);
+    }
+  }
+  return {
+    ...arm,
+    ...Object.fromEntries(RAW_BOUND_FIELDS.map((field) => [field, raw[field]])),
+  };
+}
+
+function isRecord(value) {
+  return value !== null && typeof value === "object" && !Array.isArray(value);
+}
+
+function hasOnlyKeys(value, allowedKeys) {
+  return Object.keys(value).every((key) => allowedKeys.has(key));
+}
+
+function sameJson(left, right) {
+  return JSON.stringify(left) === JSON.stringify(right);
+}
+
+function sha256(bytes) {
+  return createHash("sha256").update(bytes).digest("hex");
 }
 
 function bounded(value, minimumValue, maximumValue) {

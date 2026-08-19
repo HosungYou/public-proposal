@@ -50,7 +50,7 @@ export async function runBenchmark({
         const output = makeDeterministicOutput(manifest, armDefinition, seed, inputHash, outputId, budgets);
         const rawOutputPath = join(outputRoot, "raw", `${outputId}.json`);
         const blindedOutputPath = join(outputRoot, "human", "outputs", `${outputId}.json`);
-        await writeJson(rawOutputPath, output);
+        const rawOutputBytes = await writeJson(rawOutputPath, output);
         await writeJson(blindedOutputPath, {
           protocolVersion: BENCHMARK_PROTOCOL_VERSION,
           outputId,
@@ -74,11 +74,16 @@ export async function runBenchmark({
           harness: "deterministic-placeholder",
           modelExecution: "not-run",
           humanEvaluationRequired: true,
+          rawOutputSha256: sha256(rawOutputBytes),
           longTableInvocations: output.longTableInvocations,
+          researchInvocationExpected: output.researchInvocationExpected,
           wallTimeMilliseconds: output.wallTimeMilliseconds,
           tokenUsage: output.tokenUsage,
           toolCalls: output.toolCalls,
+          duplicateArtifactCount: output.duplicateArtifactCount,
+          unusedResearchCount: output.unusedResearchCount,
           cost: output.cost,
+          structuredReviewConfigured: output.structuredReviewConfigured,
         });
       }
     }
@@ -195,6 +200,7 @@ function makeDeterministicOutput(manifest, armDefinition, seed, inputHash, outpu
   return {
     protocolVersion: BENCHMARK_PROTOCOL_VERSION,
     outputId,
+    arm: armDefinition.arm,
     fixtureId: manifest.fixtureId,
     inputHash,
     seed,
@@ -254,7 +260,13 @@ function stableJson(value) {
 
 async function writeJson(path, value) {
   await mkdir(dirname(path), { recursive: true });
-  await writeFile(path, `${JSON.stringify(value, null, 2)}\n`, { mode: 0o600 });
+  const bytes = Buffer.from(`${JSON.stringify(value, null, 2)}\n`);
+  await writeFile(path, bytes, { mode: 0o600 });
+  return bytes;
+}
+
+function sha256(bytes) {
+  return createHash("sha256").update(bytes).digest("hex");
 }
 
 function parseArguments(argv) {
