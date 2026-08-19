@@ -300,6 +300,61 @@ describe("section-centered authoring", () => {
 
     await expect(adjudicate({ root, stage: "integrity", integrityAdapter })).rejects.toMatchObject({ code: "PP_AGENT_EXECUTION_INTEGRITY_FAILED" });
   });
+
+  it("adjudicates the single anchored byte snapshot when status flips after verification", async () => {
+    const root = await createRoot(temporaryDirectories);
+    const integrityAdapter = createTestAgentExecutionIntegrityAdapter();
+    const quarantined = { ...finding("RFP/Compliance Reviewer", "section-snapshot", "issuer", "blocker"), runId: "snapshot-run" };
+    await recordAgentRun(root, {
+      stage: "snapshot",
+      run: { runId: quarantined.runId, status: "QUARANTINED", inputHash: quarantined.inputHash, reviewerIdentity: "agent-q" },
+    }, { integrityAdapter });
+    await recordReviewerFinding(root, { stage: "snapshot", finding: quarantined }, { integrityAdapter });
+
+    const ledgerPath = join(root, "content", "agent-execution-state.json");
+    const raceAdapter = postVerificationStatusFlipAdapter(integrityAdapter, "snapshot", quarantined.runId);
+    let ledgerReads = 0;
+    const result = await adjudicate({
+      root,
+      stage: "snapshot",
+      integrityAdapter: raceAdapter,
+      ledgerByteReader: async (path: string) => {
+        ledgerReads += 1;
+        return readFile(path);
+      },
+    });
+
+    expect(ledgerReads).toBe(1);
+    expect(result).toMatchObject({
+      status: "ACCEPT",
+      quarantinedRunIds: [quarantined.runId],
+      excludedFindingIds: [quarantined.findingId],
+    });
+    expect(await persistedRunStatus(ledgerPath, "snapshot", quarantined.runId)).toBe("SUCCEEDED");
+  });
+
+  it("does not approve a quarantined representative run flipped after verification", async () => {
+    const root = await createRoot(temporaryDirectories);
+    const approvals = await Promise.all(REPRESENTATIVE_ROLES.map((role) => persistRepresentativeEvidence(root, role)));
+    const integrityAdapter = createTestAgentExecutionIntegrityAdapter();
+    const ledgerPath = join(root, "content", "agent-execution-state.json");
+    const problemRunId = `run-${approvals[0]!.findingIds[0]}`;
+    await setPersistedRunStatus(ledgerPath, "representative-problem", problemRunId, "QUARANTINED");
+    await integrityAdapter.write(root, ledgerPath);
+
+    const raceAdapter = postVerificationStatusFlipAdapter(integrityAdapter, "representative-problem", problemRunId);
+    let ledgerReads = 0;
+    await expect(approveRepresentativeSections(root, approvals, {
+      integrityAdapter: raceAdapter,
+      ledgerByteReader: async (path: string) => {
+        ledgerReads += 1;
+        return readFile(path);
+      },
+    })).rejects.toMatchObject({ code: "PP_REPRESENTATIVE_FINDING_RUN_INELIGIBLE" });
+
+    expect(ledgerReads).toBe(1);
+    expect(await persistedRunStatus(ledgerPath, "representative-problem", problemRunId)).toBe("SUCCEEDED");
+  });
 });
 
 const REPRESENTATIVE_ROLES = ["problem", "method", "execution"] as const;
@@ -453,6 +508,44 @@ async function createRoot(temporaryDirectories: string[]): Promise<string> {
   const root = await mkdtemp(join(tmpdir(), "public-proposal-section-authoring-"));
   temporaryDirectories.push(root);
   return root;
+}
+
+function postVerificationStatusFlipAdapter(
+  integrityAdapter: ReturnType<typeof createTestAgentExecutionIntegrityAdapter>,
+  stage: string,
+  runId: string,
+) {
+  return {
+    async write(root: string, ledgerPath: string): Promise<void> {
+      await integrityAdapter.write(root, ledgerPath);
+    },
+    async verify(root: string, ledgerPath: string, ledgerSha256: string): Promise<void> {
+      await integrityAdapter.verify(root, ledgerPath, ledgerSha256);
+      await setPersistedRunStatus(ledgerPath, stage, runId, "SUCCEEDED");
+    },
+  };
+}
+
+async function setPersistedRunStatus(
+  ledgerPath: string,
+  stage: string,
+  runId: string,
+  status: "SUCCEEDED" | "QUARANTINED",
+): Promise<void> {
+  const ledger = JSON.parse(await readFile(ledgerPath, "utf8")) as {
+    stages: Record<string, { runs: Array<{ runId: string; status: string }> }>;
+  };
+  const run = ledger.stages[stage]?.runs.find((entry) => entry.runId === runId);
+  if (run === undefined) throw new Error(`Missing test run ${runId}`);
+  run.status = status;
+  await writeFile(ledgerPath, `${JSON.stringify(ledger, null, 2)}\n`, "utf8");
+}
+
+async function persistedRunStatus(ledgerPath: string, stage: string, runId: string): Promise<string | undefined> {
+  const ledger = JSON.parse(await readFile(ledgerPath, "utf8")) as {
+    stages: Record<string, { runs: Array<{ runId: string; status: string }> }>;
+  };
+  return ledger.stages[stage]?.runs.find((entry) => entry.runId === runId)?.status;
 }
 
 function hash(value: string): string {
