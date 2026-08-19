@@ -65,3 +65,39 @@ rollback behavior and preserves externally owned LongTable state.
 - The pre-existing untracked installer plan, the external LongTable checkout,
   customer `.longtable` data, KPP project state, and approval receipts were not
   modified. No push, publish, or merge was performed.
+
+## Fix round 1 — 2026-08-19
+
+Resolved all three HIGH re-review findings. A selected working master remains a
+`working_master` import, but is also recorded in `provisional-content.json`
+when no RFP/source packet establishes a source relationship. Adoption now
+builds its complete project and receipt in an invocation-owned sibling, then
+publishes by rename; an in-place adoption first stages a complete copy and uses
+an invocation-owned backup for rollback. Current-manifest migration now moves
+each complete owned legacy role directory to an invocation snapshot and
+restores that tree by rename if manifest publication fails.
+
+The clean-install fixture now models Public Proposal and LongTable as separate
+Codex marketplaces/plugins and reads LongTable skills from the independently
+receipted LongTable source. No release-gate threshold, managed-worker behavior,
+release-verifier gate logic, publication behavior, or source-bound ownership
+check changed. The E2E asserts successful setup/public doctor and the exact
+installer-owned LongTable registration source; it does not reinterpret the
+pre-existing KPP managed-worker warning as a Task 6 success.
+
+### Fix-round evidence
+
+| Success criterion | Exact scenario and invocation | Binary observable | Captured artifact |
+| --- | --- | --- | --- |
+| Source-less master remains bound and provisional | `npm test -- packages/core/test/adoption.test.ts apps/public-proposal-cli/test/setup.test.ts`, scenario `keeps a source-less working master bound and marks its content provisional` | exit 0; `working_master` import present; provisional entry has `no_source_binding` | `.omo/evidence/task-6-fix1/green-regressions.log` |
+| Adoption failure is atomic and unchanged inputs are retry-safe | Same invocation, scenario `publishes adoption atomically so a mid-import failure can be retried`; the second staged copy throws once, published `kpp.project.yaml` remains absent, then identical input bytes succeed | exit 0; failure assertion passes; retry writes matching adoption receipt | `.omo/evidence/task-6-fix1/green-regressions.log` |
+| Complete legacy role tree is restored after later failure | Same invocation, scenario `restores the complete legacy role directory when manifest publication fails`; manifest rename fails after role snapshot | exit 0; `SKILL.md` and nested `references/nested.md` retain exact bytes; no migration snapshot remains | `.omo/evidence/task-6-fix1/green-regressions.log` |
+| Focused adoption/setup/uninstall/doctor regression | `npm test -- packages/core/test/adoption.test.ts tests/integration/adopt.test.ts apps/public-proposal-cli/test/setup.test.ts apps/public-proposal-cli/test/uninstall-update.test.ts apps/public-proposal-cli/test/doctor.test.ts` | exit 0; 5 files and 69 tests passed | `.omo/evidence/task-6-fix1/focused-tests.log` |
+| Separated LongTable clean install | `npm test -- tests/e2e/public-proposal-install.test.ts` | exit 0; 1 file and 10 tests passed; setup/public doctor report independent receipted sources | `.omo/evidence/task-6-fix1/clean-install-e2e.log` |
+| Type safety | `npm run typecheck` | exit 0 | `.omo/evidence/task-6-fix1/typecheck.log` |
+| Build | `npm run build` | exit 0 | `.omo/evidence/task-6-fix1/build.log` |
+| Diff hygiene | `git diff --check 54882b3` | exit 0 and explicit `PASS` marker | `.omo/evidence/task-6-fix1/diff-check.log` |
+
+TDD RED evidence is `.omo/evidence/task-6-fix1/red-regressions.log`: all
+three new scenarios failed against `54882b3` for their intended missing
+behavior before production changes. No push, publish, or merge was performed.

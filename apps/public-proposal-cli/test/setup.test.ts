@@ -225,6 +225,30 @@ describe("public proposal setup", () => {
     expect(fake.files["/opt/longtable/marketplace/external-marker.txt"]).toBe("keep");
   });
 
+  it("restores the complete legacy role directory when manifest publication fails", async () => {
+    const installRoot = "/home/ada/.config/public-proposal";
+    const fake = fakeSetupDependencies({ manifestRenameFailureOnce: new Error("manifest rename failed") });
+    seedInstalledPlugin(fake, installRoot);
+    fake.files[`${installRoot}/marketplace/.dir`] = "dir";
+    fake.files[`${installRoot}/worker/bin/python`] = "#!/usr/bin/env sh\n";
+    fake.files[`${installRoot}/plugin/skills/longtable/SKILL.md`] = "legacy owned copy";
+    fake.files[`${installRoot}/plugin/skills/longtable/references/nested.md`] = "nested legacy bytes";
+    fake.files[`${installRoot}/installation.json`] = JSON.stringify({
+      ...fakeManifest(),
+      codexRegistrations: { pluginAdded: true, marketplaceAdded: true },
+    });
+
+    const result = await runSetup(
+      { provider: "codex", installScope: "user", cwd: "/work", home: "/home/ada" },
+      fake,
+    );
+
+    expect(result).toMatchObject({ ok: false, error: { code: "PP_SETUP_COMMAND_FAILED" } });
+    expect(fake.files[`${installRoot}/plugin/skills/longtable/SKILL.md`]).toBe("legacy owned copy");
+    expect(fake.files[`${installRoot}/plugin/skills/longtable/references/nested.md`]).toBe("nested legacy bytes");
+    expect(Object.keys(fake.files).some((path) => path.includes(".migration-"))).toBe(false);
+  });
+
   it("persists a canonical receipt and remains idempotent when setup receives a relative install root", async () => {
     const fake = fakeSetupDependencies();
     const relativeRoot = `.public-proposal-relative-${process.pid}`;
@@ -708,6 +732,7 @@ function fakeSetupDependencies(input?: {
   preexistingLongtableMarketplaceRegistration?: boolean;
   preexistingLongtableMarketplacePath?: string;
   preexistingLongtablePluginRegistration?: boolean;
+  manifestRenameFailureOnce?: Error;
 }): FakeSetupDependencies {
   const installRoot = input?.installRoot ?? "/home/ada/.config/public-proposal";
   const files: Record<string, string> = {
@@ -736,6 +761,7 @@ function fakeSetupDependencies(input?: {
     longtablePluginRegistered: input?.preexistingLongtablePluginRegistration ?? false,
     longtableMarketplacePath: input?.preexistingLongtableMarketplacePath ?? `${installRoot}/longtable-marketplace`,
     workerFailuresRemaining: input?.workerFailureOnce ? 1 : 0,
+    manifestRenameFailuresRemaining: input?.manifestRenameFailureOnce ? 1 : 0,
   };
 
   return {
@@ -787,8 +813,16 @@ function fakeSetupDependencies(input?: {
         renames.push({ from, to });
         return;
       }
-      files[to] = files[from];
-      delete files[from];
+      if (to === `${installRoot}/installation.json` && state.manifestRenameFailuresRemaining > 0) {
+        state.manifestRenameFailuresRemaining -= 1;
+        throw input?.manifestRenameFailureOnce;
+      }
+      for (const [path, contents] of Object.entries({ ...files })) {
+        if (path === from || path.startsWith(`${from}/`)) {
+          files[`${to}${path.slice(from.length)}`] = contents;
+          delete files[path];
+        }
+      }
       renames.push({ from, to });
     },
     remove: async (path) => {

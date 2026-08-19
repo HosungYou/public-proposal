@@ -1,4 +1,4 @@
-import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { copyFile, mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -56,6 +56,50 @@ describe("legacy project adoption", () => {
     });
     expect(JSON.parse(await readFile(join(outputRoot, "receipts", "adoption.json"), "utf8"))).toMatchObject({
       adoptionId: first.adoptionId,
+    });
+  });
+
+  it("keeps a source-less working master bound and marks its content provisional", async () => {
+    const legacyRoot = await temporaryRoot("kpp-legacy-master-only-");
+    const outputRoot = join(await temporaryRoot("kpp-adopt-master-only-parent-"), "project");
+    const master = join(legacyRoot, "working-master.docx");
+    await writeFile(master, "source-less draft", "utf8");
+
+    const report = await adoptProject({ root: legacyRoot, outputRoot, master });
+
+    expect(report.imports).toEqual([
+      expect.objectContaining({ role: "working_master", originalPath: master }),
+    ]);
+    expect(report.provisionalContent).toEqual([
+      expect.objectContaining({ originalPath: master, status: "provisional", reason: "no_source_binding" }),
+    ]);
+    expect(JSON.parse(await readFile(join(outputRoot, "content", "provisional-content.json"), "utf8"))).toMatchObject({
+      entries: [expect.objectContaining({ originalPath: master, status: "provisional" })],
+    });
+  });
+
+  it("publishes adoption atomically so a mid-import failure can be retried", async () => {
+    const legacyRoot = await temporaryRoot("kpp-legacy-atomic-");
+    const outputRoot = join(await temporaryRoot("kpp-adopt-atomic-parent-"), "project");
+    const brief = join(legacyRoot, "living-brief.json");
+    await writeFile(join(legacyRoot, "working-master.docx"), "draft bytes", "utf8");
+    await writeFile(brief, JSON.stringify({ problem: "stable legacy brief" }), "utf8");
+    let copies = 0;
+
+    await expect(adoptProject({ root: legacyRoot, outputRoot }, {
+      copyFile: async (...args) => {
+        copies += 1;
+        if (copies === 2) throw new Error("injected mid-import failure");
+        return copyFile(...args);
+      },
+    })).rejects.toThrow("injected mid-import failure");
+    await expect(readFile(join(outputRoot, "kpp.project.yaml"), "utf8")).rejects.toMatchObject({ code: "ENOENT" });
+
+    const retried = await adoptProject({ root: legacyRoot, outputRoot });
+
+    expect(retried).toMatchObject({ changed: true, state: "UNMANAGED_DRAFT" });
+    expect(JSON.parse(await readFile(join(outputRoot, "receipts", "adoption.json"), "utf8"))).toMatchObject({
+      adoptionId: retried.adoptionId,
     });
   });
 

@@ -16,13 +16,23 @@ describe("public proposal clean installation", () => {
   it("reports the packaged plugin, KPP, LongTable, and worker at their pinned versions", async () => {
     const result = await runCleanInstallFixture();
 
-    expect(result.exitCode).toBe(0);
     expect(result.report).toMatchObject({
-      ok: true,
+      envelopes: {
+        setup: { ok: true },
+        publicDoctor: { ok: true },
+      },
       manifest: {
         kppVersion: "0.2.1",
         longtableVersion: "0.1.72",
         workerProtocol: "1.0.0",
+        registrationOwnership: {
+          publicProposal: expect.objectContaining({ marketplaceSource: expect.stringMatching(/\/marketplace$/u) }),
+          longtable: expect.objectContaining({
+            ownership: "installer_owned",
+            pluginId: "longtable@longtable",
+            marketplaceSource: expect.stringMatching(/\/longtable-marketplace$/u),
+          }),
+        },
       },
         plugin: {
           name: "public-proposal",

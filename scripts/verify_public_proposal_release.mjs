@@ -53,8 +53,8 @@ export async function runCleanEnvironmentFixture() {
   const pluginManifestPath = join(installRoot, "plugin", ".codex-plugin", "plugin.json");
   const marketplacePath = join(installRoot, "marketplace", ".agents", "plugins", "marketplace.json");
   const registeredSkills = {
-    longtable: await readFile(join(installRoot, "marketplace", "plugin", "skills", "longtable", "SKILL.md"), "utf8").then(() => true).catch(() => false),
-    longtableResearch: await readFile(join(installRoot, "marketplace", "plugin", "skills", "longtable-research", "SKILL.md"), "utf8").then(() => true).catch(() => false),
+    longtable: await readFile(join(installRoot, "longtable-marketplace", "plugin", "skills", "longtable", "SKILL.md"), "utf8").then(() => true).catch(() => false),
+    longtableResearch: await readFile(join(installRoot, "longtable-marketplace", "plugin", "skills", "longtable-research", "SKILL.md"), "utf8").then(() => true).catch(() => false),
   };
   const pluginManifest = await readJson(pluginManifestPath).catch(() => null);
   const marketplace = await readJson(marketplacePath).catch(() => null);
@@ -669,14 +669,27 @@ case "$name" in
     state_root=$(dirname "$PUBLIC_PROPOSAL_INSTALLATION_MANIFEST")
     if [ "$1" = "--version" ]; then printf 'codex-cli 0.144.5\n'
     elif [ "$1 $2 $3" = "plugin marketplace list" ]; then
-      marketplace_path=$(CDPATH= cd -- "$state_root/marketplace" 2>/dev/null && pwd -P)
-      if [ -f "$state_root/.marketplace-registered" ]; then printf '{"marketplaces":[{"name":"public-proposal","path":"%s"}]}\n' "$marketplace_path"; else printf '{"marketplaces":[]}\n'; fi
-    elif [ "$1 $2 $3" = "plugin marketplace add" ]; then printf registered > "$state_root/.marketplace-registered"
-    elif [ "$1 $2 $3" = "plugin marketplace remove" ]; then rm -f "$state_root/.marketplace-registered"
+      public_path=$(CDPATH= cd -- "$state_root/marketplace" 2>/dev/null && pwd -P)
+      longtable_path=$(CDPATH= cd -- "$state_root/longtable-marketplace" 2>/dev/null && pwd -P)
+      printf '{"marketplaces":['
+      separator=
+      if [ -f "$state_root/.marketplace-registered" ]; then printf '{"name":"public-proposal","path":"%s"}' "$public_path"; separator=,; fi
+      if [ -f "$state_root/.longtable-marketplace-registered" ]; then printf '%s{"name":"longtable","path":"%s"}' "$separator" "$longtable_path"; fi
+      printf ']}\n'
+    elif [ "$1 $2 $3" = "plugin marketplace add" ]; then
+      case "$4" in */longtable-marketplace) printf registered > "$state_root/.longtable-marketplace-registered" ;; *) printf registered > "$state_root/.marketplace-registered" ;; esac
+    elif [ "$1 $2 $3" = "plugin marketplace remove" ]; then
+      if [ "$4" = "longtable" ]; then rm -f "$state_root/.longtable-marketplace-registered"; else rm -f "$state_root/.marketplace-registered"; fi
     elif [ "$1 $2" = "plugin list" ]; then
-      if [ -f "$state_root/.plugin-registered" ]; then printf '{"installed":[{"pluginId":"public-proposal@public-proposal","installed":true}],"available":[]}\n'; else printf '{"installed":[],"available":[]}\n'; fi
-    elif [ "$1 $2" = "plugin add" ]; then printf registered > "$state_root/.plugin-registered"
-    elif [ "$1 $2" = "plugin remove" ]; then rm -f "$state_root/.plugin-registered"
+      printf '{"installed":['
+      separator=
+      if [ -f "$state_root/.plugin-registered" ]; then printf '{"pluginId":"public-proposal@public-proposal","installed":true}'; separator=,; fi
+      if [ -f "$state_root/.longtable-plugin-registered" ]; then printf '%s{"pluginId":"longtable@longtable","installed":true}' "$separator"; fi
+      printf '],"available":[]}\n'
+    elif [ "$1 $2" = "plugin add" ]; then
+      if [ "$3" = "longtable@longtable" ]; then printf registered > "$state_root/.longtable-plugin-registered"; else printf registered > "$state_root/.plugin-registered"; fi
+    elif [ "$1 $2" = "plugin remove" ]; then
+      if [ "$3" = "longtable@longtable" ]; then rm -f "$state_root/.longtable-plugin-registered"; else rm -f "$state_root/.plugin-registered"; fi
     else printf '{"ok":true}\n'; fi
     ;;
   uv)

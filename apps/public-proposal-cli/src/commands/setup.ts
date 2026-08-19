@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { dirname } from "node:path";
@@ -270,7 +271,7 @@ async function migrateCurrentManifest(
   if (publicReconciliation.error) return failed(publicReconciliation.error.code, publicReconciliation.error.message, []);
   const snapshot = await snapshotMigrationState(existingManifest, manifest, dependencies);
   let longtable: RegistrationOwnership["longtable"] | undefined;
-  const removedLegacy: Array<{ directory: string; skillPath: string; contents: string }> = [];
+  const stagedLegacy: Array<{ directory: string; snapshot: string }> = [];
   try {
     longtable = await ensureLongTableRegistered(installRoot, dependencies, exists);
     const ownedPaths = [...installerOwnedRoots(installRoot, longtable.ownership === "installer_owned")];
@@ -321,12 +322,14 @@ async function migrateCurrentManifest(
     for (const directory of legacyRoleDirectories(installRoot)) {
       const skillPath = join(directory, "SKILL.md");
       if (!(await exists(skillPath))) continue;
-      removedLegacy.push({ directory, skillPath, contents: await dependencies.readFile(skillPath) });
-      await remove(directory);
+      const snapshot = join(dirname(directory), `.${dirname(directory) === directory ? "legacy-role" : directory.slice(dirname(directory).length + 1)}.migration-${randomUUID()}`);
+      await dependencies.rename(directory, snapshot);
+      stagedLegacy.push({ directory, snapshot });
     }
     const temp = manifestTempPath(installRoot);
     await dependencies.writeFile(temp, manifestContents, 0o600);
     await dependencies.rename(temp, manifest);
+    for (const legacy of stagedLegacy) await remove(legacy.snapshot);
     return {
       ok: true,
       plan: PLAN,
@@ -337,9 +340,9 @@ async function migrateCurrentManifest(
     };
   } catch (error) {
     const rollbackFailures: string[] = [];
-    for (const legacy of removedLegacy) {
-      try { await dependencies.writeFile(legacy.skillPath, legacy.contents); } catch (restoreError) {
-        rollbackFailures.push(`restore ${legacy.skillPath}: ${restoreError instanceof Error ? restoreError.message : String(restoreError)}`);
+    for (const legacy of [...stagedLegacy].reverse()) {
+      try { await dependencies.rename(legacy.snapshot, legacy.directory); } catch (restoreError) {
+        rollbackFailures.push(`restore ${legacy.directory}: ${restoreError instanceof Error ? restoreError.message : String(restoreError)}`);
       }
     }
     if (longtable?.pluginAdded) await compensate(dependencies.spawn, "codex", ["plugin", "remove", "longtable@longtable", "--json"], rollbackFailures);

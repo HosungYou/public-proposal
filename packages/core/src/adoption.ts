@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from "node:crypto";
-import { copyFile, lstat, mkdir, open, readFile, readdir, rename, rm, stat } from "node:fs/promises";
+import { copyFile, cp, lstat, mkdir, open, readFile, readdir, rename, rm, stat } from "node:fs/promises";
 import { basename, dirname, extname, join, relative, resolve, sep } from "node:path";
 import { KppError } from "./errors.js";
 import { initializeProject, persistProjectState, projectPath, readProject } from "./project-store.js";
@@ -16,6 +16,12 @@ export interface AdoptionInput {
   readonly source?: string;
   readonly master?: string;
 }
+
+interface AdoptionDependencies {
+  readonly copyFile: typeof copyFile;
+}
+
+const defaultAdoptionDependencies: AdoptionDependencies = { copyFile };
 
 export interface AdoptionBinding {
   readonly role: "rfp" | "source_packet" | "working_master" | "claim_ledger" | "evidence_ledger" | "figure_ledger" | "living_brief" | "longtable_run" | "provisional_content";
@@ -63,7 +69,10 @@ interface AdoptionReceipt extends AdoptionReport {
   readonly inputDigest: string;
 }
 
-export async function adoptProject(input: AdoptionInput): Promise<AdoptionReport> {
+export async function adoptProject(
+  input: AdoptionInput,
+  dependencies: AdoptionDependencies = defaultAdoptionDependencies,
+): Promise<AdoptionReport> {
   const legacyRoot = resolve(input.root);
   const projectRoot = resolve(input.outputRoot ?? input.root);
   await requireDirectory(legacyRoot);
@@ -91,76 +100,88 @@ export async function adoptProject(input: AdoptionInput): Promise<AdoptionReport
     });
   }
 
-  const outputs: string[] = [];
-  const imports: AdoptionBinding[] = [];
-  const project = await initializeProject(projectRoot, {
-    projectId: safeProjectId(basename(projectRoot) || basename(legacyRoot)),
-  });
-  outputs.push(projectPath(projectRoot));
-  await persistProjectState(projectRoot, { ...project, state: "UNMANAGED_DRAFT" });
-
-  for (const binding of discovered.inputs) {
-    const destination = importDestination(projectRoot, binding);
-    if (destination === null) continue;
-    await copyAtomically(binding.originalPath, destination);
-    outputs.push(destination);
-    imports.push({ ...binding, importedPath: destination });
-  }
-
-  const longtablePath = join(projectRoot, "evidence", "legacy-longtable-links.json");
-  if (discovered.longtableRuns.length > 0) {
-    await writeJsonAtomically(longtablePath, {
-      schemaVersion: "legacy-longtable-links/v1",
-      runs: discovered.longtableRuns,
-    });
-    outputs.push(longtablePath);
-  }
-
-  const provisionalPath = join(projectRoot, "content", "provisional-content.json");
-  if (discovered.provisionalContent.length > 0) {
-    await writeJsonAtomically(provisionalPath, {
-      schemaVersion: "provisional-content/v1",
-      entries: discovered.provisionalContent,
-    });
-    outputs.push(provisionalPath);
-  }
-
-  let livingBrief: AdoptionReport["livingBrief"];
-  const briefBinding = discovered.inputs.find(({ role }) => role === "living_brief");
-  if (briefBinding) {
-    const candidatePath = join(projectRoot, "brief", "living-brief-candidate.json");
-    const decisionDiffPath = join(projectRoot, "brief", "living-brief-decision-diff.json");
-    if (!outputs.includes(candidatePath)) {
-      await copyAtomically(briefBinding.originalPath, candidatePath);
-      outputs.push(candidatePath);
+  const stagingRoot = join(dirname(projectRoot), `.${basename(projectRoot)}.adoption-${randomUUID()}.tmp`);
+  let published = false;
+  try {
+    if (projectRoot === legacyRoot) {
+      await cp(legacyRoot, stagingRoot, { recursive: true, force: false, errorOnExist: true });
     }
-    const brief = await readLooseJson(briefBinding.originalPath);
-    await writeJsonAtomically(decisionDiffPath, decisionDiff(brief));
-    outputs.push(decisionDiffPath);
-    livingBrief = { candidatePath, decisionDiffPath };
-  }
+    const stagedPath = (publishedPath: string) => join(stagingRoot, relative(projectRoot, publishedPath));
+    const outputs: string[] = [];
+    const imports: AdoptionBinding[] = [];
+    const project = await initializeProject(stagingRoot, {
+      projectId: safeProjectId(basename(projectRoot) || basename(legacyRoot)),
+    });
+    outputs.push(projectPath(projectRoot));
+    await persistProjectState(stagingRoot, { ...project, state: "UNMANAGED_DRAFT" });
 
-  const report: AdoptionReport = {
-    schemaVersion: ADOPTION_SCHEMA,
-    adoptionId: randomUUID(),
-    state: "UNMANAGED_DRAFT",
-    projectRoot,
-    legacyRoot,
-    changed: true,
-    candidates: discovered.candidates,
-    imports,
-    provisionalContent: discovered.provisionalContent,
-    longtableRuns: discovered.longtableRuns,
-    ...(livingBrief ? { livingBrief } : {}),
-  };
-  const receipt: AdoptionReceipt = {
-    ...report,
-    inputs: discovered.inputs,
-    outputs: [...outputs, receiptPath],
-    inputDigest,
-  };
-  await writeJsonAtomically(receiptPath, receipt);
-  return report;
+    for (const binding of discovered.inputs) {
+      const destination = importDestination(projectRoot, binding);
+      if (destination === null) continue;
+      await copyAtomically(binding.originalPath, stagedPath(destination), dependencies.copyFile);
+      outputs.push(destination);
+      imports.push({ ...binding, importedPath: destination });
+    }
+
+    const longtablePath = join(projectRoot, "evidence", "legacy-longtable-links.json");
+    if (discovered.longtableRuns.length > 0) {
+      await writeJsonAtomically(stagedPath(longtablePath), {
+        schemaVersion: "legacy-longtable-links/v1",
+        runs: discovered.longtableRuns,
+      });
+      outputs.push(longtablePath);
+    }
+
+    const provisionalPath = join(projectRoot, "content", "provisional-content.json");
+    if (discovered.provisionalContent.length > 0) {
+      await writeJsonAtomically(stagedPath(provisionalPath), {
+        schemaVersion: "provisional-content/v1",
+        entries: discovered.provisionalContent,
+      });
+      outputs.push(provisionalPath);
+    }
+
+    let livingBrief: AdoptionReport["livingBrief"];
+    const briefBinding = discovered.inputs.find(({ role }) => role === "living_brief");
+    if (briefBinding) {
+      const candidatePath = join(projectRoot, "brief", "living-brief-candidate.json");
+      const decisionDiffPath = join(projectRoot, "brief", "living-brief-decision-diff.json");
+      if (!outputs.includes(candidatePath)) {
+        await copyAtomically(briefBinding.originalPath, stagedPath(candidatePath), dependencies.copyFile);
+        outputs.push(candidatePath);
+      }
+      const brief = await readLooseJson(briefBinding.originalPath);
+      await writeJsonAtomically(stagedPath(decisionDiffPath), decisionDiff(brief));
+      outputs.push(decisionDiffPath);
+      livingBrief = { candidatePath, decisionDiffPath };
+    }
+
+    const report: AdoptionReport = {
+      schemaVersion: ADOPTION_SCHEMA,
+      adoptionId: randomUUID(),
+      state: "UNMANAGED_DRAFT",
+      projectRoot,
+      legacyRoot,
+      changed: true,
+      candidates: discovered.candidates,
+      imports,
+      provisionalContent: discovered.provisionalContent,
+      longtableRuns: discovered.longtableRuns,
+      ...(livingBrief ? { livingBrief } : {}),
+    };
+    const receipt: AdoptionReceipt = {
+      ...report,
+      inputs: discovered.inputs,
+      outputs: [...outputs, receiptPath],
+      inputDigest,
+    };
+    await writeJsonAtomically(stagedPath(receiptPath), receipt);
+    await publishStagedProject(stagingRoot, projectRoot, projectRoot === legacyRoot);
+    published = true;
+    return report;
+  } finally {
+    if (!published) await rm(stagingRoot, { force: true, recursive: true });
+  }
 }
 
 async function discoverInputs(
@@ -225,8 +246,9 @@ async function discoverInputs(
     originalPath: resolve(path),
     sha256: await hashPath(path),
   })));
+  const hasSourceBinding = rfp.length > 0 || sourcePacket.length > 0;
   const provisionalContent = inputs
-    .filter(({ role }) => role === "provisional_content")
+    .filter(({ role }) => role === "provisional_content" || (role === "working_master" && !hasSourceBinding))
     .map(({ originalPath, sha256 }) => ({ originalPath, sha256, status: "provisional" as const, reason: "no_source_binding" as const }));
   return {
     candidates: { rfp, sourcePacket, workingMaster: master },
@@ -405,11 +427,11 @@ async function pathExists(path: string): Promise<boolean> {
   }
 }
 
-async function copyAtomically(source: string, destination: string): Promise<void> {
+async function copyAtomically(source: string, destination: string, copy: typeof copyFile): Promise<void> {
   await mkdir(dirname(destination), { recursive: true });
   const temporary = join(dirname(destination), `.${basename(destination)}.${process.pid}.${randomUUID()}.tmp`);
   try {
-    await copyFile(source, temporary);
+    await copy(source, temporary);
     await rename(temporary, destination);
   } finally {
     await rm(temporary, { force: true });
@@ -431,6 +453,22 @@ async function writeJsonAtomically(path: string, value: unknown): Promise<void> 
     await handle?.close();
     await rm(temporary, { force: true });
   }
+}
+
+async function publishStagedProject(stagingRoot: string, projectRoot: string, replacesLegacyRoot: boolean): Promise<void> {
+  if (!replacesLegacyRoot) {
+    await rename(stagingRoot, projectRoot);
+    return;
+  }
+  const backupRoot = join(dirname(projectRoot), `.${basename(projectRoot)}.adoption-backup-${randomUUID()}.tmp`);
+  await rename(projectRoot, backupRoot);
+  try {
+    await rename(stagingRoot, projectRoot);
+  } catch (error) {
+    await rename(backupRoot, projectRoot);
+    throw error;
+  }
+  await rm(backupRoot, { force: true, recursive: true });
 }
 
 async function readLooseJson(path: string): Promise<unknown> {
