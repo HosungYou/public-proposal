@@ -38,6 +38,7 @@
   "dependencies": {
     "@longtable/cli": "0.1.72",
     "@longtable/kpp-cli": "0.2.1",
+    "@longtable/kpp-schemas": "0.2.1",
     "commander": "15.0.0",
     "yaml": "2.9.0",
     "zod": "4.4.3"

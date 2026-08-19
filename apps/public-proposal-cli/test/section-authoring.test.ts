@@ -11,6 +11,10 @@ import {
   createSectionPlan,
   adjudicate,
   mergeApprovedPatch,
+  recordAgentRun,
+  recordAutomaticSectionRevision,
+  recordFindingRebuttal,
+  recordReviewerFinding,
 } from "../src/section-authoring.js";
 
 describe("section-centered authoring", () => {
@@ -62,8 +66,10 @@ describe("section-centered authoring", () => {
   });
 
   it("requires two independent editorial findings before a prose hold", () => {
+    const findings = [finding("Korean Prose Reviewer", "section-1"), finding("Evaluator Red Team", "section-1")];
     const decision = adjudicate({
-      findings: [finding("prose", "section-1"), finding("evaluator", "section-1")],
+      findings,
+      runs: successfulRuns(findings),
     });
 
     expect(decision.status).toBe("EDITORIAL_REVIEW_REQUIRED");
@@ -71,8 +77,10 @@ describe("section-centered authoring", () => {
   });
 
   it("does not let a single editorial reviewer hold a section and blocks hard authority violations", () => {
-    expect(adjudicate({ findings: [finding("prose", "section-1")] }).status).toBe("ACCEPT");
-    expect(adjudicate({ findings: [finding("compliance", "section-1", "issuer", "blocker")] })).toMatchObject({
+    const prose = finding("Korean Prose Reviewer", "section-1");
+    const compliance = finding("RFP/Compliance Reviewer", "section-1", "issuer", "blocker");
+    expect(adjudicate({ findings: [prose], runs: successfulRuns([prose]) }).status).toBe("ACCEPT");
+    expect(adjudicate({ findings: [compliance], runs: successfulRuns([compliance]) })).toMatchObject({
       status: "BLOCKED",
     });
   });
@@ -107,28 +115,86 @@ describe("section-centered authoring", () => {
       approval("method"),
     ])).rejects.toMatchObject({ code: "PP_REPRESENTATIVE_APPROVAL_REQUIRED" });
 
-    await approveRepresentativeSections(root, [approval("problem"), approval("method"), approval("execution")]);
+    const approvals = await Promise.all(REPRESENTATIVE_ROLES.map((role) => persistRepresentativeEvidence(root, role)));
+    await approveRepresentativeSections(root, approvals);
     await expect(authorFullDocument(root)).resolves.toMatchObject({ status: "READY_FOR_FULL_AUTHORING" });
+  });
+
+  it("rejects bare finding words and requires persisted independent records bound to the representative artifact", async () => {
+    const root = await createRoot(temporaryDirectories);
+    const fakeApprovals = REPRESENTATIVE_ROLES.map((role) => approval(role));
+
+    await expect(approveRepresentativeSections(root, fakeApprovals)).rejects.toMatchObject({
+      code: "PP_REPRESENTATIVE_FINDING_UNVERIFIED",
+    });
   });
 
   it("quarantines partial runs and invalidates only findings whose input changed", () => {
     const result = adjudicate({
       findings: [
-        { ...finding("prose", "section-1"), inputHash: hash("changed") },
-        { ...finding("visual", "section-2", "visual"), inputHash: hash("stable") },
+        { ...finding("Korean Prose Reviewer", "section-1"), inputHash: hash("changed"), runId: "partial" },
+        { ...finding("Visual/Render Reviewer", "section-2", "visual"), inputHash: hash("stable"), runId: "stable" },
       ],
       runs: [
-        { runId: "partial", status: "PARTIAL", inputHash: hash("changed") },
-        { runId: "timeout", status: "TIMEOUT", inputHash: hash("changed") },
+        { runId: "partial", status: "PARTIAL", inputHash: hash("changed"), reviewerIdentity: "partial-reviewer" },
+        { runId: "timeout", status: "TIMEOUT", inputHash: hash("changed"), reviewerIdentity: "timeout-reviewer" },
+        { runId: "stable", status: "SUCCEEDED", inputHash: hash("stable"), reviewerIdentity: "stable-reviewer" },
       ],
       changedInputHashes: [hash("changed")],
     });
 
     expect(result.quarantinedRunIds).toEqual(["partial", "timeout"]);
-    expect(result.invalidatedFindingIds).toEqual(["prose-section-1"]);
-    expect(result.reusableFindingIds).toEqual(["visual-section-2"]);
+    expect(result.excludedFindingIds).toEqual(["Korean Prose Reviewer-section-1"]);
+    expect(result.invalidatedFindingIds).toEqual([]);
+    expect(result.reusableFindingIds).toEqual(["Visual/Render Reviewer-section-2"]);
+  });
+
+  it("excludes a quarantined finding from adjudication so it cannot block or be accepted", () => {
+    const quarantined = { ...finding("RFP/Compliance Reviewer", "section-1", "issuer", "blocker"), runId: "quarantined" };
+    const result = adjudicate({
+      findings: [quarantined],
+      runs: [{ runId: "quarantined", status: "QUARANTINED", inputHash: quarantined.inputHash, reviewerIdentity: "agent-q" }],
+    });
+
+    expect(result.status).toBe("ACCEPT");
+    expect(result.excludedFindingIds).toEqual([quarantined.findingId]);
+    expect(result.receipt.decisions).toEqual([]);
+  });
+
+  it("persists and enforces per-stage run, finding rebuttal, and section revision limits", async () => {
+    const root = await createRoot(temporaryDirectories);
+    for (let index = 0; index < 12; index += 1) {
+      await expect(recordAgentRun(root, {
+        stage: "representative",
+        run: { runId: `run-${index}`, status: "SUCCEEDED", inputHash: hash(`run-${index}`), reviewerIdentity: `agent-${index}` },
+      })).resolves.toMatchObject({ runId: `run-${index}` });
+    }
+    await expect(recordAgentRun(root, {
+      stage: "representative",
+      run: { runId: "run-12", status: "SUCCEEDED", inputHash: hash("run-12"), reviewerIdentity: "agent-12" },
+    })).rejects.toMatchObject({ code: "PP_AGENT_STAGE_RUN_LIMIT" });
+
+    const persistedFinding = {
+      ...finding("Korean Prose Reviewer", "section-1", "editorial", "warning"),
+      runId: "run-0",
+      inputHash: hash("run-0"),
+    };
+    await recordReviewerFinding(root, {
+      stage: "representative",
+      finding: persistedFinding,
+    });
+    await expect(recordFindingRebuttal(root, { stage: "representative", findingId: persistedFinding.findingId, rebuttalId: "rebuttal-1" })).resolves.toBeUndefined();
+    await expect(recordFindingRebuttal(root, { stage: "representative", findingId: persistedFinding.findingId, rebuttalId: "rebuttal-2" }))
+      .rejects.toMatchObject({ code: "PP_AGENT_REBUTTAL_LIMIT" });
+
+    await expect(recordAutomaticSectionRevision(root, { stage: "representative", sectionId: "section-1", revisionId: "revision-1" })).resolves.toBeUndefined();
+    await expect(recordAutomaticSectionRevision(root, { stage: "representative", sectionId: "section-1", revisionId: "revision-2" })).resolves.toBeUndefined();
+    await expect(recordAutomaticSectionRevision(root, { stage: "representative", sectionId: "section-1", revisionId: "revision-3" }))
+      .rejects.toMatchObject({ code: "PP_SECTION_AUTO_REVISION_LIMIT" });
   });
 });
+
+const REPRESENTATIVE_ROLES = ["problem", "method", "execution"] as const;
 
 function brief() {
   return {
@@ -174,6 +240,7 @@ function finding(
   return {
     findingId: `${reviewerRole}-${sectionId}`,
     reviewerRole,
+    runId: `run-${reviewerRole}-${sectionId}`,
     inputHash: hash(`${reviewerRole}-${sectionId}-input`),
     artifactHash: hash(`${reviewerRole}-${sectionId}-artifact`),
     target: { sectionId },
@@ -190,11 +257,59 @@ function finding(
 function approval(role: "problem" | "method" | "execution") {
   return {
     representativeRole: role,
+    stage: `representative-${role}`,
+    sectionId: `section-${role}`,
+    artifactHash: hash(`artifact-${role}`),
+    inputHash: hash(`input-${role}`),
     approvedBy: "proposal-owner",
     approvedAt: "2026-08-19T00:00:00.000Z",
     renderedPageContextPath: `/rendered/${role}.pdf`,
     findingIds: ["prose", "evaluator", "compliance", "evidence", "visual"],
   };
+}
+
+function successfulRuns(findings: readonly ReturnType<typeof finding>[]) {
+  return findings.map((entry) => ({
+    runId: entry.runId,
+    status: "SUCCEEDED" as const,
+    inputHash: entry.inputHash,
+    reviewerIdentity: `agent-${entry.reviewerRole}`,
+  }));
+}
+
+async function persistRepresentativeEvidence(
+  root: string,
+  role: "problem" | "method" | "execution",
+) {
+  const base = approval(role);
+  const reviewerInputs: Array<[
+    string,
+    "issuer" | "evidence" | "method" | "editorial" | "visual" | "privacy" | "release",
+  ]> = [
+    ["Korean Prose Reviewer", "editorial"],
+    ["Evaluator Red Team", "editorial"],
+    ["RFP/Compliance Reviewer", "issuer"],
+    ["Methods/Evidence Reviewer", "evidence"],
+    ["Visual/Render Reviewer", "visual"],
+  ];
+  const findings = reviewerInputs.map(([reviewerRole, authorityClass]) => ({
+    ...finding(reviewerRole, base.sectionId, authorityClass, "warning"),
+    inputHash: base.inputHash,
+    artifactHash: base.artifactHash,
+  }));
+  for (const entry of findings) {
+    await recordAgentRun(root, {
+      stage: base.stage,
+      run: {
+        runId: entry.runId,
+        status: "SUCCEEDED",
+        inputHash: entry.inputHash,
+        reviewerIdentity: `agent-${role}-${entry.reviewerRole}`,
+      },
+    });
+    await recordReviewerFinding(root, { stage: base.stage, finding: entry });
+  }
+  return { ...base, findingIds: findings.map(({ findingId }) => findingId) };
 }
 
 async function createRoot(temporaryDirectories: string[]): Promise<string> {
