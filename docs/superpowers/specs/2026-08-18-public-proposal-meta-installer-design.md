@@ -1,5 +1,7 @@
 # Public Proposal 단일 설치 패키지 설계
 
+> 2026-08-19 이후 제품 구조와 설치 표면은 [Public Proposal vNext 통합 제품 설계](./2026-08-19-public-proposal-vnext-design.md)에서 개정한다. 이 문서는 `@longtable/public-proposal@0.1.3`의 기존 설치 계약과 회귀 기준으로 유지한다.
+
 - 작성일: 2026-08-18
 - 저장소: `https://github.com/HosungYou/public-proposal`
 - 사용자 진입점: `@longtable/public-proposal`
