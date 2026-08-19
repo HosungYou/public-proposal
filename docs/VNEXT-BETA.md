@@ -11,7 +11,6 @@ npx --yes @longtable/public-proposal@0.1.3 setup --provider codex
 npx --yes @longtable/public-proposal@0.1.3 doctor --json
 npx --yes @longtable/public-proposal@0.1.3 update
 npx --yes @longtable/public-proposal@0.1.3 update --apply
-npx --yes --package @longtable/public-proposal@0.1.3 kpp adopt <legacy-project> --source <source-packet> --master <working-master> --json
 npx --yes @longtable/public-proposal@0.1.3 uninstall
 ```
 
@@ -36,6 +35,14 @@ npx --yes @longtable/public-proposal@<vnext-version> setup --provider codex
 ```
 
 `<vnext-version>` is a placeholder, not an invented release. Until that gate passes, this document does not provide a registry command for vNext.
+
+## vNext-only adoption (unavailable until publication)
+
+Adoption is a vNext-only command and is unavailable from published 0.1.3 until vNext publication and integrity verification. Once that gate passes, use the KPP binary from the verified vNext installation:
+
+```bash
+kpp adopt <legacy-project> --source <source-packet> --master <working-master> --json
+```
 
 In the vNext source, one setup registers `public-proposal@public-proposal` and `longtable@longtable` from independently receipted sources. A compatible external LongTable registration is reused and remains externally owned. Uninstall removes only installer-owned registrations and files. Codex has a **single global Codex `public-proposal` marketplace selector**, so user- and project-scoped installations with different sources cannot coexist; setup reports `PP_MARKETPLACE_CONFLICT`.
 

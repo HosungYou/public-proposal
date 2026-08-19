@@ -17,7 +17,6 @@ npx --yes @longtable/public-proposal@0.1.3 setup --provider codex
 npx --yes @longtable/public-proposal@0.1.3 doctor --json
 npx --yes @longtable/public-proposal@0.1.3 update
 npx --yes @longtable/public-proposal@0.1.3 update --apply
-npx --yes --package @longtable/public-proposal@0.1.3 kpp adopt <legacy-project> --source <source-packet> --master <working-master> --json
 npx --yes @longtable/public-proposal@0.1.3 uninstall
 ```
 
@@ -51,7 +50,7 @@ During migration, setup/update snapshot the prior receipt hash, both Codex regis
 
 The pinned `npx --yes @longtable/public-proposal@0.1.3` form is intentionally repeatable for the published legacy/current artifact. Setup does not install a persistent `public-proposal` executable. Use the future version-pinned vNext form only after its registry integrity gate passes.
 
-The `kpp adopt` line uses `npx --package` because adoption belongs to the pinned KPP binary supplied as a dependency, not to the installer command. A single setup invocation registers both `public-proposal@public-proposal` and `longtable@longtable` as independent plugins. Their skills and ownership remain separate.
+After vNext publication and integrity verification, `kpp adopt` will belong to the pinned KPP binary supplied by that installation, not to the installer command. It is unavailable from the published 0.1.3 artifact. A single vNext setup invocation registers both `public-proposal@public-proposal` and `longtable@longtable` as independent plugins. Their skills and ownership remain separate.
 
 ### Choose one installation scope
 
@@ -118,9 +117,9 @@ public-proposal uninstall
 
 Uninstall preserves existing LongTable projects, `.longtable/` research state, KPP project data, and customer material. `public-proposal update` previews compatibility changes; use `public-proposal update --apply` only after checking the preview and the compatibility matrix. With the published ephemeral path, use `npx --yes @longtable/public-proposal@0.1.3 uninstall` and `npx --yes @longtable/public-proposal@0.1.3 update` instead.
 
-## Adopt a legacy proposal project
+## Adopt a legacy proposal project (vNext; unavailable until publication)
 
-Adoption is a KPP project operation and does not mutate installer ownership:
+Adoption is a vNext-only command and is unavailable from published 0.1.3 until vNext publication and integrity verification. Once that gate passes, adoption is a KPP project operation and does not mutate installer ownership:
 
 ```bash
 kpp adopt <legacy-project> --source <rfp-or-source-packet> --master <working-master> --json

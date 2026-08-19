@@ -15,7 +15,6 @@ npx --yes @longtable/public-proposal@0.1.3 setup --provider codex
 npx --yes @longtable/public-proposal@0.1.3 doctor --json
 npx --yes @longtable/public-proposal@0.1.3 update
 npx --yes @longtable/public-proposal@0.1.3 update --apply
-npx --yes --package @longtable/public-proposal@0.1.3 kpp adopt <legacy-project> --source <source-packet> --master <working-master> --json
 npx --yes @longtable/public-proposal@0.1.3 uninstall
 ```
 
@@ -95,9 +94,9 @@ See [the benchmark protocol](docs/BENCHMARKING.md) for fixed budgets, scorer fie
 
 `npm run verify:public-proposal` writes a local release report with four separate booleans: `localArtifactVerified`, `registryAvailable`, `effectivenessValidated`, and `releaseReady`. The default deterministic benchmark is machine-only, so `effectivenessValidated` and `releaseReady` remain false. A local tarball or `npx --package <tarball>` run does not prove that npm can resolve the same artifact; the verifier checks the exact version and `dist.integrity` separately with `npm view @longtable/public-proposal@<version>`. See [the vNext beta gate](docs/VNEXT-BETA.md).
 
-### Adopt an existing draft
+### Adopt an existing draft (vNext; unavailable until publication)
 
-Use `adopt` when a legacy proposal directory has no KPP state:
+Adoption is a vNext-only command and is unavailable from published 0.1.3 until vNext publication and integrity verification. After that gate, use `adopt` when a legacy proposal directory has no KPP state:
 
 ```bash
 kpp adopt <legacy-project> --source <rfp-or-source-packet> --master <working-master> --json

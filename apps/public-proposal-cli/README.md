@@ -2,6 +2,8 @@
 
 Pinned meta-installer for the Public Proposal Codex plugin, bundled Korean public-proposal authority, KPP CLI, LongTable CLI, and managed KPP DOCX worker.
 
+## Published 0.1.3 legacy/current behavior
+
 Published 0.1.3 legacy/current behavior is available on npm. Pin the published artifact for the supported legacy command surface:
 
 ```bash
@@ -9,11 +11,12 @@ npx --yes @longtable/public-proposal@0.1.3 setup --provider codex
 npx --yes @longtable/public-proposal@0.1.3 doctor --json
 npx --yes @longtable/public-proposal@0.1.3 update
 npx --yes @longtable/public-proposal@0.1.3 update --apply
-npx --yes --package @longtable/public-proposal@0.1.3 kpp adopt <legacy-project> --source <source-packet> --master <working-master> --json
 npx --yes @longtable/public-proposal@0.1.3 uninstall
 ```
 
 The registry's 0.1.3 bytes are the legacy/current artifact, not this branch's independent two-plugin vNext surface. Do not present an unpinned `npx @longtable/public-proposal ...` command as vNext.
+
+## Local vNext tarball / hermetic verification
 
 Local vNext tarball / hermetic verification is performed by the bounded workspace verifier:
 
@@ -23,6 +26,8 @@ npm run verify:public-proposal
 
 The verifier installs the complete local workspace tarball set in an isolated fixture and checks the separate `public-proposal@public-proposal` and `longtable@longtable` registrations. A local tarball or `npx --package <tarball>` run is not evidence of npm registry identity.
 
+## Future vNext registry command
+
 Future vNext registry command, only after a new version is published and its exact `dist.integrity` is verified:
 
 ```bash
@@ -30,6 +35,14 @@ npx --yes @longtable/public-proposal@<vnext-version> setup --provider codex
 ```
 
 `<vnext-version>` is intentionally not an invented or currently available version. Until publication and integrity verification pass, use the local verifier rather than a registry command.
+
+## vNext-only adoption (unavailable until publication)
+
+Adoption is a vNext-only command and is unavailable from published 0.1.3 until vNext publication and integrity verification. Existing proposal work is adopted through KPP only after that gate:
+
+```bash
+kpp adopt <legacy-project> --source <source-packet> --master <working-master> --json
+```
 
 Setup creates or reuses two independent registrations, `public-proposal@public-proposal` and `longtable@longtable` in the vNext source. The single global Codex `public-proposal` marketplace selector still means differently sourced user and project installations cannot coexist. A conflict stops with `PP_MARKETPLACE_CONFLICT`.
 
@@ -46,12 +59,6 @@ This release coordinates the following exact contract:
 The user-facing `$public-proposal` skill provides conversation context and routing. KPP remains the only proposal-state and receipt writer; LongTable does not approve or release proposals. A Codex plugin install adds skills/resources only and does not expand Codex permissions.
 
 The vNext installer records Public Proposal and LongTable registration ownership separately. A compatible pre-existing `longtable@longtable` registration is `externally_owned` and remains untouched by uninstall; an absent registration is created in a separate installer-owned marketplace. Setup/update snapshot the previous receipt, registration state, and owned-file hashes before migration, add only missing registrations, run LongTable doctor, remove only legacy LongTable skill copies under Public Proposal-owned roots, and atomically replace the receipt. Failed migration compensates only additions from that invocation and is safe to retry.
-
-Existing proposal work is adopted through KPP, not the installer:
-
-```bash
-kpp adopt <legacy-project> --source <source-packet> --master <working-master> --json
-```
 
 The result is `UNMANAGED_DRAFT`. `.longtable/`, customer files, prior approval artifacts, and working bytes are not rewritten; source-less content remains provisional and approval/release receipts are never inferred.
 

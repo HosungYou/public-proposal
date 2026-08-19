@@ -6,6 +6,9 @@ const PUBLISHED_DOCTOR = "npx --yes @longtable/public-proposal@0.1.3 doctor --js
 const GLOBAL_DOCTOR_LINE = /^public-proposal doctor --json$/mu;
 const UNPINNED_COMMAND_LINE = /^\s*npx(?: --yes)? @longtable\/public-proposal (?:setup|doctor|update|uninstall)\b.*$/mu;
 const FUTURE_VNEXT_SETUP = "npx --yes @longtable/public-proposal@<vnext-version> setup --provider codex";
+const ADOPT_COMMAND = "kpp adopt <legacy-project> --source <source-packet> --master <working-master> --json";
+const LEGACY_HEADING = /^(?:#{2,3}) Published 0\.1\.3 legacy\/current behavior$/mu;
+const NEXT_HEADING = /^#{2,3} /mu;
 
 async function readInstallationDocs(): Promise<InstallationDocs> {
   const [readme, install, packageReadme, beta, matrixRaw] = await Promise.all([
@@ -44,6 +47,21 @@ test("documentation exposes a runnable ephemeral install and doctor path", async
   expect(primaryGuide).not.toMatch(GLOBAL_DOCTOR_LINE);
   expect(readme).not.toMatch(GLOBAL_DOCTOR_LINE);
   expect(packageReadme).not.toMatch(GLOBAL_DOCTOR_LINE);
+});
+
+test("published 0.1.3 command matrices do not advertise the vNext-only adopt command", async () => {
+  const { readme, install, packageReadme, beta } = await readInstallationDocs();
+
+  for (const document of [readme, install, packageReadme, beta]) {
+    const heading = document.match(LEGACY_HEADING);
+    expect(heading, "each install document must label its published command matrix").not.toBeNull();
+    const start = (heading?.index ?? 0) + (heading?.[0].length ?? 0);
+    const remainder = document.slice(start);
+    const nextHeading = remainder.match(NEXT_HEADING);
+    const legacyMatrix = remainder.slice(0, nextHeading?.index ?? remainder.length);
+    expect(legacyMatrix).not.toContain(ADOPT_COMMAND);
+    expect(document).toContain("Adoption is a vNext-only command and is unavailable from published 0.1.3 until vNext publication and integrity verification.");
+  }
 });
 
 test("documentation separates all four authorities, permissions, and research classes", async () => {
