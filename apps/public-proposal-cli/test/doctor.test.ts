@@ -225,6 +225,81 @@ describe("public proposal doctor", () => {
 
     expect(report.checks).toContainEqual(expect.objectContaining({ name: "plugin", status: "pass" }));
   });
+
+  it("rejects a LongTable marketplace source path that traverses outside its registered root before skill discovery", async () => {
+    const base = fakeDoctorDependencies({ longtableSourcePath: "../outside-plugin" });
+    const discovered: string[] = [];
+    const report = await runDoctor(fakeDoctorInput(), {
+      ...base,
+      listDir: async (path: string) => {
+        discovered.push(path);
+        return base.listDir?.(path) ?? [];
+      },
+    });
+
+    expect(report.ok).toBe(false);
+    expect(report.checks).toContainEqual(expect.objectContaining({
+      name: "longtablePlugin",
+      status: "blocker",
+      code: "PP_LONGTABLE_SOURCE_INVALID",
+    }));
+    expect(discovered).not.toContain("/home/ada/.config/public-proposal/outside-plugin/skills");
+  });
+
+  it("rejects a LongTable marketplace source path that resolves through a redirect before skill discovery", async () => {
+    const base = fakeDoctorDependencies({
+      longtablePluginRealpath: "/home/ada/.config/public-proposal/outside-plugin",
+    });
+    const discovered: string[] = [];
+    const report = await runDoctor(fakeDoctorInput(), {
+      ...base,
+      listDir: async (path: string) => {
+        discovered.push(path);
+        return base.listDir?.(path) ?? [];
+      },
+    });
+
+    expect(report.ok).toBe(false);
+    expect(report.checks).toContainEqual(expect.objectContaining({
+      name: "longtablePlugin",
+      status: "blocker",
+      code: "PP_LONGTABLE_SOURCE_INVALID",
+    }));
+    expect(discovered).not.toContain("/home/ada/.config/public-proposal/outside-plugin/skills");
+  });
+
+  it("rejects a LongTable manifest whose declared skills path is not the canonical ./skills/ surface before skill discovery", async () => {
+    const base = fakeDoctorDependencies({ longtableManifestSkills: "./redirected-skills/" });
+    const discovered: string[] = [];
+    const report = await runDoctor(fakeDoctorInput(), {
+      ...base,
+      listDir: async (path: string) => {
+        discovered.push(path);
+        return base.listDir?.(path) ?? [];
+      },
+    });
+
+    expect(report.ok).toBe(false);
+    expect(report.checks).toContainEqual(expect.objectContaining({
+      name: "longtablePlugin",
+      status: "blocker",
+      code: "PP_LONGTABLE_SOURCE_INVALID",
+    }));
+    expect(discovered).not.toContain("/home/ada/.config/public-proposal/longtable-marketplace/plugin/skills");
+  });
+
+  it("accepts the canonical in-root LongTable plugin and ./skills/ declaration", async () => {
+    const report = await runDoctor(fakeDoctorInput(), fakeDoctorDependencies());
+
+    expect(report.checks).toContainEqual(expect.objectContaining({
+      name: "longtablePlugin",
+      status: "pass",
+      detected: expect.objectContaining({
+        marketplaceSource: "/home/ada/.config/public-proposal/longtable-marketplace",
+      }),
+    }));
+    expect(report.checks).toContainEqual(expect.objectContaining({ name: "skillDiscovery", status: "pass" }));
+  });
 });
 
 function fakeDoctorInput(input?: Partial<DoctorInput>): DoctorInput {
@@ -252,6 +327,9 @@ function fakeDoctorDependencies(input?: {
     missingSkill?: string;
     codexRegistration?: boolean;
     legacySkill?: string;
+    longtableSourcePath?: string;
+    longtableManifestSkills?: string;
+    longtablePluginRealpath?: string;
 }): FakeDoctorDependencies {
   const kppVersion = input?.kppVersion === undefined ? SUPPORTED_KPP_VERSION : input.kppVersion;
   const longtableVersion =
@@ -353,11 +431,11 @@ function fakeDoctorDependencies(input?: {
       if (path === "/home/ada/.config/public-proposal/longtable-marketplace/.agents/plugins/marketplace.json") {
         return JSON.stringify({
           name: "longtable",
-          plugins: [{ name: "longtable", source: { source: "local", path: "./plugin" } }],
+          plugins: [{ name: "longtable", source: { source: "local", path: input?.longtableSourcePath ?? "./plugin" } }],
         });
       }
       if (path === "/home/ada/.config/public-proposal/longtable-marketplace/plugin/.codex-plugin/plugin.json") {
-        return JSON.stringify({ name: "longtable", version: "0.1.72" });
+        return JSON.stringify({ name: "longtable", version: "0.1.72", skills: input?.longtableManifestSkills ?? "./skills/" });
       }
       throw Object.assign(new Error(`ENOENT ${path}`), { code: "ENOENT" });
     },
@@ -375,7 +453,9 @@ function fakeDoctorDependencies(input?: {
       throw Object.assign(new Error(`ENOENT ${path}`), { code: "ENOENT" });
     },
     exists: async (path) => path.startsWith("/home/ada/.config/public-proposal") || path.startsWith("/pkg"),
-    realpath: async (path) => path,
+    realpath: async (path) => path === "/home/ada/.config/public-proposal/longtable-marketplace/plugin"
+      ? input?.longtablePluginRealpath ?? path
+      : path,
     spawn: async (command, args) => {
       const rendered = [command, ...args].join(" ");
       commands.push(rendered);

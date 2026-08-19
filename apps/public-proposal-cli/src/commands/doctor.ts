@@ -1,4 +1,4 @@
-import { dirname, join, resolve } from "node:path";
+import { dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
   parseInstallManifest,
@@ -170,7 +170,9 @@ async function pluginSurfaceChecks(
   );
 
   const publicSkills = await installedSkillNames(join(installRoot, "plugin", "skills"), dependencies);
-  const longtableSkills = await installedSkillNames(longtableSurface.skillsRoot, dependencies);
+  const longtableSkills = longtableSurface.valid
+    ? await installedSkillNames(longtableSurface.skillsRoot, dependencies)
+    : [];
   const exact = arraysEqual(publicSkills, EXPECTED_PUBLIC_PROPOSAL_SKILLS)
     && arraysEqual(longtableSkills, EXPECTED_LONGTABLE_SKILLS);
   const extraLongtableSkills = longtableSkills.filter((name) => !EXPECTED_LONGTABLE_SKILLS.includes(name as typeof EXPECTED_LONGTABLE_SKILLS[number]));
@@ -245,48 +247,160 @@ async function verifyPublicProposalSurface(
   }
 }
 
+interface LongtablePluginManifest {
+  readonly name?: string;
+  readonly version?: string;
+  readonly skills?: string;
+}
+
+type LongtableSurface =
+  | {
+    readonly valid: true;
+    readonly manifestPath: string;
+    readonly skillsRoot: string;
+    readonly marketplaceSource: string;
+    readonly plugin: LongtablePluginManifest;
+  }
+  | {
+    readonly valid: false;
+    readonly marketplaceSource: string;
+    readonly detected: unknown;
+    readonly message: string;
+  };
+
 async function resolveLongtableSurface(
   marketplaceSource: string,
   dependencies: DoctorDependencies,
-): Promise<{ manifestPath: string; skillsRoot: string; marketplaceSource: string }> {
+): Promise<LongtableSurface> {
+  const marketplaceRoot = resolve(marketplaceSource);
   for (const marketplacePath of [
-    join(marketplaceSource, ".agents", "plugins", "marketplace.json"),
-    join(marketplaceSource, "marketplace.json"),
+    join(marketplaceRoot, ".agents", "plugins", "marketplace.json"),
+    join(marketplaceRoot, "marketplace.json"),
   ]) {
+    let marketplaceRaw: string;
     try {
-      const marketplace = JSON.parse(await dependencies.readFile(marketplacePath)) as {
+      marketplaceRaw = await dependencies.readFile(marketplacePath);
+    } catch {
+      continue;
+    }
+    try {
+      const marketplace = JSON.parse(marketplaceRaw) as {
         plugins?: Array<{ name?: string; source?: { source?: string; path?: string } }>;
       };
       const entry = marketplace.plugins?.find((candidate) => candidate.name === "longtable");
-      if (entry?.source?.source === "local" && entry.source.path) {
-        const pluginRoot = resolve(marketplaceSource, entry.source.path);
-        return {
-          manifestPath: join(pluginRoot, ".codex-plugin", "plugin.json"),
-          skillsRoot: join(pluginRoot, "skills"),
+      if (entry?.source?.source !== "local" || typeof entry.source.path !== "string") {
+        return invalidLongtableSurface(
           marketplaceSource,
-        };
+          { marketplacePath, entry },
+          "LongTable marketplace source must declare a local plugin path.",
+        );
       }
-    } catch {
-      // Try the packaged marketplace layout.
+      return resolveDeclaredLongtableSurface(marketplaceRoot, marketplaceSource, entry.source.path, dependencies);
+    } catch (error) {
+      return invalidLongtableSurface(
+        marketplaceSource,
+        error instanceof Error ? error.message : String(error),
+        "LongTable marketplace manifest cannot be parsed safely.",
+      );
     }
   }
-  const pluginRoot = join(marketplaceSource, "plugin");
-  return {
-    manifestPath: join(pluginRoot, ".codex-plugin", "plugin.json"),
-    skillsRoot: join(pluginRoot, "skills"),
-    marketplaceSource,
-  };
+  return resolveDeclaredLongtableSurface(marketplaceRoot, marketplaceSource, "./plugin", dependencies);
+}
+
+async function resolveDeclaredLongtableSurface(
+  marketplaceRoot: string,
+  marketplaceSource: string,
+  declaredPath: string,
+  dependencies: DoctorDependencies,
+): Promise<LongtableSurface> {
+  const declaredRoot = resolve(marketplaceRoot, declaredPath);
+  if (
+    isAbsolute(declaredPath)
+    || declaredPath.split(/[\\/]/u).includes("..")
+    || !isStrictChild(marketplaceRoot, declaredRoot)
+  ) {
+    return invalidLongtableSurface(
+      marketplaceSource,
+      { marketplaceRoot, declaredPath, declaredRoot },
+      "LongTable marketplace source path must remain within its registered marketplace root.",
+    );
+  }
+  if (!dependencies.realpath) {
+    return invalidLongtableSurface(
+      marketplaceSource,
+      { marketplaceRoot, declaredPath },
+      "LongTable marketplace source path cannot be verified without canonical path resolution.",
+    );
+  }
+  try {
+    const [canonicalMarketplaceRoot, canonicalPluginRoot] = await Promise.all([
+      dependencies.realpath(marketplaceRoot),
+      dependencies.realpath(declaredRoot),
+    ]);
+    const expectedPluginRoot = resolve(canonicalMarketplaceRoot, declaredPath);
+    if (
+      !isStrictChild(canonicalMarketplaceRoot, canonicalPluginRoot)
+      || canonicalPluginRoot !== expectedPluginRoot
+    ) {
+      return invalidLongtableSurface(
+        marketplaceSource,
+        { marketplaceRoot, canonicalMarketplaceRoot, declaredPath, canonicalPluginRoot, expectedPluginRoot },
+        "LongTable marketplace source path resolves through a symlink or redirect.",
+      );
+    }
+    const manifestPath = join(canonicalPluginRoot, ".codex-plugin", "plugin.json");
+    const plugin = JSON.parse(await dependencies.readFile(manifestPath)) as LongtablePluginManifest;
+    if (plugin.skills !== "./skills/") {
+      return invalidLongtableSurface(
+        marketplaceSource,
+        { manifestPath, declaredSkills: plugin.skills },
+        "LongTable plugin manifest must declare the canonical ./skills/ surface.",
+      );
+    }
+    const skillsRoot = join(canonicalPluginRoot, "skills");
+    const canonicalSkillsRoot = await dependencies.realpath(skillsRoot);
+    if (canonicalSkillsRoot !== skillsRoot) {
+      return invalidLongtableSurface(
+        marketplaceSource,
+        { skillsRoot, canonicalSkillsRoot },
+        "LongTable plugin skills path resolves through a symlink or redirect.",
+      );
+    }
+    return { valid: true, manifestPath, skillsRoot, marketplaceSource, plugin };
+  } catch (error) {
+    return invalidLongtableSurface(
+      marketplaceSource,
+      error instanceof Error ? error.message : String(error),
+      "LongTable marketplace source cannot be resolved safely.",
+    );
+  }
+}
+
+function invalidLongtableSurface(
+  marketplaceSource: string,
+  detected: unknown,
+  message: string,
+): LongtableSurface {
+  return { valid: false, marketplaceSource, detected, message };
+}
+
+function isStrictChild(root: string, candidate: string): boolean {
+  const path = relative(root, candidate);
+  return path.length > 0 && !path.startsWith("..") && !isAbsolute(path);
 }
 
 async function verifyLongtableSurface(
-  surface: { manifestPath: string; marketplaceSource: string },
+  surface: LongtableSurface,
   manifest: ReturnType<typeof parseInstallManifest>,
   marketplaces: Awaited<ReturnType<ProcessRunner>>,
   plugins: Awaited<ReturnType<ProcessRunner>>,
   dependencies: DoctorDependencies,
 ): Promise<DoctorCheck> {
+  if (!surface.valid) {
+    return blocker("longtablePlugin", "PP_LONGTABLE_SOURCE_INVALID", surface.detected, surface.message);
+  }
   try {
-    const plugin = JSON.parse(await dependencies.readFile(surface.manifestPath)) as { name?: string; version?: string };
+    const plugin = surface.plugin;
     const registered = marketplaces.code === 0 && plugins.code === 0
       && marketplaceListContainsNamed(marketplaces.stdout, "longtable", surface.marketplaceSource)
       && pluginListContainsNamed(plugins.stdout, "longtable@longtable", "longtable", "longtable");

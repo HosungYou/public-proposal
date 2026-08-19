@@ -787,6 +787,7 @@ function fakeSetupDependencies(input?: {
     files[`${externalRoot}/plugin/.codex-plugin/plugin.json`] = JSON.stringify({
       name: "longtable",
       version: SUPPORTED_LONGTABLE_VERSION,
+      skills: "./skills/",
     });
     files[`${externalRoot}/plugin/skills/longtable/SKILL.md`] = "# LongTable\n";
     files[`${externalRoot}/plugin/skills/longtable-research/SKILL.md`] = "# LongTable Research\n";
