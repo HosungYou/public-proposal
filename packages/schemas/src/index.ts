@@ -67,6 +67,9 @@ export {
   AuthoringResponseBlockSchema,
   AuthoringResponseSchema,
   IssuerProfileSchema,
+  SectionAuthoringRequestSchema,
+  SectionAuthoringResponseItemSchema,
+  SectionAuthoringResponseSchema,
   type ApprovedTerminology,
   type AuthoringArtifacts,
   type AuthoringClaimScope,
@@ -77,6 +80,9 @@ export {
   type AuthoringResponse,
   type AuthoringResponseBlock,
   type IssuerProfile,
+  type SectionAuthoringRequest,
+  type SectionAuthoringResponse,
+  type SectionAuthoringResponseItem,
 } from "./authoring-bundle.js";
 export {
   DeterministicFigureRendererSchema,

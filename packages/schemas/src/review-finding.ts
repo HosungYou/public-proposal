@@ -15,6 +15,8 @@ export const PatchProposalV1Schema = z.object({
 
 export const ReviewerFindingV1Schema = z.object({
   findingId: IdentifierSchema,
+  reviewerRole: z.string().min(1),
+  inputHash: Sha256Schema,
   artifactHash: Sha256Schema,
   target: z.object({
     sectionId: IdentifierSchema.optional(),

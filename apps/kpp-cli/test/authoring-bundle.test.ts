@@ -170,6 +170,54 @@ describe("model-independent authoring bundle exchange", () => {
     expect(importResult).toMatchObject({ code: 0, stderr: "" });
     expect(await readProject(fixture.root)).toMatchObject({ state: "EVIDENCE_LOCKED" });
   });
+
+  it("keeps the legacy page adapter while exporting and importing a section-only authoring exchange", async () => {
+    const fixture = await createFixture(temporaryDirectories);
+    const sectionPlanPath = join(fixture.fixtureDirectory, "section-plan.json");
+    await writeFile(sectionPlanPath, `${JSON.stringify({
+      schemaVersion: "section-plan/v1",
+      projectId: "project",
+      sections: [{
+        sectionId: "section-method",
+        parentSectionId: null,
+        purpose: "연구 방법을 설명한다.",
+        readerTasks: ["수행 방법을 판단한다."],
+        requirementIds: ["REQ-001"],
+        claimIds: ["CLAIM-001", "CLAIM-BLANK"],
+        evidenceIds: ["EV-001"],
+        argumentMoves: ["method", "evidence", "action"],
+        visualNeeds: [],
+        openDecisionIds: [],
+        representativeRole: "method",
+      }],
+    }, null, 2)}\n`, "utf8");
+
+    const exported = await run(["export-authoring", fixture.root, "--section-plan", sectionPlanPath, "--json"]);
+    expect(exported, exported.stdout).toMatchObject({ code: 0, stderr: "" });
+    const request = JSON.parse(await readFile(join(fixture.root, "content", "section-authoring-request.json"), "utf8"));
+    expect(request).toMatchObject({ schemaVersion: "section-authoring-request/v1" });
+    expect(JSON.stringify(request)).not.toContain("pageId");
+    expect(JSON.stringify(request)).not.toContain("evaluatorAnswer");
+
+    const responsePath = join(fixture.fixtureDirectory, "section-response.json");
+    await writeFile(responsePath, `${JSON.stringify({
+      schemaVersion: "section-authoring-response/v1",
+      projectId: "project",
+      inputHash: request.inputHash,
+      sections: [{
+        sectionId: "section-method",
+        paragraphs: ["공식 근거를 바탕으로 연구 방법을 설명한다."],
+        tableFigureReferences: [],
+        claimIds: ["CLAIM-001", "CLAIM-BLANK"],
+        evidenceIds: ["EV-001"],
+        unresolvedDecisionIds: [],
+      }],
+    }, null, 2)}\n`, "utf8");
+    const imported = await run(["import-authoring", fixture.root, "--response", responsePath, "--json"]);
+    expect(imported).toMatchObject({ code: 0, stderr: "" });
+    await expect(readFile(join(fixture.root, "content", "section-authoring-response.json"), "utf8")).resolves.toContain("section-method");
+    expect(await readProject(fixture.root)).toMatchObject({ state: "EVIDENCE_LOCKED" });
+  });
 });
 
 function responseWith(

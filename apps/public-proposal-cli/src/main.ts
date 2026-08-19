@@ -16,6 +16,7 @@ import { runSetup } from "./commands/setup.js";
 import { runUninstall } from "./commands/uninstall.js";
 import { runUpdate } from "./commands/update.js";
 import { installationRoot } from "./paths.js";
+import { AGENT_TRIGGER_MATRIX, selectAgentProfile, type AgentStage, type ProposalClass, type ProposalRisk } from "./agent-policy.js";
 
 interface CliEnvelope {
   readonly ok: boolean;
@@ -50,6 +51,18 @@ interface UpdateCliOptions extends JsonOption {
   readonly apply?: boolean;
   readonly installRoot?: string;
   readonly installScope?: "user" | "project";
+}
+
+interface AgentProfileCliOptions extends JsonOption {
+  readonly proposalClass?: ProposalClass;
+  readonly risk?: ProposalRisk;
+  readonly stage?: AgentStage;
+  readonly hasFigure?: boolean;
+  readonly hasTable?: boolean;
+  readonly representative?: boolean;
+  readonly hasInstitutionFacts?: boolean;
+  readonly hasQualificationOrPii?: boolean;
+  readonly hasAcademicEvidence?: boolean;
 }
 
 export async function runCli(argv: readonly string[]): Promise<number> {
@@ -155,6 +168,33 @@ export async function runCli(argv: readonly string[]): Promise<number> {
         throw new PublicProposalCliError(code, "Public Proposal update apply failed.", result);
       }
       writeEnvelope(success("Public Proposal update preview completed.", result), Boolean(options.json));
+    });
+
+  program
+    .command("agent-profile")
+    .option("--proposal-class <proposalClass>", "Proposal class", "general_procurement")
+    .option("--risk <risk>", "Proposal risk", "low")
+    .option("--stage <stage>", "Workflow stage", "authoring")
+    .option("--has-figure", "Route visual/render review")
+    .option("--has-table", "Route visual/render review")
+    .option("--representative", "Route representative prose/evaluator review")
+    .option("--has-institution-facts", "Route institutional evidence/data review")
+    .option("--has-qualification-or-pii", "Route proof/privacy review")
+    .option("--has-academic-evidence", "Route conditional LongTable research")
+    .option("--json", "Emit the standard JSON envelope")
+    .action((options: AgentProfileCliOptions) => {
+      const plan = selectAgentProfile({
+        proposalClass: options.proposalClass ?? "general_procurement",
+        risk: options.risk ?? "low",
+        stage: options.stage ?? "authoring",
+        hasFigure: Boolean(options.hasFigure),
+        hasTable: Boolean(options.hasTable),
+        representative: Boolean(options.representative),
+        hasInstitutionFacts: Boolean(options.hasInstitutionFacts),
+        hasQualificationOrPii: Boolean(options.hasQualificationOrPii),
+        hasAcademicEvidence: Boolean(options.hasAcademicEvidence),
+      });
+      writeEnvelope(success("Public Proposal agent profile selected.", { plan, triggerMatrix: AGENT_TRIGGER_MATRIX }), Boolean(options.json));
     });
 
   try {

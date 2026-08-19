@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { EvidenceStatusSchema } from "./evidence.js";
 import { SemanticFigureSpecSchema } from "./figure-spec.js";
+import { SectionPlanV1Schema } from "./section-plan.js";
 
 const IdentifierSchema = z.string().min(1);
 const Sha256Schema = z.string().regex(/^[a-f0-9]{64}$/);
@@ -109,6 +110,42 @@ export const AuthoringResponseSchema = z.object({
   blocks: z.array(AuthoringResponseBlockSchema).min(1),
 }).strict();
 
+/**
+ * vNext authoring is section-first. It intentionally carries no page IDs,
+ * page-break instructions, or evaluator-answer fields; those remain in the
+ * v0.1.3 page adapter above until a later major migration.
+ */
+export const SectionAuthoringRequestSchema = z.object({
+  schemaVersion: z.literal("section-authoring-request/v1"),
+  projectId: IdentifierSchema,
+  inputHash: Sha256Schema,
+  sectionPlan: SectionPlanV1Schema,
+}).strict().superRefine((value, context) => {
+  if (value.sectionPlan.projectId !== value.projectId) {
+    context.addIssue({
+      code: "custom",
+      message: "section authoring request project ID must match section plan project ID",
+      path: ["sectionPlan", "projectId"],
+    });
+  }
+});
+
+export const SectionAuthoringResponseItemSchema = z.object({
+  sectionId: IdentifierSchema,
+  paragraphs: z.array(z.string().min(1)).min(1),
+  tableFigureReferences: z.array(IdentifierSchema),
+  claimIds: z.array(IdentifierSchema),
+  evidenceIds: z.array(IdentifierSchema),
+  unresolvedDecisionIds: z.array(IdentifierSchema),
+}).strict();
+
+export const SectionAuthoringResponseSchema = z.object({
+  schemaVersion: z.literal("section-authoring-response/v1"),
+  projectId: IdentifierSchema,
+  inputHash: Sha256Schema,
+  sections: z.array(SectionAuthoringResponseItemSchema).min(1),
+}).strict();
+
 export type IssuerProfile = z.infer<typeof IssuerProfileSchema>;
 export type ApprovedTerminology = z.infer<typeof ApprovedTerminologySchema>;
 export type AuthoringInputProvenance = z.infer<typeof AuthoringInputProvenanceSchema>;
@@ -119,3 +156,6 @@ export type AuthoringContentBlock = z.infer<typeof AuthoringContentBlockSchema>;
 export type AuthoringRequest = z.infer<typeof AuthoringRequestSchema>;
 export type AuthoringResponseBlock = z.infer<typeof AuthoringResponseBlockSchema>;
 export type AuthoringResponse = z.infer<typeof AuthoringResponseSchema>;
+export type SectionAuthoringRequest = z.infer<typeof SectionAuthoringRequestSchema>;
+export type SectionAuthoringResponseItem = z.infer<typeof SectionAuthoringResponseItemSchema>;
+export type SectionAuthoringResponse = z.infer<typeof SectionAuthoringResponseSchema>;

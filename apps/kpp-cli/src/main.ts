@@ -134,10 +134,11 @@ export async function runCli(argv: readonly string[]): Promise<number> {
     .command("export-authoring <root>")
     .option("--issuer-profile <path>", "확인된 기관 프로필 JSON")
     .option("--terminology <path>", "승인된 용어집 JSON")
+    .option("--section-plan <path>", "vNext section-centered authoring plan JSON")
     .option("--json", "JSON 형식으로 출력")
     .action(async (
       root: string,
-      options: JsonOption & { issuerProfile?: string; terminology?: string },
+      options: JsonOption & { issuerProfile?: string; terminology?: string; sectionPlan?: string },
     ) => {
       writeEnvelope(await exportAuthoringCommand(root, options), options.json === true);
     });
