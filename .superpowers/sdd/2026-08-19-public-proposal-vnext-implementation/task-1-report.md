@@ -87,3 +87,63 @@ Result: exit 0.
 
 - `a330bec497977460af0a5e6597b0215f792f7ebb`
   (`feat: add proposal research contract package`)
+
+## Review fixes (2026-08-19)
+
+### Changes
+
+- Added `document_restyle` to `ResearchProposalClassSchema` so the research
+  request remains compatible with the existing proposal-class convention in
+  `packages/schemas/src/project.ts`.
+- Added bundle-level provenance checks for claim `sourceIds` and `dataIds`,
+  figure `sourceCaption.sourceIds`, and transformation `inputDatasetIds`.
+  Each dangling identifier now emits a targeted Zod issue at its array path.
+- Added one acceptance test for `document_restyle`, four dangling-reference
+  rejection tests, and a valid bundle fixture proving the references accepted
+  by the tests remain valid.
+
+### TDD and verification evidence
+
+The review regression tests were run before the fix:
+
+```text
+npm test -- packages/proposal-research-contracts/test/contracts.test.ts
+```
+
+Result: exit 1; Vitest reported `8 tests | 5 failed`, with the compatibility
+test returning `false` instead of `true` and each of the four dangling-reference
+tests returning `true` instead of `false`.
+
+After the schema changes, the focused test was run:
+
+```text
+npm test -- packages/proposal-research-contracts/test/contracts.test.ts
+```
+
+Result: exit 0; `Test Files 1 passed (1)`, `Tests 8 passed (8)`.
+
+Exact final fix verification command:
+
+```text
+npm test -- packages/proposal-research-contracts/test/contracts.test.ts && npm run typecheck && npm run build --workspace @longtable/proposal-research-contracts && npm pack --workspace @longtable/proposal-research-contracts --dry-run
+```
+
+Result: exit 0.
+
+- Focused tests: `1` file and `8` tests passed.
+- Root typecheck: base TypeScript check, contract package typecheck, and
+  existing public-proposal typecheck all exited 0.
+- Contract build: `tsc -p tsconfig.json` exited 0.
+- Pack dry run: `@longtable/proposal-research-contracts@0.1.0`, `10` files,
+  README/package metadata plus `dist` output only; package size `9.6 kB`,
+  unpacked size `49.5 kB`.
+
+### Fix commit
+
+- `fe427eb50f2b08ba9d19dc6da0976627582a3d11`
+  (`fix: close proposal research provenance references`)
+
+The pre-existing untracked
+`docs/superpowers/plans/2026-08-18-public-proposal-meta-installer.md` remains
+untouched. The full repository test suite remains outside this focused review
+fix verification.
