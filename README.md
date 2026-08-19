@@ -14,7 +14,7 @@ npx @longtable/public-proposal setup --provider codex
 
 To reproduce this exact release, use `npx @longtable/public-proposal@0.1.3 ...`; leaving off the version resolves the current `latest` tag.
 
-It pins `@longtable/kpp-cli@0.2.1`, `@longtable/cli@0.1.72`, and managed worker protocol `1.0.0`. LongTable installs `$longtable` and `$longtable-research` into the registered Public Proposal plugin's `skills/` surface, and doctor verifies those files plus Codex marketplace/plugin registration. Node `>=22 <27` and Python `>=3.11 <3.15` are compatibility requirements. The current setup and doctor commands verify that the required executables are available; they do not yet enforce those runtime version ranges.
+It pins `@longtable/kpp-cli@0.2.1`, `@longtable/cli@0.1.72`, and managed worker protocol `1.0.0`. In the vNext source, Public Proposal and LongTable are independent Codex registrations. Setup reuses a compatible external `longtable@longtable` registration or creates a separately receipted installer-owned LongTable marketplace; uninstall never removes an externally owned registration. Node `>=22 <27` and Python `>=3.11 <3.15` are compatibility requirements. The current setup and doctor commands verify that the required executables are available; they do not yet enforce those runtime version ranges.
 
 After setup, inspect the installed boundary without changing it:
 
@@ -58,6 +58,16 @@ kpp research-lock <project-root> --handoff <longtable-handoff.json> --json
 An `AI-assisted draft` or a technical audit pass is not submission readiness. Release requires issuer compliance, evidence binding, rendered DOCX/PDF inspection, and explicit human approval.
 
 Customer documents, private evidence, personnel records, pricing, and bid-specific facts must remain in a separate project workspace.
+
+### Adopt an existing draft
+
+Use `adopt` when a legacy proposal directory has no KPP state:
+
+```bash
+kpp adopt <legacy-project> --source <rfp-or-source-packet> --master <working-master> --json
+```
+
+Adoption detects candidate RFP/source/master files, imports existing claim/evidence/figure ledgers, links readable `.longtable` runs in place, and labels source-less content `provisional`. When a legacy Living Brief exists, KPP creates a candidate and decision diff for human review. It always stops at `UNMANAGED_DRAFT`; it never creates content approval, human approval, or release receipts. An unchanged retry is idempotent. Changed input bytes fail with `KPP_ADOPTION_INPUT_CHANGED` and an explicit diff instead of overwriting the first adoption receipt.
 
 See [`docs/architecture/public-proposal-context.md`](docs/architecture/public-proposal-context.md) for repository ownership, package responsibilities, context lanes, and release language.
 

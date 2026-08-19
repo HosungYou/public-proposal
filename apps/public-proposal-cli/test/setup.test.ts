@@ -50,9 +50,9 @@ describe("public proposal setup", () => {
       fake,
     );
 
-    expect(first.ok).toBe(true);
+    expect(first, JSON.stringify(first)).toMatchObject({ ok: true });
     expect(second.ok).toBe(true);
-    expect(fake.commands.filter((command) => command.includes("plugin marketplace add"))).toHaveLength(1);
+    expect(fake.commands.filter((command) => command === "codex plugin marketplace add /home/ada/.config/public-proposal/marketplace")).toHaveLength(1);
     expect(fake.commands.filter((command) => command.includes("plugin add public-proposal@public-proposal"))).toHaveLength(1);
     expect(fake.writes).toContain("/home/ada/.config/public-proposal/installation.json.tmp");
     expect(fake.renames).toContainEqual({
@@ -177,6 +177,54 @@ describe("public proposal setup", () => {
     });
   });
 
+  it("migrates a current receipt with snapshots and removes only installer-owned legacy LongTable copies", async () => {
+    const installRoot = "/home/ada/.config/public-proposal";
+    const fake = fakeSetupDependencies({
+      preexistingMarketplaceRegistration: true,
+      preexistingPluginRegistration: true,
+      preexistingLongtableMarketplaceRegistration: true,
+      preexistingLongtablePluginRegistration: true,
+      preexistingLongtableMarketplacePath: "/opt/longtable/marketplace",
+    });
+    seedInstalledPlugin(fake, installRoot);
+    fake.files[`${installRoot}/marketplace/.dir`] = "dir";
+    fake.files[`${installRoot}/worker/bin/python`] = "#!/usr/bin/env sh\n";
+    fake.files[`${installRoot}/plugin/skills/longtable/SKILL.md`] = "legacy owned copy";
+    fake.files[`${installRoot}/marketplace/plugin/skills/longtable-research/SKILL.md`] = "legacy owned copy";
+    fake.files[`${installRoot}/installation.json`] = JSON.stringify({
+      ...fakeManifest(),
+      codexRegistrations: { pluginAdded: true, marketplaceAdded: true },
+    });
+    fake.files["/opt/longtable/marketplace/external-marker.txt"] = "keep";
+
+    const result = await runSetup(
+      { provider: "codex", installScope: "user", cwd: "/work", home: "/home/ada" },
+      fake,
+    );
+
+    expect(result).toMatchObject({
+      ok: true,
+      manifest: {
+        migrationSnapshot: {
+          previousReceiptSha256: expect.any(String),
+          registrations: expect.arrayContaining([
+            expect.objectContaining({ pluginId: "public-proposal@public-proposal", installed: true }),
+            expect.objectContaining({ pluginId: "longtable@longtable", installed: true }),
+          ]),
+          ownedFileHashes: expect.objectContaining({
+            [`${installRoot}/plugin/.codex-plugin/plugin.json`]: expect.any(String),
+          }),
+        },
+        registrationOwnership: {
+          longtable: expect.objectContaining({ ownership: "externally_owned", marketplaceSource: "/opt/longtable/marketplace" }),
+        },
+      },
+    });
+    expect(fake.files[`${installRoot}/plugin/skills/longtable/SKILL.md`]).toBeUndefined();
+    expect(fake.files[`${installRoot}/marketplace/plugin/skills/longtable-research/SKILL.md`]).toBeUndefined();
+    expect(fake.files["/opt/longtable/marketplace/external-marker.txt"]).toBe("keep");
+  });
+
   it("persists a canonical receipt and remains idempotent when setup receives a relative install root", async () => {
     const fake = fakeSetupDependencies();
     const relativeRoot = `.public-proposal-relative-${process.pid}`;
@@ -194,9 +242,10 @@ describe("public proposal setup", () => {
         `${canonicalRoot}/plugin`,
         `${canonicalRoot}/marketplace`,
         `${canonicalRoot}/worker`,
+        `${canonicalRoot}/longtable-marketplace`,
       ],
     });
-    expect(fake.commands.filter((command) => command.includes("plugin marketplace add"))).toHaveLength(1);
+    expect(fake.commands.filter((command) => command === `codex plugin marketplace add ${canonicalRoot}/marketplace`)).toHaveLength(1);
   });
 
   it("rolls back owned setup paths and does not publish a manifest when a post-mutation step fails", async () => {
@@ -252,8 +301,72 @@ describe("public proposal setup", () => {
     );
 
     expect(result.ok).toBe(false);
-    expect(fake.commands.some((command) => command.startsWith("codex plugin remove "))).toBe(false);
-    expect(fake.commands.some((command) => command.startsWith("codex plugin marketplace remove "))).toBe(false);
+    expect(fake.commands).not.toContain("codex plugin remove public-proposal@public-proposal --json");
+    expect(fake.commands).not.toContain("codex plugin marketplace remove public-proposal --json");
+  });
+
+  it("records a compatible external LongTable registration without copying or owning it", async () => {
+    const fake = fakeSetupDependencies({
+      preexistingLongtableMarketplaceRegistration: true,
+      preexistingLongtablePluginRegistration: true,
+      preexistingLongtableMarketplacePath: "/opt/longtable/marketplace",
+    });
+    fake.files["/opt/longtable/marketplace/external-marker.txt"] = "external-longtable";
+    fake.files["/work/customer-evidence/source.pdf"] = "customer-bytes";
+
+    const result = await runSetup(
+      { provider: "codex", installScope: "user", cwd: "/work", home: "/home/ada" },
+      fake,
+    );
+
+    expect(result).toMatchObject({
+      ok: true,
+      manifest: {
+        registrationOwnership: {
+          publicProposal: expect.objectContaining({ ownership: "installer_owned" }),
+          longtable: {
+            ownership: "externally_owned",
+            pluginId: "longtable@longtable",
+            marketplaceName: "longtable",
+            marketplaceSource: "/opt/longtable/marketplace",
+            pluginAdded: false,
+            marketplaceAdded: false,
+          },
+        },
+        ownedFileHashes: expect.objectContaining({
+          "/home/ada/.config/public-proposal/plugin/.codex-plugin/plugin.json": expect.any(String),
+        }),
+      },
+    });
+    expect(fake.commands).not.toContain("codex plugin add longtable@longtable");
+    expect(fake.files["/opt/longtable/marketplace/external-marker.txt"]).toBe("external-longtable");
+    expect(fake.files["/work/customer-evidence/source.pdf"]).toBe("customer-bytes");
+  });
+
+  it("compensates a newly added LongTable registration and retries without duplicate installed entries", async () => {
+    const fake = fakeSetupDependencies({ workerFailureOnce: new Error("worker failed once") });
+
+    const first = await runSetup(
+      { provider: "codex", installScope: "user", cwd: "/work", home: "/home/ada" },
+      fake,
+    );
+    const second = await runSetup(
+      { provider: "codex", installScope: "user", cwd: "/work", home: "/home/ada" },
+      fake,
+    );
+
+    expect(first.ok).toBe(false);
+    expect(fake.commands).toContain("codex plugin remove longtable@longtable --json");
+    expect(fake.commands).toContain("codex plugin marketplace remove longtable --json");
+    expect(second).toMatchObject({
+      ok: true,
+      manifest: {
+        registrationOwnership: {
+          longtable: expect.objectContaining({ ownership: "installer_owned", pluginAdded: true, marketplaceAdded: true }),
+        },
+      },
+    });
+    expect(fake.commands.filter((command) => command === "codex plugin add longtable@longtable")).toHaveLength(2);
   });
 
   it("reports a failed Codex compensation instead of claiming a clean rollback", async () => {
@@ -273,7 +386,7 @@ describe("public proposal setup", () => {
     expect(result.error?.message).toContain("remove failed");
   });
 
-  it("installs both LongTable skills into the plugin-discoverable skill surface", async () => {
+  it("installs both LongTable skills only into the independent LongTable plugin surface", async () => {
     const fake = fakeSetupDependencies();
 
     const result = await runSetup(
@@ -283,10 +396,11 @@ describe("public proposal setup", () => {
 
     expect(result.ok).toBe(true);
     expect(fake.commands).toContain(
-      "longtable codex install-skills --surface compact --dir /home/ada/.config/public-proposal/plugin/skills",
+      "longtable codex install-skills --surface compact --dir /home/ada/.config/public-proposal/longtable-marketplace/plugin/skills",
     );
-    expect(fake.files["/home/ada/.config/public-proposal/plugin/skills/longtable/SKILL.md"]).toContain("LongTable");
-    expect(fake.files["/home/ada/.config/public-proposal/plugin/skills/longtable-research/SKILL.md"]).toContain("LongTable Research");
+    expect(fake.files["/home/ada/.config/public-proposal/longtable-marketplace/plugin/skills/longtable/SKILL.md"]).toContain("LongTable");
+    expect(fake.files["/home/ada/.config/public-proposal/longtable-marketplace/plugin/skills/longtable-research/SKILL.md"]).toContain("LongTable Research");
+    expect(fake.files["/home/ada/.config/public-proposal/plugin/skills/longtable/SKILL.md"]).toBeUndefined();
   });
 
   it("normalizes the legacy scholar-research skill and mirrors it into the registered plugin", async () => {
@@ -297,10 +411,10 @@ describe("public proposal setup", () => {
     );
 
     expect(result.ok).toBe(true);
+    expect(fake.files["/home/ada/.config/public-proposal/longtable-marketplace/plugin/skills/longtable-research/SKILL.md"])
+      .toContain("name: longtable-research");
     expect(fake.files["/home/ada/.config/public-proposal/plugin/skills/longtable-research/SKILL.md"])
-      .toContain("name: longtable-research");
-    expect(fake.files["/home/ada/.config/public-proposal/marketplace/plugin/skills/longtable-research/SKILL.md"])
-      .toContain("name: longtable-research");
+      .toBeUndefined();
   });
 
   it("allows setup when LongTable exposes no --version command but the pinned package metadata is present", async () => {
@@ -586,10 +700,14 @@ function fakeSetupDependencies(input?: {
   installRoot?: string;
   realFilesystemWrites?: boolean;
   workerFailure?: Error;
+  workerFailureOnce?: Error;
   preexistingMarketplaceRegistration?: boolean;
   preexistingMarketplacePath?: string;
   preexistingPluginRegistration?: boolean;
   legacyLongtableSkills?: boolean;
+  preexistingLongtableMarketplaceRegistration?: boolean;
+  preexistingLongtableMarketplacePath?: string;
+  preexistingLongtablePluginRegistration?: boolean;
 }): FakeSetupDependencies {
   const installRoot = input?.installRoot ?? "/home/ada/.config/public-proposal";
   const files: Record<string, string> = {
@@ -614,6 +732,10 @@ function fakeSetupDependencies(input?: {
     marketplaceRegistered: input?.preexistingMarketplaceRegistration ?? false,
     pluginRegistered: input?.preexistingPluginRegistration ?? false,
     marketplacePath: input?.preexistingMarketplacePath ?? `${installRoot}/marketplace`,
+    longtableMarketplaceRegistered: input?.preexistingLongtableMarketplaceRegistration ?? false,
+    longtablePluginRegistered: input?.preexistingLongtablePluginRegistration ?? false,
+    longtableMarketplacePath: input?.preexistingLongtableMarketplacePath ?? `${installRoot}/longtable-marketplace`,
+    workerFailuresRemaining: input?.workerFailureOnce ? 1 : 0,
   };
 
   return {
@@ -693,6 +815,10 @@ function fakeSetupDependencies(input?: {
       }
       if (input?.workerFailure !== undefined) {
         throw input.workerFailure;
+      }
+      if (state.workerFailuresRemaining > 0) {
+        state.workerFailuresRemaining -= 1;
+        throw input?.workerFailureOnce;
       }
       return {
         executable,
@@ -785,19 +911,30 @@ function fakeSetupDependencies(input?: {
         }
         return ok("");
       }
-      if (rendered.startsWith("codex plugin marketplace list")) return ok(state.marketplaceRegistered || files[`${installRoot}/installation.json`] !== undefined
-        ? JSON.stringify({ marketplaces: [{ name: "public-proposal", path: state.marketplacePath }] })
-        : "{\"marketplaces\":[]}\n");
-      if (rendered.startsWith("codex plugin list")) return ok(state.pluginRegistered || files[`${installRoot}/installation.json`] !== undefined
-        ? "{\"installed\":[{\"pluginId\":\"public-proposal@public-proposal\",\"installed\":true}],\"available\":[]}\n"
-        : "{\"installed\":[],\"available\":[]}\n");
+      if (rendered.startsWith("codex plugin marketplace list")) return ok(JSON.stringify({ marketplaces: [
+        ...(state.marketplaceRegistered || files[`${installRoot}/installation.json`] !== undefined ? [{ name: "public-proposal", path: state.marketplacePath }] : []),
+        ...(state.longtableMarketplaceRegistered ? [{ name: "longtable", path: state.longtableMarketplacePath }] : []),
+      ] }));
+      if (rendered.startsWith("codex plugin list")) return ok(JSON.stringify({ installed: [
+        ...(state.pluginRegistered || files[`${installRoot}/installation.json`] !== undefined ? [{ pluginId: "public-proposal@public-proposal", installed: true }] : []),
+        ...(state.longtablePluginRegistered ? [{ pluginId: "longtable@longtable", installed: true }] : []),
+      ], available: [] }));
       if (rendered.startsWith("codex plugin marketplace add ")) {
-        state.marketplaceRegistered = true;
-        state.marketplacePath = rendered.slice("codex plugin marketplace add ".length);
+        const path = rendered.slice("codex plugin marketplace add ".length);
+        if (path.endsWith("/longtable-marketplace")) {
+          state.longtableMarketplaceRegistered = true;
+          state.longtableMarketplacePath = path;
+        } else {
+          state.marketplaceRegistered = true;
+          state.marketplacePath = path;
+        }
         return ok("");
       }
+      if (rendered === "codex plugin add longtable@longtable") { state.longtablePluginRegistered = true; return ok(""); }
       if (rendered.startsWith("codex plugin add ")) { state.pluginRegistered = true; return ok(""); }
+      if (rendered === "codex plugin remove longtable@longtable --json") { state.longtablePluginRegistered = false; return ok("{\"ok\":true}\n"); }
       if (rendered.startsWith("codex plugin remove ")) { state.pluginRegistered = false; return ok("{\"ok\":true}\n"); }
+      if (rendered === "codex plugin marketplace remove longtable --json") { state.longtableMarketplaceRegistered = false; return ok("{\"ok\":true}\n"); }
       if (rendered.startsWith("codex plugin marketplace remove ")) { state.marketplaceRegistered = false; return ok("{\"ok\":true}\n"); }
       if (rendered === "uv sync --locked --no-dev") return ok("");
       if (rendered.endsWith("-c from kpp_docx.protocol import PROTOCOL_VERSION; print(PROTOCOL_VERSION)")) return ok(`${state.workerProtocol}\n`);

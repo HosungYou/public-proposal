@@ -1,6 +1,14 @@
 export { KppError, type KppErrorDetails } from "./errors.js";
 export { sha256File } from "./hash.js";
 export {
+  adoptProject,
+  type AdoptionBinding,
+  type AdoptionInput,
+  type AdoptionReport,
+  type LongTableRunLink,
+  type ProvisionalContent,
+} from "./adoption.js";
+export {
   extractRequirementCandidates,
   extractRequirementCandidatesFile,
   extractTextDocument,

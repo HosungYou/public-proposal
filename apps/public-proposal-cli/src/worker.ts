@@ -289,6 +289,18 @@ function resolveManagedWorkerFromManifest(
     join(installRoot, "marketplace"),
     join(installRoot, "worker"),
   ]);
+  const registrationOwnership = manifest.registrationOwnership;
+  if (
+    registrationOwnership !== null
+    && typeof registrationOwnership === "object"
+    && !Array.isArray(registrationOwnership)
+  ) {
+    const longtable = (registrationOwnership as Record<string, unknown>).longtable;
+    if (longtable !== null && typeof longtable === "object" && !Array.isArray(longtable)
+      && (longtable as Record<string, unknown>).ownership === "installer_owned") {
+      expectedOwned.add(join(installRoot, "longtable-marketplace"));
+    }
+  }
   if (
     ownedPaths.length !== expectedOwned.size ||
     ownedPaths.some((path) => typeof path !== "string" || path !== resolve(path) || !expectedOwned.has(path))

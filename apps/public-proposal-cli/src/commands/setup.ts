@@ -41,6 +41,7 @@ export interface SetupDependencies {
 
 const PLAN = [
   "public-proposal plugin",
+  "longtable plugin (external compatible registration reused, otherwise installer-owned)",
   "@longtable/kpp-cli@0.2.1",
   "@longtable/cli@0.1.72",
   "managed worker protocol 1.0.0",
@@ -68,9 +69,12 @@ export async function runSetup(
 
   const existingManifest = await readExistingManifest(dependencies, manifest);
   if (existingManifest) {
-    const existingValidation = await validateExistingManifest(existingManifest, installRoot, exists);
+    const existingValidation = await validateExistingManifest(existingManifest, installRoot, exists, dependencies.sha256);
     if (existingValidation) {
       return failed(existingValidation.code, existingValidation.message, []);
+    }
+    if (!existingManifest.registrationOwnership) {
+      return migrateCurrentManifest(existingManifest, installRoot, packageRoot, dependencies, exists, remove);
     }
     if (!existingManifest.codexRegistrations) {
       const reconciled = await reconcileUntrackedCodexRegistrations(installRoot, dependencies.spawn);
@@ -128,13 +132,14 @@ export async function runSetup(
 
   const writes: string[] = [];
   let doctorChecks: readonly DoctorCheck[] = [];
-  const ownedPaths = [
+  const ownedPaths: string[] = [
     join(installRoot, "plugin"),
     join(installRoot, "marketplace"),
     join(installRoot, "worker"),
   ];
   let marketplaceAdded = false;
   let pluginAdded = false;
+  let longtableRegistration: RegistrationOwnership["longtable"] | undefined;
 
   try {
     await dependencies.mkdir(installRoot);
@@ -154,21 +159,17 @@ export async function runSetup(
     await copyDir(join(packageRoot, "plugin"), join(ownedPaths[1], "plugin"));
     writes.push(ownedPaths[1]);
     await mirrorPackagedMarketplaceManifest(packageRoot, ownedPaths[1], dependencies);
-    await runRequired(dependencies.spawn, "longtable", [
-      "codex",
-      "install-skills",
-      "--surface",
-      "compact",
-      "--dir",
-      join(ownedPaths[0], "skills"),
-    ]);
-    await ensureLongTableResearchSkill(join(ownedPaths[0], "skills"), dependencies, exists);
     await copyDir(join(ownedPaths[0], "skills"), join(ownedPaths[1], "plugin", "skills"));
     marketplaceAdded = await ensureMarketplaceRegistered(
       dependencies.spawn,
       await canonicalPath(join(installRoot, "marketplace"), dependencies.realpath),
     );
     pluginAdded = await ensurePluginInstalled(dependencies.spawn);
+
+    longtableRegistration = await ensureLongTableRegistered(installRoot, dependencies, exists);
+    if (longtableRegistration.ownership === "installer_owned") {
+      ownedPaths.push(join(installRoot, "longtable-marketplace"));
+    }
 
     const worker = await installWorker(installRoot, dependencies.spawn);
     writes.push(ownedPaths[2]);
@@ -179,6 +180,18 @@ export async function runSetup(
       ownedPaths,
       worker,
       { pluginAdded, marketplaceAdded },
+      {
+        publicProposal: {
+          ownership: pluginAdded || marketplaceAdded ? "installer_owned" : "externally_owned",
+          pluginId: "public-proposal@public-proposal",
+          marketplaceName: "public-proposal",
+          marketplaceSource: await canonicalPath(join(installRoot, "marketplace"), dependencies.realpath),
+          pluginAdded,
+          marketplaceAdded,
+        },
+        longtable: longtableRegistration,
+      },
+      undefined,
       dependencies,
     );
     const manifestContents = serializeManifest(installManifest);
@@ -225,6 +238,12 @@ export async function runSetup(
     if (marketplaceAdded) {
       await compensate(dependencies.spawn, "codex", ["plugin", "marketplace", "remove", "public-proposal", "--json"], rollbackFailures);
     }
+    if (longtableRegistration?.pluginAdded) {
+      await compensate(dependencies.spawn, "codex", ["plugin", "remove", "longtable@longtable", "--json"], rollbackFailures);
+    }
+    if (longtableRegistration?.marketplaceAdded) {
+      await compensate(dependencies.spawn, "codex", ["plugin", "marketplace", "remove", "longtable", "--json"], rollbackFailures);
+    }
     for (const path of [...ownedPaths].reverse()) {
       try { await remove(path); } catch (rollbackError) {
         rollbackFailures.push(`remove ${path}: ${rollbackError instanceof Error ? rollbackError.message : String(rollbackError)}`);
@@ -236,6 +255,150 @@ export async function runSetup(
       ? failed(code, message, writes, doctorChecks)
       : failed("PP_SETUP_ROLLBACK_FAILED", `${message}; rollback failed: ${rollbackFailures.join("; ")}`, writes, doctorChecks);
   }
+}
+
+async function migrateCurrentManifest(
+  existingManifest: InstallManifest,
+  installRoot: string,
+  packageRoot: string,
+  dependencies: SetupDependencies,
+  exists: (path: string) => Promise<boolean>,
+  remove: (path: string) => Promise<void>,
+): Promise<SetupResult> {
+  const manifest = manifestPath(installRoot);
+  const publicReconciliation = await reconcileUntrackedCodexRegistrations(installRoot, dependencies.spawn, dependencies.realpath);
+  if (publicReconciliation.error) return failed(publicReconciliation.error.code, publicReconciliation.error.message, []);
+  const snapshot = await snapshotMigrationState(existingManifest, manifest, dependencies);
+  let longtable: RegistrationOwnership["longtable"] | undefined;
+  const removedLegacy: Array<{ directory: string; skillPath: string; contents: string }> = [];
+  try {
+    longtable = await ensureLongTableRegistered(installRoot, dependencies, exists);
+    const ownedPaths = [...installerOwnedRoots(installRoot, longtable.ownership === "installer_owned")];
+    const registrationOwnership: RegistrationOwnership = {
+      publicProposal: {
+        ownership: publicReconciliation.registrations.pluginAdded || publicReconciliation.registrations.marketplaceAdded
+          ? "installer_owned"
+          : "externally_owned",
+        pluginId: "public-proposal@public-proposal",
+        marketplaceName: "public-proposal",
+        marketplaceSource: await canonicalPath(join(installRoot, "marketplace"), dependencies.realpath),
+        ...publicReconciliation.registrations,
+      },
+      longtable,
+    };
+    const candidate = await buildManifest(
+      packageRoot,
+      installRoot,
+      ownedPaths,
+      existingManifest.worker,
+      publicReconciliation.registrations,
+      registrationOwnership,
+      snapshot,
+      dependencies,
+    );
+    const manifestContents = serializeManifest(candidate);
+    const doctor = await runDoctor(
+      {
+        installRoot,
+        expectedKppVersion: SUPPORTED_KPP_VERSION,
+        expectedLongtableVersion: SUPPORTED_LONGTABLE_VERSION,
+        expectedWorkerProtocol: WORKER_PROTOCOL_VERSION,
+      },
+      {
+        packageRoot,
+        packageVersion: dependencies.packageVersion,
+        spawn: dependencies.spawn,
+        readFile: async (path) => path === manifest ? manifestContents : dependencies.readFile(path),
+        exists,
+        realpath: dependencies.realpath,
+        sha256: dependencies.sha256,
+      },
+    );
+    if (!doctor.ok) {
+      const blocker = doctor.checks.find((check) => check.status === "blocker") ?? doctor.checks[0];
+      throw new SetupCommandError(blocker.code ?? "PP_DOCTOR_BLOCKED", blocker.message);
+    }
+    for (const directory of legacyRoleDirectories(installRoot)) {
+      const skillPath = join(directory, "SKILL.md");
+      if (!(await exists(skillPath))) continue;
+      removedLegacy.push({ directory, skillPath, contents: await dependencies.readFile(skillPath) });
+      await remove(directory);
+    }
+    const temp = manifestTempPath(installRoot);
+    await dependencies.writeFile(temp, manifestContents, 0o600);
+    await dependencies.rename(temp, manifest);
+    return {
+      ok: true,
+      plan: PLAN,
+      writes: [manifest],
+      manifestPath: manifest,
+      checks: doctor.checks,
+      manifest: candidate,
+    };
+  } catch (error) {
+    const rollbackFailures: string[] = [];
+    for (const legacy of removedLegacy) {
+      try { await dependencies.writeFile(legacy.skillPath, legacy.contents); } catch (restoreError) {
+        rollbackFailures.push(`restore ${legacy.skillPath}: ${restoreError instanceof Error ? restoreError.message : String(restoreError)}`);
+      }
+    }
+    if (longtable?.pluginAdded) await compensate(dependencies.spawn, "codex", ["plugin", "remove", "longtable@longtable", "--json"], rollbackFailures);
+    if (longtable?.marketplaceAdded) await compensate(dependencies.spawn, "codex", ["plugin", "marketplace", "remove", "longtable", "--json"], rollbackFailures);
+    if (longtable?.marketplaceAdded) {
+      try { await remove(join(installRoot, "longtable-marketplace")); } catch (removeError) {
+        rollbackFailures.push(`remove ${join(installRoot, "longtable-marketplace")}: ${removeError instanceof Error ? removeError.message : String(removeError)}`);
+      }
+    }
+    const message = error instanceof Error ? error.message : String(error);
+    return rollbackFailures.length > 0
+      ? failed("PP_SETUP_ROLLBACK_FAILED", `${message}; rollback failed: ${rollbackFailures.join("; ")}`, [])
+      : failed(error instanceof SetupCommandError ? error.code : "PP_SETUP_COMMAND_FAILED", message, []);
+  }
+}
+
+async function snapshotMigrationState(
+  manifest: InstallManifest,
+  manifestFile: string,
+  dependencies: SetupDependencies,
+): Promise<MigrationSnapshot> {
+  const [marketplaces, plugins] = await Promise.all([
+    dependencies.spawn("codex", ["plugin", "marketplace", "list", "--json"]),
+    dependencies.spawn("codex", ["plugin", "list", "--json"]),
+  ]);
+  if (marketplaces.code !== 0 || plugins.code !== 0) {
+    throw new SetupCommandError("PP_MIGRATION_SNAPSHOT_FAILED", "Codex registration snapshot failed before migration.");
+  }
+  const corePaths = [
+    join(manifest.installRoot, "plugin", ".codex-plugin", "plugin.json"),
+    join(manifest.installRoot, "plugin", "skills", "korean-public-proposal", "BUNDLE-MANIFEST.json"),
+    manifest.worker.executable,
+  ];
+  const ownedFileHashes = Object.fromEntries(await Promise.all(corePaths.map(async (path) => [path, await dependencies.sha256(path)])));
+  return {
+    previousReceiptSha256: await dependencies.sha256(manifestFile),
+    registrations: [
+      {
+        pluginId: "public-proposal@public-proposal",
+        installed: pluginListContainsId(plugins.stdout, "public-proposal@public-proposal", "public-proposal", "public-proposal"),
+        marketplaceName: "public-proposal",
+        marketplaceSource: marketplaceSourceByName(marketplaces.stdout, "public-proposal") ?? null,
+      },
+      {
+        pluginId: "longtable@longtable",
+        installed: pluginListContainsId(plugins.stdout, "longtable@longtable", "longtable", "longtable"),
+        marketplaceName: "longtable",
+        marketplaceSource: marketplaceSourceByName(marketplaces.stdout, "longtable") ?? null,
+      },
+    ],
+    ownedFileHashes,
+  };
+}
+
+function legacyRoleDirectories(installRoot: string): readonly string[] {
+  return ["longtable", "longtable-research", "scholar-research"].flatMap((name) => [
+    join(installRoot, "plugin", "skills", name),
+    join(installRoot, "marketplace", "plugin", "skills", name),
+  ]);
 }
 
 function defaultPackageRoot(): string {
@@ -322,6 +485,7 @@ async function findConflict(installRoot: string, exists: (path: string) => Promi
     join(installRoot, "plugin"),
     join(installRoot, "marketplace"),
     join(installRoot, "worker"),
+    join(installRoot, "longtable-marketplace"),
   ]) {
     if (await exists(path)) {
       return path;
@@ -334,6 +498,7 @@ async function validateExistingManifest(
   existingManifest: InstallManifest,
   installRoot: string,
   exists: (path: string) => Promise<boolean>,
+  sha256: (path: string) => Promise<string>,
 ): Promise<{ code: string; message: string } | null> {
   const requestedRoot = resolve(installRoot);
   if (resolve(existingManifest.installRoot) !== requestedRoot) {
@@ -342,7 +507,10 @@ async function validateExistingManifest(
       message: `Existing installation receipt belongs to ${existingManifest.installRoot}, not ${installRoot}.`,
     };
   }
-  const expectedOwnedPaths = installerOwnedRoots(requestedRoot);
+  const expectedOwnedPaths = installerOwnedRoots(
+    requestedRoot,
+    existingManifest.registrationOwnership?.longtable.ownership === "installer_owned",
+  );
   const normalizedOwnedPaths = existingManifest.ownedPaths.map((ownedPath) => resolve(ownedPath));
   const uniqueOwnedPaths = new Set(normalizedOwnedPaths);
   if (
@@ -363,6 +531,16 @@ async function validateExistingManifest(
         code: "PP_INSTALL_MANIFEST_STALE",
         message: `Existing installation receipt references missing path: ${ownedPath}`,
       };
+    }
+  }
+  for (const [path, expectedHash] of Object.entries(existingManifest.ownedFileHashes ?? {})) {
+    const normalized = resolve(path);
+    if (normalized !== path || !expectedOwnedPaths.some((root) => normalized === root || normalized.startsWith(`${root}/`))) {
+      return { code: "PP_INSTALL_MANIFEST_MISMATCH", message: `Owned-file hash path is outside the receipted installation roots: ${path}` };
+    }
+    const actualHash = await sha256(path).catch(() => null);
+    if (actualHash !== expectedHash) {
+      return { code: "PP_INSTALL_OWNED_FILE_DRIFT", message: `Installer-owned file changed since the receipt was written: ${path}` };
     }
   }
   return null;
@@ -442,6 +620,8 @@ async function migrateLegacyManifest(
       ownedPaths,
       worker,
       registrationReconciliation.registrations,
+      undefined,
+      undefined,
       dependencies,
     );
     const manifestContents = serializeManifest(installManifest);
@@ -488,11 +668,12 @@ async function migrateLegacyManifest(
   }
 }
 
-function installerOwnedRoots(installRoot: string): readonly string[] {
+function installerOwnedRoots(installRoot: string, includeLongtable = false): readonly string[] {
   return [
     join(installRoot, "plugin"),
     join(installRoot, "marketplace"),
     join(installRoot, "worker"),
+    ...(includeLongtable ? [join(installRoot, "longtable-marketplace")] : []),
   ].map((path) => resolve(path));
 }
 
@@ -705,6 +886,8 @@ async function buildManifest(
   ownedPaths: readonly string[],
   worker: WorkerInstallation,
   codexRegistrations: { pluginAdded: boolean; marketplaceAdded: boolean } | undefined,
+  registrationOwnership: RegistrationOwnership | undefined,
+  migrationSnapshot: MigrationSnapshot | undefined,
   dependencies: SetupDependencies,
 ): Promise<InstallManifest> {
   const pluginManifestPath = join(installRoot, "plugin", ".codex-plugin", "plugin.json");
@@ -717,6 +900,7 @@ async function buildManifest(
   } catch {
     // Test doubles and legacy package snapshots may not carry package metadata.
   }
+  const ownedFileHashes = await knownOwnedFileHashes(installRoot, worker, registrationOwnership, dependencies);
   return {
     schemaVersion: INSTALL_MANIFEST_SCHEMA_VERSION,
     packageVersion,
@@ -729,13 +913,162 @@ async function buildManifest(
     bundleManifestSha256: await dependencies.sha256(bundleManifestPath),
     worker,
     ...(codexRegistrations ? { codexRegistrations } : {}),
+    ...(registrationOwnership ? { registrationOwnership } : {}),
+    ownedFileHashes,
+    ...(migrationSnapshot ? { migrationSnapshot } : {}),
     ownedPaths,
     createdAt: dependencies.now(),
   };
 }
 
+type RegistrationOwnership = NonNullable<InstallManifest["registrationOwnership"]>;
+type MigrationSnapshot = NonNullable<InstallManifest["migrationSnapshot"]>;
+
+async function knownOwnedFileHashes(
+  installRoot: string,
+  worker: WorkerInstallation,
+  registrationOwnership: RegistrationOwnership | undefined,
+  dependencies: Pick<SetupDependencies, "sha256">,
+): Promise<Record<string, string>> {
+  const paths = [
+    join(installRoot, "plugin", ".codex-plugin", "plugin.json"),
+    join(installRoot, "plugin", "skills", "korean-public-proposal", "BUNDLE-MANIFEST.json"),
+    worker.executable,
+  ];
+  if (registrationOwnership?.longtable.ownership === "installer_owned") {
+    paths.push(
+      join(installRoot, "longtable-marketplace", ".agents", "plugins", "marketplace.json"),
+      join(installRoot, "longtable-marketplace", "plugin", ".codex-plugin", "plugin.json"),
+    );
+  }
+  return Object.fromEntries(await Promise.all(paths.map(async (path) => [path, await dependencies.sha256(path)])));
+}
+
 async function mirrorPackagedFile(from: string, to: string, dependencies: SetupDependencies): Promise<void> {
   await dependencies.writeFile(to, await dependencies.readFile(from));
+}
+
+async function ensureLongTableRegistered(
+  installRoot: string,
+  dependencies: SetupDependencies,
+  exists: (path: string) => Promise<boolean>,
+): Promise<RegistrationOwnership["longtable"]> {
+  const marketplaceRoot = join(installRoot, "longtable-marketplace");
+  const canonicalManagedRoot = await canonicalPath(marketplaceRoot, dependencies.realpath);
+  const [marketplaces, plugins] = await Promise.all([
+    dependencies.spawn("codex", ["plugin", "marketplace", "list", "--json"]),
+    dependencies.spawn("codex", ["plugin", "list", "--json"]),
+  ]);
+  if (marketplaces.code !== 0 || plugins.code !== 0) {
+    throw new SetupCommandError("PP_LONGTABLE_REGISTRATION_READ", "Codex LongTable registration state could not be read safely.");
+  }
+  const source = marketplaceSourceByName(marketplaces.stdout, "longtable");
+  const installed = pluginListContainsId(plugins.stdout, "longtable@longtable", "longtable", "longtable");
+  if (installed && source === undefined) {
+    throw new SetupCommandError(
+      "PP_LONGTABLE_REGISTRATION_OWNERSHIP_UNKNOWN",
+      "LongTable plugin is installed but its marketplace source cannot be attributed safely.",
+    );
+  }
+  if (source !== undefined && source !== canonicalManagedRoot) {
+    let pluginAdded = false;
+    if (!installed) {
+      await runRequired(dependencies.spawn, "codex", ["plugin", "add", "longtable@longtable"]);
+      pluginAdded = true;
+    }
+    await runRequired(dependencies.spawn, "longtable", ["scholar-research", "doctor", "--json"]);
+    return {
+      ownership: "externally_owned",
+      pluginId: "longtable@longtable",
+      marketplaceName: "longtable",
+      marketplaceSource: source,
+      pluginAdded,
+      marketplaceAdded: false,
+    };
+  }
+  if (source === canonicalManagedRoot && !(await exists(marketplaceRoot))) {
+    throw new SetupCommandError(
+      "PP_LONGTABLE_REGISTRATION_STALE",
+      `Codex LongTable marketplace points to a missing installer path: ${marketplaceRoot}`,
+    );
+  }
+
+  let marketplaceAdded = false;
+  let pluginAdded = false;
+  let managedSource = canonicalManagedRoot;
+  const createdNow = source === undefined && !(await exists(marketplaceRoot));
+  try {
+    if (source === undefined) {
+      if (!createdNow) {
+        throw new SetupCommandError("PP_LONGTABLE_MARKETPLACE_CONFLICT", `Unreceipted LongTable marketplace path already exists: ${marketplaceRoot}`);
+      }
+      await dependencies.mkdir(join(marketplaceRoot, ".agents", "plugins"));
+      await dependencies.mkdir(join(marketplaceRoot, "plugin", ".codex-plugin"));
+      await dependencies.writeFile(join(marketplaceRoot, ".agents", "plugins", "marketplace.json"), `${JSON.stringify({
+        name: "longtable",
+        plugins: [{ name: "longtable", source: { source: "local", path: "./plugin" } }],
+      }, null, 2)}\n`);
+      await dependencies.writeFile(join(marketplaceRoot, "plugin", ".codex-plugin", "plugin.json"), `${JSON.stringify({
+        name: "longtable",
+        version: SUPPORTED_LONGTABLE_VERSION,
+        description: "LongTable research plugin managed by the Public Proposal installer.",
+        skills: "./skills/",
+      }, null, 2)}\n`);
+      await runRequired(dependencies.spawn, "longtable", [
+        "codex", "install-skills", "--surface", "compact", "--dir", join(marketplaceRoot, "plugin", "skills"),
+      ]);
+      await ensureLongTableResearchSkill(join(marketplaceRoot, "plugin", "skills"), dependencies, exists);
+      managedSource = await canonicalPath(marketplaceRoot, dependencies.realpath);
+      await runRequired(dependencies.spawn, "codex", ["plugin", "marketplace", "add", managedSource]);
+      marketplaceAdded = true;
+    }
+    if (!installed) {
+      await runRequired(dependencies.spawn, "codex", ["plugin", "add", "longtable@longtable"]);
+      pluginAdded = true;
+    }
+    await runRequired(dependencies.spawn, "longtable", ["scholar-research", "doctor", "--json"]);
+    return {
+      ownership: "installer_owned",
+      pluginId: "longtable@longtable",
+      marketplaceName: "longtable",
+      marketplaceSource: managedSource,
+      pluginAdded,
+      marketplaceAdded,
+    };
+  } catch (error) {
+    const rollbackFailures: string[] = [];
+    if (pluginAdded) await compensate(dependencies.spawn, "codex", ["plugin", "remove", "longtable@longtable", "--json"], rollbackFailures);
+    if (marketplaceAdded) await compensate(dependencies.spawn, "codex", ["plugin", "marketplace", "remove", "longtable", "--json"], rollbackFailures);
+    if (createdNow) {
+      try { await (dependencies.remove ?? nodeFs.remove)(marketplaceRoot); } catch (rollbackError) {
+        rollbackFailures.push(`remove ${marketplaceRoot}: ${rollbackError instanceof Error ? rollbackError.message : String(rollbackError)}`);
+      }
+    }
+    if (rollbackFailures.length > 0) {
+      throw new SetupCommandError("PP_SETUP_ROLLBACK_FAILED", `${error instanceof Error ? error.message : String(error)}; rollback failed: ${rollbackFailures.join("; ")}`);
+    }
+    throw error;
+  }
+}
+
+function marketplaceSourceByName(stdout: string, name: string): string | undefined {
+  try {
+    const parsed = JSON.parse(stdout) as { marketplaces?: Array<{ name?: string; root?: string; path?: string; marketplaceSource?: { source?: string } }> };
+    const entry = parsed.marketplaces?.find((candidate) => candidate.name === name);
+    return entry ? entry.root ?? entry.path ?? entry.marketplaceSource?.source ?? "<unknown source>" : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function pluginListContainsId(stdout: string, pluginId: string, name: string, marketplace: string): boolean {
+  try {
+    const parsed = JSON.parse(stdout) as { installed?: Array<{ pluginId?: string; installed?: boolean }>; plugins?: Array<{ name?: string; marketplace?: string }> };
+    return (parsed.installed?.some((entry) => entry.pluginId === pluginId && entry.installed === true) ?? false)
+      || (parsed.plugins?.some((entry) => entry.name === name && entry.marketplace === marketplace) ?? false);
+  } catch {
+    return false;
+  }
 }
 
 async function ensureLongTableResearchSkill(

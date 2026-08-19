@@ -1,5 +1,6 @@
 export interface KppErrorDetails {
   actual?: unknown;
+  changed?: unknown;
   expected?: unknown;
   path?: string;
   rule?: string;

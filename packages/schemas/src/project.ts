@@ -11,6 +11,7 @@ export const ProposalClassSchema = z.enum([
 export type ProposalClass = z.infer<typeof ProposalClassSchema>;
 
 export const ProjectStateSchema = z.enum([
+  "UNMANAGED_DRAFT",
   "INIT",
   "SOURCE_LOCKED",
   "REQUIREMENTS_LOCKED",

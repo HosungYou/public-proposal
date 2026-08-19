@@ -17,9 +17,11 @@ npx @longtable/public-proposal setup --provider codex
 npx @longtable/public-proposal doctor --json
 ```
 
-`setup` validates the packaged marketplace and plugin, installs `$longtable` and `$longtable-research` under the installer-owned plugin `skills/` surface, verifies the pinned KPP and LongTable CLIs, installs the managed DOCX worker, and writes an installation receipt only after its preflight passes. The published `@longtable/cli@0.1.72` artifact may name the scholarly skill `scholar-research`; setup preserves that compatibility skill and creates the canonical `longtable-research` surface before mirroring the skills into the registered plugin. `doctor --json` verifies both LongTable skill files and the Codex marketplace/plugin registration; it is read-only. Use `--install-scope project` only when the installation should be scoped to the current project rather than the user.
+`setup` validates the packaged Public Proposal marketplace and plugin, verifies the pinned KPP and LongTable CLIs, installs the managed DOCX worker, and writes an installation receipt only after its preflight passes. In the vNext source, LongTable is an independent `longtable@longtable` registration: a compatible external source is reused as `externally_owned`; otherwise setup creates a separate installer-owned LongTable marketplace and installs `$longtable` plus the canonical `longtable-research` skill there. The published `@longtable/cli@0.1.72` artifact may name the scholarly skill `scholar-research`; the installer normalizes that name only inside its own LongTable plugin. `doctor --json` verifies both independent registration sources and LongTable doctor; it is read-only. Use `--install-scope project` only when the installation should be scoped to the current project rather than the user.
 
 If a later setup step fails, setup removes only marketplace/plugin registrations added by that invocation and then removes its owned files. Pre-existing Codex registrations are preserved. A failed compensation is reported as `PP_SETUP_ROLLBACK_FAILED` and requires inspection before retrying.
+
+During migration, setup/update snapshot the prior receipt hash, both Codex registration states, and load-bearing installer-owned file hashes. It adds only missing registrations, validates LongTable doctor, removes only legacy LongTable role copies below Public Proposal-owned plugin roots, and atomically replaces `installation.json`. It never writes or deletes `.longtable/`, customer data, KPP project state, or approval artifacts. Retrying after a compensated failure does not duplicate registrations.
 
 The `npx` form is intentionally repeatable: setup does not install a persistent `public-proposal` executable. Use the same `npx @longtable/public-proposal` prefix for doctor, update, and uninstall unless you deliberately choose the global fallback below.
 
@@ -45,6 +47,15 @@ codex plugin add public-proposal@public-proposal
 ```
 
 Those paths are installer-owned; do not substitute an unrelated marketplace directory.
+
+When LongTable is not already registered, vNext additionally uses:
+
+```text
+codex plugin marketplace add <installer-owned-install-root>/longtable-marketplace
+codex plugin add longtable@longtable
+```
+
+If `longtable@longtable` already resolves to a compatible external marketplace, setup records that exact source and does not copy, redirect, or later uninstall it.
 
 ## What each installed component is allowed to do
 
@@ -78,6 +89,16 @@ public-proposal uninstall
 ```
 
 Uninstall preserves existing LongTable projects, `.longtable/` research state, KPP project data, and customer material. `public-proposal update` previews compatibility changes; use `public-proposal update --apply` only after checking the preview and the compatibility matrix. With the ephemeral path, use `npx @longtable/public-proposal uninstall` and `npx @longtable/public-proposal update` instead.
+
+## Adopt a legacy proposal project
+
+Adoption is a KPP project operation and does not mutate installer ownership:
+
+```bash
+kpp adopt <legacy-project> --source <rfp-or-source-packet> --master <working-master> --json
+```
+
+KPP copies source/master and existing claim/evidence/figure ledger bytes into governed project locations, records readable `.longtable` run links without moving or rewriting them, and writes provisional records for content with no source binding. A legacy Living Brief produces a candidate and decision diff. The project state is exactly `UNMANAGED_DRAFT`; no content, human, or release approval is created. The same bytes return the same adoption ID with no duplicate entries. New, removed, or changed input bytes fail closed with `KPP_ADOPTION_INPUT_CHANGED`; inspect its diff and choose a new project root or resolve the changed inputs deliberately.
 
 ## LongTable research lock requirements
 

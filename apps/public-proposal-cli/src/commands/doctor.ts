@@ -218,6 +218,35 @@ async function pluginCheck(
     const marketplaceRegistered = marketplaces.code === 0
       && marketplaceListContains(marketplaces.stdout, marketplacePath);
     const pluginRegistered = plugins.code === 0 && pluginListContains(plugins.stdout);
+    const ownership = manifest.registrationOwnership;
+    if (ownership) {
+      const longtableMarketplaceRegistered = marketplaces.code === 0
+        && marketplaceListContainsNamed(marketplaces.stdout, "longtable", ownership.longtable.marketplaceSource);
+      const longtablePluginRegistered = plugins.code === 0
+        && pluginListContainsNamed(plugins.stdout, "longtable@longtable", "longtable", "longtable");
+      if (!marketplaceRegistered || !pluginRegistered || !longtableMarketplaceRegistered || !longtablePluginRegistered) {
+        return {
+          name: "plugin",
+          status: "blocker",
+          code: "PP_PLUGIN_NOT_INSTALLED",
+          detected: { marketplaceRegistered, pluginRegistered, longtableMarketplaceRegistered, longtablePluginRegistered },
+          message: "Public Proposal and LongTable must remain independently registered at their receipted sources.",
+        };
+      }
+      return {
+        name: "plugin",
+        status: "pass",
+        detected: {
+          version: installedPlugin.version,
+          pluginSha: installedPluginSha,
+          bundleSha: installedBundleSha,
+          publicProposalSource: ownership.publicProposal.marketplaceSource,
+          longtableSource: ownership.longtable.marketplaceSource,
+          longtableOwnership: ownership.longtable.ownership,
+        },
+        message: "Public Proposal and LongTable independent registrations match the installation receipt.",
+      };
+    }
     if (
       !longtableSkill.trim()
       || !longtableResearchSkill.trim()
@@ -262,6 +291,26 @@ async function pluginCheck(
       detected: error instanceof Error ? error.message : String(error),
       message: "Packaged public-proposal plugin cannot be verified.",
     };
+  }
+}
+
+function marketplaceListContainsNamed(stdout: string, name: string, source: string): boolean {
+  try {
+    const parsed = JSON.parse(stdout) as { marketplaces?: Array<{ name?: string; root?: string; path?: string; marketplaceSource?: { source?: string } }> };
+    return parsed.marketplaces?.some((entry) => entry.name === name
+      && (entry.root ?? entry.path ?? entry.marketplaceSource?.source) === source) ?? false;
+  } catch {
+    return false;
+  }
+}
+
+function pluginListContainsNamed(stdout: string, pluginId: string, name: string, marketplace: string): boolean {
+  try {
+    const parsed = JSON.parse(stdout) as { installed?: Array<{ pluginId?: string; installed?: boolean }>; plugins?: Array<{ name?: string; marketplace?: string }> };
+    return (parsed.installed?.some((entry) => entry.pluginId === pluginId && entry.installed === true) ?? false)
+      || (parsed.plugins?.some((entry) => entry.name === name && entry.marketplace === marketplace) ?? false);
+  } catch {
+    return false;
   }
 }
 

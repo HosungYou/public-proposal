@@ -11,6 +11,7 @@ import { RECEIPT_FILE_NAMES, verifyReceipt } from "./receipts.js";
  * legacy EVIDENCE_LOCKED and vNext RESEARCH_LOCKED branches meet at DESIGN.
  */
 export const PROJECT_STATES: readonly ProjectState[] = [
+  "UNMANAGED_DRAFT",
   "INIT", "SOURCE_LOCKED", "REQUIREMENTS_LOCKED", "BRIEF_LOCKED", "RESEARCH_LOCKED",
   "EVIDENCE_LOCKED", "DESIGN_LOCKED", "REPRESENTATIVE_REVIEW_REQUIRED",
   "REPRESENTATIVE_APPROVED", "CONTENT_APPROVED", "BUILT", "RENDERED", "AUDITED",
@@ -39,6 +40,7 @@ export function adaptLegacyEvidenceLockedState(state: ProjectState): ProjectStat
 
 export function allowedNext(state: ProjectState): ProjectState[] {
   switch (state) {
+    case "UNMANAGED_DRAFT": return [];
     case "INIT": return ["SOURCE_LOCKED"];
     case "SOURCE_LOCKED": return ["REQUIREMENTS_LOCKED"];
     case "REQUIREMENTS_LOCKED": return ["BRIEF_LOCKED", "EVIDENCE_LOCKED"];
@@ -79,7 +81,7 @@ export async function advanceProject(root: string, target: ProjectState): Promis
 
 export async function verifyProjectState(root: string): Promise<ProjectRecord> {
   const project = await readProject(root);
-  if (project.state === "INIT") return project;
+  if (project.state === "INIT" || project.state === "UNMANAGED_DRAFT") return project;
   try {
     await verifyReceiptChain(root, project.state);
     return project;

@@ -94,6 +94,35 @@ const installManifestSchema = z.object({
     pluginAdded: z.boolean(),
     marketplaceAdded: z.boolean(),
   }).optional(),
+  registrationOwnership: z.object({
+    publicProposal: z.object({
+      ownership: z.enum(["externally_owned", "installer_owned"]),
+      pluginId: z.literal("public-proposal@public-proposal"),
+      marketplaceName: z.literal("public-proposal"),
+      marketplaceSource: z.string().min(1),
+      pluginAdded: z.boolean(),
+      marketplaceAdded: z.boolean(),
+    }),
+    longtable: z.object({
+      ownership: z.enum(["externally_owned", "installer_owned"]),
+      pluginId: z.literal("longtable@longtable"),
+      marketplaceName: z.literal("longtable"),
+      marketplaceSource: z.string().min(1),
+      pluginAdded: z.boolean(),
+      marketplaceAdded: z.boolean(),
+    }),
+  }).optional(),
+  ownedFileHashes: z.record(z.string(), z.string().min(1)).optional(),
+  migrationSnapshot: z.object({
+    previousReceiptSha256: z.string().min(1).nullable(),
+    registrations: z.array(z.object({
+      pluginId: z.string().min(1),
+      installed: z.boolean(),
+      marketplaceName: z.string().min(1),
+      marketplaceSource: z.string().min(1).nullable(),
+    })).readonly(),
+    ownedFileHashes: z.record(z.string(), z.string().min(1)),
+  }).optional(),
   ownedPaths: z.array(z.string().min(1)).readonly(),
   createdAt: z.string().datetime({ offset: true }),
 });

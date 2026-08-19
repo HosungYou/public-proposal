@@ -77,6 +77,33 @@ describe("public proposal uninstall and update", () => {
     expect(commands).toEqual([]);
   });
 
+  it("uninstall preserves external LongTable and removes an installer-owned LongTable registration only when receipted", async () => {
+    const externalCommands: string[] = [];
+    await runUninstall(
+      "/home/ada/.config/public-proposal",
+      uninstallDependencies({
+        manifest: manifestWithRegistrationOwnership("externally_owned"),
+        commands: externalCommands,
+      }),
+    );
+    expect(externalCommands).not.toContain("codex plugin remove longtable@longtable --json");
+    expect(externalCommands).not.toContain("codex plugin marketplace remove longtable --json");
+
+    const ownedCommands: string[] = [];
+    const removed: string[] = [];
+    await runUninstall(
+      "/home/ada/.config/public-proposal",
+      uninstallDependencies({
+        manifest: manifestWithRegistrationOwnership("installer_owned"),
+        commands: ownedCommands,
+        removed,
+      }),
+    );
+    expect(ownedCommands).toContain("codex plugin remove longtable@longtable --json");
+    expect(ownedCommands).toContain("codex plugin marketplace remove longtable --json");
+    expect(removed).toContain("/home/ada/.config/public-proposal/longtable-marketplace");
+  });
+
   it("uninstall refuses to remove a Codex marketplace that now points at another installation", async () => {
     const commands: string[] = [];
     const removed: string[] = [];
@@ -510,6 +537,34 @@ function legacyManifestWithoutCodexRegistrations(): InstallManifest {
   return manifest;
 }
 
+function manifestWithRegistrationOwnership(ownership: "externally_owned" | "installer_owned"): InstallManifest {
+  const installRoot = "/home/ada/.config/public-proposal";
+  return {
+    ...manifestWithCodexRegistrations({ pluginAdded: false, marketplaceAdded: false }),
+    ownedPaths: ownership === "installer_owned"
+      ? [`${installRoot}/plugin`, `${installRoot}/marketplace`, `${installRoot}/worker`, `${installRoot}/longtable-marketplace`]
+      : [`${installRoot}/plugin`, `${installRoot}/marketplace`, `${installRoot}/worker`],
+    registrationOwnership: {
+      publicProposal: {
+        ownership: "externally_owned",
+        pluginId: "public-proposal@public-proposal",
+        marketplaceName: "public-proposal",
+        marketplaceSource: `${installRoot}/marketplace`,
+        pluginAdded: false,
+        marketplaceAdded: false,
+      },
+      longtable: {
+        ownership,
+        pluginId: "longtable@longtable",
+        marketplaceName: "longtable",
+        marketplaceSource: ownership === "installer_owned" ? `${installRoot}/longtable-marketplace` : "/opt/longtable/marketplace",
+        pluginAdded: ownership === "installer_owned",
+        marketplaceAdded: ownership === "installer_owned",
+      },
+    },
+  };
+}
+
 function uninstallDependencies(input: {
   manifest: InstallManifest;
   commands: string[];
@@ -530,25 +585,27 @@ function uninstallDependencies(input: {
       const rendered = [command, ...args].join(" ");
       input.commands.push(rendered);
       if (rendered === "codex plugin marketplace list --json") {
+        const longtable = input.manifest.registrationOwnership?.longtable;
         return {
           code: 0,
           stdout: JSON.stringify({
             marketplaces: input.marketplacePath === null ? [] : [{
               name: "public-proposal",
               path: input.marketplacePath ?? "/home/ada/.config/public-proposal/marketplace",
-            }],
+            }, ...(longtable ? [{ name: "longtable", path: longtable.marketplaceSource }] : [])],
           }),
           stderr: "",
         };
       }
       if (rendered === "codex plugin list --json") {
+        const longtable = input.manifest.registrationOwnership?.longtable;
         return {
           code: 0,
           stdout: JSON.stringify({
             installed: input.pluginInstalled === false ? [] : [{
               pluginId: "public-proposal@public-proposal",
               installed: true,
-            }],
+            }, ...(longtable ? [{ pluginId: "longtable@longtable", installed: true }] : [])],
           }),
           stderr: "",
         };

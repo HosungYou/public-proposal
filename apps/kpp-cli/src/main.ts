@@ -3,6 +3,7 @@
 import { Command, Option } from "commander";
 import { contentApproveCommand } from "./commands/content.js";
 import { approveCommand } from "./commands/approve.js";
+import { adoptCommand } from "./commands/adopt.js";
 import { auditCommand } from "./commands/audit.js";
 import { buildCommand } from "./commands/build.js";
 import { doctorCommand } from "./commands/doctor.js";
@@ -46,6 +47,15 @@ export async function runCli(argv: readonly string[]): Promise<number> {
     .configureOutput({
       writeOut: (message) => process.stdout.write(message),
       writeErr: () => undefined,
+    });
+
+  program
+    .command("adopt <root>")
+    .option("--source <path>", "기존 RFP/source packet 경로")
+    .option("--master <path>", "기존 working master 경로")
+    .option("--json", "JSON 형식으로 출력")
+    .action(async (root: string, options: JsonOption & { source?: string; master?: string }) => {
+      writeEnvelope(await adoptCommand(root, options), options.json === true);
     });
 
   program
