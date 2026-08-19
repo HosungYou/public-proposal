@@ -13,8 +13,12 @@ Use a writable user or project installation location. Do not put customer RFPs, 
 The package is published on npm as `@longtable/public-proposal@0.1.3`. Leaving off the version below resolves the current `latest` tag; pin `@0.1.3` when reproducibility is required.
 
 ```bash
-npx @longtable/public-proposal setup --provider codex
-npx @longtable/public-proposal doctor --json
+npx --yes @longtable/public-proposal setup --provider codex
+npx --yes @longtable/public-proposal doctor --json
+npx --yes @longtable/public-proposal update
+npx --yes @longtable/public-proposal update --apply
+npx --yes --package @longtable/public-proposal kpp adopt <legacy-project> --source <source-packet> --master <working-master> --json
+npx --yes @longtable/public-proposal uninstall
 ```
 
 `setup` validates the packaged Public Proposal marketplace and plugin, verifies the pinned KPP and LongTable CLIs, installs the managed DOCX worker, and writes an installation receipt only after its preflight passes. In the vNext source, LongTable is an independent `longtable@longtable` registration: a compatible external source is reused as `externally_owned`; otherwise setup creates a separate installer-owned LongTable marketplace and installs `$longtable` plus the canonical `longtable-research` skill there. The published `@longtable/cli@0.1.72` artifact may name the scholarly skill `scholar-research`; the installer normalizes that name only inside its own LongTable plugin. `doctor --json` verifies both independent registration sources and LongTable doctor; it is read-only. Use `--install-scope project` only when the installation should be scoped to the current project rather than the user.
@@ -24,6 +28,8 @@ If a later setup step fails, setup removes only marketplace/plugin registrations
 During migration, setup/update snapshot the prior receipt hash, both Codex registration states, and load-bearing installer-owned file hashes. It adds only missing registrations, validates LongTable doctor, removes only legacy LongTable role copies below Public Proposal-owned plugin roots, and atomically replaces `installation.json`. It never writes or deletes `.longtable/`, customer data, KPP project state, or approval artifacts. Retrying after a compensated failure does not duplicate registrations.
 
 The `npx` form is intentionally repeatable: setup does not install a persistent `public-proposal` executable. Use the same `npx @longtable/public-proposal` prefix for doctor, update, and uninstall unless you deliberately choose the global fallback below.
+
+The `kpp adopt` line uses `npx --package` because adoption belongs to the pinned KPP binary supplied as a dependency, not to the installer command. A single setup invocation registers both `public-proposal@public-proposal` and `longtable@longtable` as independent plugins. Their skills and ownership remain separate.
 
 ### Choose one installation scope
 
@@ -133,3 +139,14 @@ Research-lock recovery is deliberately conservative: KPP does not automatically 
 ## Human release boundary
 
 The installer, Codex plugin, KPP audit, and LongTable research lock can establish technical readiness only. A release remains blocked until a named human owner approves the exact evidence boundary and proposal bytes. `AI-assisted draft`, a passing doctor, a valid research lock, and a passing technical audit are not submission-ready status by themselves.
+
+The source release verifier also keeps package-release evidence separate:
+
+| Field | Meaning |
+| --- | --- |
+| `localArtifactVerified` | Build, tests, tarball integrity, isolated commands, and the conditional research matrix completed locally. |
+| `registryAvailable` | The exact package version resolved through `npm view @longtable/public-proposal@<version>` and its `dist.integrity` matched the verified local tarball. |
+| `effectivenessValidated` | A versioned blinded human benchmark report met every promotion threshold. Machine scores do not qualify. |
+| `releaseReady` | All three preceding fields are true and the forbidden-research gate passed. |
+
+`npm pack` and `npx --package <tarball>` verify only local bytes. They do not prove npm visibility. The default benchmark is deterministic and machine-only, so it intentionally leaves `effectivenessValidated=false`. See [the vNext beta gate](../VNEXT-BETA.md) for promotion criteria and report usage.

@@ -9,6 +9,19 @@ npx @longtable/public-proposal setup --provider codex
 npx @longtable/public-proposal doctor --json
 ```
 
+Use the package through these explicit ephemeral commands:
+
+```bash
+npx --yes @longtable/public-proposal setup --provider codex
+npx --yes @longtable/public-proposal doctor --json
+npx --yes @longtable/public-proposal update
+npx --yes @longtable/public-proposal update --apply
+npx --yes --package @longtable/public-proposal kpp adopt <legacy-project> --source <source-packet> --master <working-master> --json
+npx --yes @longtable/public-proposal uninstall
+```
+
+Setup creates or reuses two independent registrations, `public-proposal@public-proposal` and `longtable@longtable`. The single global Codex `public-proposal` marketplace selector still means differently sourced user and project installations cannot coexist. A conflict stops with `PP_MARKETPLACE_CONFLICT`.
+
 This release coordinates the following exact contract:
 
 | Component | Version / protocol | Authority |
@@ -34,5 +47,7 @@ The result is `UNMANAGED_DRAFT`. `.longtable/`, customer files, prior approval a
 Codex has a **single global Codex `public-proposal` marketplace selector**. User and project installation roots cannot coexist when they use different marketplace sources: setup reports `PP_MARKETPLACE_CONFLICT`. Choose one scope, uninstall the existing Public Proposal installation, then set up the selected scope; see the installation guide for the scoped commands and ownership boundary.
 
 Node `>=22 <27` and Python `>=3.11 <3.15` are compatibility requirements. The current setup and doctor commands check executable availability, not runtime semver ranges. Academic, research-service, and policy-research projects require a valid LongTable research lock before approval-ready authoring and subsequent approval or release. General procurement is conditional on an academic-evidence slot; document restyling is not research-locked.
+
+The vNext release verifier distinguishes local tarball verification, npm registry visibility, blinded human effectiveness validation, and aggregate release readiness. Its default deterministic benchmark cannot validate effectiveness. Supplying `PUBLIC_PROPOSAL_BENCHMARK_HUMAN_PACKET=<path>` only enables the human-evidence check; the packet must match the versioned blinded protocol and all promotion thresholds. Neither `npm pack` nor `npx --package <tarball>` proves registry identity, which is checked by comparing the exact `npm view @longtable/public-proposal@<version>` `dist.integrity` with the local tarball. The verifier never publishes or changes a dist-tag.
 
 For manual installation, recovery, clean uninstall, and error handling, see the repository [installation guide](https://github.com/HosungYou/public-proposal/blob/main/docs/installation/INSTALL.md).

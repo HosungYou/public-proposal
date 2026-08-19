@@ -80,7 +80,41 @@ export function runProposalClassFixture(input: {
 }>;
 
 export function verifyPackageContracts(): Promise<unknown>;
-export function runReleaseVerification(): Promise<unknown>;
+export function makeReleaseReport(input: {
+  readonly localArtifactVerified: boolean;
+  readonly registryAvailable: boolean;
+  readonly effectivenessValidated: boolean;
+}): {
+  readonly localArtifactVerified: boolean;
+  readonly registryAvailable: boolean;
+  readonly effectivenessValidated: boolean;
+  readonly releaseReady: boolean;
+};
+export function evaluateRegistryProbe(input: {
+  readonly exitCode: number;
+  readonly stdout: string;
+  readonly expectedVersion: string;
+  readonly expectedIntegrity: string;
+}): {
+  readonly versionVisible: boolean;
+  readonly artifactMatches: boolean;
+  readonly available: boolean;
+  readonly blocker: null | string;
+};
+export function runReleaseGate(input: {
+  readonly localArtifactVerified: boolean;
+  readonly registryAvailable: boolean;
+  readonly effectivenessValidated: boolean;
+  readonly researchInvocations?: { readonly generalProcurement?: number };
+}): {
+  readonly ok: boolean;
+  readonly code: string;
+  readonly localArtifactVerified: boolean;
+  readonly registryAvailable: boolean;
+  readonly effectivenessValidated: boolean;
+  readonly releaseReady: boolean;
+};
+export function runReleaseVerification(input?: { readonly benchmarkHumanPacket?: string }): Promise<unknown>;
 export function validateBenchmarkEvidence(report: unknown): {
   readonly ok: boolean;
   readonly code:

@@ -16,6 +16,8 @@ import { readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, delimiter, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { runBenchmark } from "./run_proposal_benchmark.mjs";
+import { scoreBenchmark } from "./score_proposal_benchmark.mjs";
 
 const REPOSITORY_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const PUBLIC_PROPOSAL_BINARY = join(REPOSITORY_ROOT, "apps/public-proposal-cli/dist/main.js");
@@ -26,6 +28,81 @@ const KPP_VERSION = "0.2.1";
 const LONGTABLE_VERSION = "0.1.72";
 const WORKER_PROTOCOL = "1.0.0";
 const REQUIRED_RESEARCH_CLASSES = ["academic_research", "research_service", "policy_research"];
+const LOCAL_RELEASE_WORKSPACES = [
+  "@longtable/proposal-research-contracts",
+  "@longtable/kpp-schemas",
+  "@longtable/kpp-core",
+  "@longtable/kpp-renderers",
+  "@longtable/kpp-audits",
+  "@longtable/kpp-cli",
+  "@longtable/public-proposal",
+];
+
+export function makeReleaseReport({
+  localArtifactVerified,
+  registryAvailable,
+  effectivenessValidated,
+}) {
+  const report = {
+    localArtifactVerified: localArtifactVerified === true,
+    registryAvailable: registryAvailable === true,
+    effectivenessValidated: effectivenessValidated === true,
+  };
+  return {
+    ...report,
+    releaseReady: report.localArtifactVerified
+      && report.registryAvailable
+      && report.effectivenessValidated,
+  };
+}
+
+export function runReleaseGate(input) {
+  const report = makeReleaseReport(input);
+  if ((input.researchInvocations?.generalProcurement ?? 0) !== 0) {
+    return {
+      ok: false,
+      code: "PP_UNEXPECTED_RESEARCH_INVOCATION",
+      ...report,
+      releaseReady: false,
+    };
+  }
+  return {
+    ok: report.localArtifactVerified,
+    code: report.releaseReady ? "PP_RELEASE_READY" : "PP_RELEASE_EVIDENCE_INCOMPLETE",
+    ...report,
+  };
+}
+
+export function evaluateRegistryProbe({
+  exitCode,
+  stdout,
+  expectedVersion,
+  expectedIntegrity,
+}) {
+  let response;
+  try {
+    response = JSON.parse(stdout);
+  } catch {
+    return {
+      versionVisible: false,
+      artifactMatches: false,
+      available: false,
+      blocker: "PP_REGISTRY_RESPONSE_INVALID",
+    };
+  }
+  const versionVisible = exitCode === 0 && response?.version === expectedVersion;
+  const artifactMatches = versionVisible && response?.["dist.integrity"] === expectedIntegrity;
+  return {
+    versionVisible,
+    artifactMatches,
+    available: artifactMatches,
+    blocker: artifactMatches
+      ? null
+      : versionVisible
+        ? "PP_REGISTRY_ARTIFACT_MISMATCH"
+        : "PP_REGISTRY_VERSION_UNAVAILABLE",
+  };
+}
 
 export function validateBenchmarkEvidence(report) {
   if (report === null || typeof report !== "object"
@@ -130,6 +207,20 @@ async function readSkillNames(skillsRoot) {
   } catch {
     return [];
   }
+}
+
+function isManagedWorkerOnlyPartial(report) {
+  const workerCheck = report?.envelopes?.kppDoctor?.data?.checks?.find?.(
+    ({ name }) => name === "worker_protocol",
+  );
+  return report?.envelopes?.setup?.ok === true
+    && report?.envelopes?.publicDoctor?.ok === true
+    && report?.envelopes?.kppDoctor?.ok === true
+    && report?.envelopes?.longtableDoctor?.ok === true
+    && report?.commands?.every?.(({ exitCode }) => exitCode === 0) === true
+    && report?.isolation?.violations?.length === 0
+    && workerCheck?.status === "warn"
+    && workerCheck?.code === "PP_WORKER_PROTOCOL_MISSING";
 }
 
 export async function runProposalClassFixture({ proposalClass, researchLock, academicEvidence = false }) {
@@ -304,7 +395,9 @@ export async function verifyPackageContracts() {
   };
 }
 
-export async function runReleaseVerification() {
+export async function runReleaseVerification({
+  benchmarkHumanPacket = process.env.PUBLIC_PROPOSAL_BENCHMARK_HUMAN_PACKET,
+} = {}) {
   const artifactRoot = await mkdtemp(join(tmpdir(), "public-proposal-release-verification-"));
   const commands = [];
   const runRequired = async (name, command, args, options = {}) => {
@@ -324,16 +417,34 @@ export async function runReleaseVerification() {
     await runRequired("workspace typecheck", "npm", ["run", "typecheck"]);
     const contracts = await verifyPackageContracts();
     await runRequired("meta-installer pack dry-run", "npm", ["pack", "--workspace", "@longtable/public-proposal", "--dry-run", "--json"]);
-    const pack = await runRequired("meta-installer pack", "npm", [
-      "pack",
-      "--workspace",
-      "@longtable/public-proposal",
-      "--json",
-      "--pack-destination",
-      artifactRoot,
-    ]);
-    const packData = JSON.parse(pack.stdout);
-    const packRecord = Array.isArray(packData) ? packData[0] : packData;
+    const localWorkspaceTarballs = [];
+    for (const workspace of LOCAL_RELEASE_WORKSPACES) {
+      const packed = await runRequired(`${workspace} pack`, "npm", [
+        "pack",
+        "--workspace",
+        workspace,
+        "--json",
+        "--pack-destination",
+        artifactRoot,
+      ]);
+      const packData = JSON.parse(packed.stdout);
+      const packRecord = Array.isArray(packData) ? packData[0] : packData;
+      if (typeof packRecord?.filename !== "string" || typeof packRecord?.integrity !== "string") {
+        throw new VerificationError(`${workspace} npm pack did not report filename and integrity`, {
+          artifactRoot,
+          commands,
+        });
+      }
+      localWorkspaceTarballs.push({
+        workspace,
+        path: join(artifactRoot, packRecord.filename),
+        integrity: packRecord.integrity,
+      });
+    }
+    const metaTarball = localWorkspaceTarballs.find(({ workspace }) => workspace === "@longtable/public-proposal");
+    const packRecord = metaTarball === undefined
+      ? null
+      : { filename: basename(metaTarball.path), integrity: metaTarball.integrity };
     if (typeof packRecord?.filename !== "string" || typeof packRecord?.integrity !== "string") {
       throw new VerificationError("npm pack did not report filename and integrity", { artifactRoot, commands });
     }
@@ -342,16 +453,26 @@ export async function runReleaseVerification() {
     const registryProbe = await capture(
       "npm registry availability",
       "npm",
-      ["view", `@longtable/public-proposal@${INSTALLER_VERSION}`, "version", "--json"],
+      ["view", `@longtable/public-proposal@${INSTALLER_VERSION}`, "version", "dist.integrity", "--json"],
       { cwd: REPOSITORY_ROOT },
     );
     commands.push(registryProbe);
+    const registryEvaluation = evaluateRegistryProbe({
+      exitCode: registryProbe.exitCode,
+      stdout: registryProbe.stdout,
+      expectedVersion: INSTALLER_VERSION,
+      expectedIntegrity: packRecord.integrity,
+    });
     const registry = {
       package: `@longtable/public-proposal@${INSTALLER_VERSION}`,
-      available: registryProbe.exitCode === 0 && registryProbe.stdout.includes(INSTALLER_VERSION),
+      ...registryEvaluation,
       exitCode: registryProbe.exitCode,
       output: registryProbe.stdout.trim() || registryProbe.stderr.trim(),
-      prerequisite: "Registry availability is independently checked before the documented npx command is marked release-ready.",
+      expectedIntegrity: packRecord.integrity,
+      prerequisite: "Registry version and dist.integrity must match the verified local tarball before the documented npx command is marked release-ready.",
+      npxRegistryCommand: `npx --yes --package @longtable/public-proposal@${INSTALLER_VERSION} public-proposal setup --provider codex --dry-run --json`,
+      npxRegistryAvailable: registryEvaluation.available,
+      npxRegistryBlocker: registryEvaluation.blocker,
     };
     const testHome = join(artifactRoot, "test-home");
     await mkdir(testHome, { recursive: true });
@@ -369,15 +490,34 @@ export async function runReleaseVerification() {
     await runRequired("hermetic full JavaScript test suite", "npm", ["test"], testOptions);
     await runRequired("Python worker tests", "uv", ["run", "--project", "workers/docx-python", "pytest", "-q"], testOptions);
     const dryRunHome = join(artifactRoot, "dry-run-home");
-    await mkdir(dryRunHome, { recursive: true });
+    const localTarballInstallRoot = join(artifactRoot, "local-tarball-install");
+    await Promise.all([mkdir(dryRunHome, { recursive: true }), mkdir(localTarballInstallRoot, { recursive: true })]);
     await runRequired(
-      "npx @longtable/public-proposal setup --dry-run",
+      "install complete local workspace tarball set",
+      "npm",
+      [
+        "install",
+        "--prefix",
+        localTarballInstallRoot,
+        "--ignore-scripts",
+        "--no-audit",
+        "--no-fund",
+        ...localWorkspaceTarballs.map(({ path }) => path),
+      ],
+    );
+    await runRequired(
+      "npx installed local tarball set setup --dry-run",
       "npx",
-      ["--yes", "--package", tarballPath, "public-proposal", "setup", "--provider", "codex", "--dry-run", "--json"],
-      { env: { ...process.env, HOME: dryRunHome, USERPROFILE: dryRunHome, LONGTABLE_HOME: join(dryRunHome, ".longtable") } },
+      ["--yes", "--no-install", "public-proposal", "setup", "--provider", "codex", "--dry-run", "--json"],
+      {
+        cwd: localTarballInstallRoot,
+        env: { ...process.env, HOME: dryRunHome, USERPROFILE: dryRunHome, LONGTABLE_HOME: join(dryRunHome, ".longtable") },
+      },
     );
     const install = await runCleanEnvironmentFixture();
-    if (install.exitCode !== 0) throw new VerificationError("clean install doctor chain failed", { artifactRoot, commands, install });
+    if (install.exitCode !== 0 && !isManagedWorkerOnlyPartial(install.report)) {
+      throw new VerificationError("clean install doctor chain failed", { artifactRoot, commands, install });
+    }
     const matrix = {};
     for (const proposalClass of REQUIRED_RESEARCH_CLASSES) {
       const fixture = await runProposalClassFixture({ proposalClass, researchLock: false });
@@ -430,16 +570,58 @@ export async function runReleaseVerification() {
         });
       }
     }
-    const report = {
-      ok: true,
+    const benchmarkRoot = join(artifactRoot, "benchmark");
+    const benchmarkRun = await runBenchmark({
+      fixtureSet: join(REPOSITORY_ROOT, "fixtures", "benchmarks"),
+      out: benchmarkRoot,
+      seeds: [1],
+    });
+    const benchmarkReportPath = join(benchmarkRoot, "report.json");
+    const benchmarkReport = await scoreBenchmark({
+      input: benchmarkRoot,
+      output: benchmarkReportPath,
+      ...(benchmarkHumanPacket === undefined ? {} : { humanPacket: benchmarkHumanPacket }),
+    });
+    const benchmarkEvidence = validateBenchmarkEvidence(benchmarkReport);
+    const generalProcurementResearchInvocations = benchmarkReport.arms
+      .filter(({ fixtureId }) => fixtureId === "general-procurement")
+      .reduce((sum, arm) => sum + arm.longTableInvocations, 0);
+    const gate = runReleaseGate({
       localArtifactVerified: true,
-      releaseReady: registry.available,
+      registryAvailable: registry.available,
+      effectivenessValidated: benchmarkEvidence.ok,
+      researchInvocations: { generalProcurement: generalProcurementResearchInvocations },
+    });
+    if (gate.code === "PP_UNEXPECTED_RESEARCH_INVOCATION") {
+      throw new VerificationError("general-procurement benchmark invoked LongTable", {
+        artifactRoot,
+        commands,
+        benchmarkReportPath,
+        benchmarkReport,
+        gate,
+      });
+    }
+    const report = {
+      ok: gate.ok,
+      ...makeReleaseReport(gate),
       artifactRoot,
       contracts,
       tarball,
+      localWorkspaceTarballs,
       registry,
-      cleanInstall: install.report,
+      cleanInstall: {
+        ...install.report,
+        verificationStatus: install.exitCode === 0 ? "verified" : "managed_worker_partial",
+      },
       matrix,
+      benchmark: {
+        runReportPath: join(benchmarkRoot, "run.json"),
+        scoreReportPath: benchmarkReportPath,
+        humanEvaluationPacketPath: benchmarkRun.humanEvaluationPacketPath,
+        rawEvidencePaths: benchmarkReport.rawEvidencePaths,
+        evidence: benchmarkEvidence,
+      },
+      gate,
       commands,
     };
     const reportPath = join(artifactRoot, "verification-report.json");
@@ -447,7 +629,18 @@ export async function runReleaseVerification() {
     return { ...report, reportPath };
   } catch (error) {
     const details = error instanceof VerificationError ? error.details : { artifactRoot, commands };
-    const report = { ok: false, artifactRoot, error: error instanceof Error ? error.message : String(error), ...details };
+    const failedGate = details.gate ?? makeReleaseReport({
+      localArtifactVerified: false,
+      registryAvailable: false,
+      effectivenessValidated: false,
+    });
+    const report = {
+      ok: false,
+      ...makeReleaseReport(failedGate),
+      artifactRoot,
+      error: error instanceof Error ? error.message : String(error),
+      ...details,
+    };
     const reportPath = join(artifactRoot, "verification-report.json");
     await writeFile(reportPath, `${JSON.stringify(report, null, 2)}\n`, { mode: 0o600 });
     throw new VerificationError(`${report.error}; report: ${reportPath}`, { ...report, reportPath });

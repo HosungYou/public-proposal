@@ -2,8 +2,11 @@ import { rm } from "node:fs/promises";
 import { resolve } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import {
+  evaluateRegistryProbe,
+  makeReleaseReport,
   runCleanEnvironmentFixture,
   runProposalClassFixture,
+  runReleaseGate,
   validateBenchmarkEvidence,
 } from "../../scripts/verify_public_proposal_release.mjs";
 
@@ -156,6 +159,60 @@ describe("benchmark release boundary", () => {
       humanEvaluationRequired: true,
       rawEvidencePreserved: true,
     })).toEqual({ ok: false, code: "PP_EFFECTIVENESS_HUMAN_EVALUATION_REQUIRED" });
+  });
+
+  it("keeps registry availability separate from local artifact verification", () => {
+    expect(makeReleaseReport({
+      localArtifactVerified: true,
+      registryAvailable: false,
+      effectivenessValidated: true,
+    })).toEqual({
+      localArtifactVerified: true,
+      registryAvailable: false,
+      effectivenessValidated: true,
+      releaseReady: false,
+    });
+  });
+
+  it("does not treat a same-version registry artifact with different bytes as available", () => {
+    expect(evaluateRegistryProbe({
+      exitCode: 0,
+      stdout: JSON.stringify({ version: "0.1.3", "dist.integrity": "sha512-registry" }),
+      expectedVersion: "0.1.3",
+      expectedIntegrity: "sha512-local",
+    })).toMatchObject({
+      versionVisible: true,
+      artifactMatches: false,
+      available: false,
+      blocker: "PP_REGISTRY_ARTIFACT_MISMATCH",
+    });
+  });
+
+  it("does not call a machine-only benchmark release-ready", () => {
+    expect(makeReleaseReport({
+      localArtifactVerified: true,
+      registryAvailable: true,
+      effectivenessValidated: false,
+    })).toMatchObject({
+      effectivenessValidated: false,
+      releaseReady: false,
+    });
+  });
+
+  it("fails closed when ordinary general procurement invokes research", () => {
+    expect(runReleaseGate({
+      localArtifactVerified: true,
+      registryAvailable: true,
+      effectivenessValidated: true,
+      researchInvocations: { generalProcurement: 1 },
+    })).toEqual({
+      ok: false,
+      code: "PP_UNEXPECTED_RESEARCH_INVOCATION",
+      localArtifactVerified: true,
+      registryAvailable: true,
+      effectivenessValidated: true,
+      releaseReady: false,
+    });
   });
 });
 

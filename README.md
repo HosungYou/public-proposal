@@ -22,6 +22,19 @@ After setup, inspect the installed boundary without changing it:
 npx @longtable/public-proposal doctor --json
 ```
 
+The complete ephemeral command matrix is:
+
+```bash
+npx --yes @longtable/public-proposal setup --provider codex
+npx --yes @longtable/public-proposal doctor --json
+npx --yes @longtable/public-proposal update
+npx --yes @longtable/public-proposal update --apply
+npx --yes --package @longtable/public-proposal kpp adopt <legacy-project> --source <source-packet> --master <working-master> --json
+npx --yes @longtable/public-proposal uninstall
+```
+
+One setup invocation coordinates two independent Codex plugin registrations: `public-proposal@public-proposal` and `longtable@longtable`. It does not merge their authority or make LongTable a Public Proposal sub-skill.
+
 `setup` is a change command; `doctor` is read-only. See the full [installation and recovery guide](docs/installation/INSTALL.md) and the machine-readable [compatibility matrix](docs/installation/compatibility-matrix.json).
 
 Codex has a **single global Codex `public-proposal` marketplace selector**. A user-scoped and project-scoped installation cannot coexist when they register different marketplace sources. Setup stops with `PP_MARKETPLACE_CONFLICT`; choose one scope, uninstall the existing Public Proposal installation, then set up the selected scope.
@@ -71,6 +84,8 @@ node scripts/score_proposal_benchmark.mjs --input .artifacts/benchmark --output 
 ```
 
 See [the benchmark protocol](docs/BENCHMARKING.md) for fixed budgets, scorer fields, human packet format, limitations, and promotion thresholds.
+
+`npm run verify:public-proposal` writes a local release report with four separate booleans: `localArtifactVerified`, `registryAvailable`, `effectivenessValidated`, and `releaseReady`. The default deterministic benchmark is machine-only, so `effectivenessValidated` and `releaseReady` remain false. A local tarball or `npx --package <tarball>` run does not prove that npm can resolve the same artifact; the verifier checks the exact version and `dist.integrity` separately with `npm view @longtable/public-proposal@<version>`. See [the vNext beta gate](docs/VNEXT-BETA.md).
 
 ### Adopt an existing draft
 
