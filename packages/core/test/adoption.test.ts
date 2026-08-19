@@ -1,4 +1,4 @@
-import { copyFile, mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { copyFile, mkdtemp, mkdir, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -76,6 +76,35 @@ describe("legacy project adoption", () => {
     expect(JSON.parse(await readFile(join(outputRoot, "content", "provisional-content.json"), "utf8"))).toMatchObject({
       entries: [expect.objectContaining({ originalPath: master, status: "provisional" })],
     });
+  });
+
+  it("rejects a symlinked adoption root before it can mutate the target", async () => {
+    const targetRoot = await temporaryRoot("kpp-adopt-symlink-target-");
+    const parentRoot = await temporaryRoot("kpp-adopt-symlink-parent-");
+    const linkedRoot = join(parentRoot, "linked-legacy");
+    await writeFile(join(targetRoot, "working-master.docx"), "legacy draft", "utf8");
+    await symlink(targetRoot, linkedRoot, "dir");
+
+    await expect(adoptProject({ root: linkedRoot })).rejects.toMatchObject({
+      code: "KPP_INPUT_ADOPTION_SYMLINK",
+    });
+    await expect(readFile(join(targetRoot, "kpp.project.yaml"), "utf8")).rejects.toMatchObject({ code: "ENOENT" });
+    await expect(readFile(join(targetRoot, "receipts", "adoption.json"), "utf8")).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
+  it("rejects an existing symlink output root before it can mutate the target", async () => {
+    const legacyRoot = await temporaryRoot("kpp-adopt-output-symlink-legacy-");
+    const targetRoot = await temporaryRoot("kpp-adopt-output-symlink-target-");
+    const parentRoot = await temporaryRoot("kpp-adopt-output-symlink-parent-");
+    const linkedOutputRoot = join(parentRoot, "linked-project");
+    await writeFile(join(legacyRoot, "working-master.docx"), "legacy draft", "utf8");
+    await symlink(targetRoot, linkedOutputRoot, "dir");
+
+    await expect(adoptProject({ root: legacyRoot, outputRoot: linkedOutputRoot })).rejects.toMatchObject({
+      code: "KPP_INPUT_ADOPTION_SYMLINK",
+    });
+    await expect(readFile(join(targetRoot, "kpp.project.yaml"), "utf8")).rejects.toMatchObject({ code: "ENOENT" });
+    await expect(readFile(join(targetRoot, "receipts", "adoption.json"), "utf8")).rejects.toMatchObject({ code: "ENOENT" });
   });
 
   it("publishes adoption atomically so a mid-import failure can be retried", async () => {

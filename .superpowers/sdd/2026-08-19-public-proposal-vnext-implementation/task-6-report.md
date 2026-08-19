@@ -101,3 +101,34 @@ pre-existing KPP managed-worker warning as a Task 6 success.
 TDD RED evidence is `.omo/evidence/task-6-fix1/red-regressions.log`: all
 three new scenarios failed against `54882b3` for their intended missing
 behavior before production changes. No push, publish, or merge was performed.
+
+## Fix round 2 — 2026-08-19
+
+The adoption boundary now rejects a selected symlink root and an already
+existing symlink output root with `KPP_INPUT_ADOPTION_SYMLINK` before input
+discovery, staging, or publication. The regression scenarios prove the linked
+target gains neither `kpp.project.yaml` nor an adoption receipt.
+
+The clean-install E2E retains the independent installer-owned LongTable source
+checks, but its title and assertions now state the actual aggregate fixture
+result. Setup and the Public Proposal doctor are successful, while the fixture
+is an explicit managed-worker partial gate: `exitCode: 1`, `report.ok: false`,
+and the `kpp doctor` output contains a `worker_protocol` warning with
+`PP_WORKER_PROTOCOL_MISSING`. Managed-worker and release logic were not
+changed.
+
+### Fix-round evidence
+
+| Success criterion | Exact scenario and invocation | Binary observable | Captured artifact |
+| --- | --- | --- | --- |
+| Symlinked selected root is rejected before publication | `npm test -- packages/core/test/adoption.test.ts`, scenario `rejects a symlinked adoption root before it can mutate the target` | RED: promise resolved and exposed the bypass; GREEN: exit 0, rejection code is `KPP_INPUT_ADOPTION_SYMLINK`, and target `kpp.project.yaml` plus receipt remain absent | `.omo/evidence/task-6-fix2/red-symlink-regressions.log`; `.omo/evidence/task-6-fix2/green-symlink-regressions.log` |
+| Existing symlink output root is rejected before publication | Same invocation, scenario `rejects an existing symlink output root before it can mutate the target` | RED: `ENOTDIR`; GREEN: exit 0, rejection code is `KPP_INPUT_ADOPTION_SYMLINK`, and target `kpp.project.yaml` plus receipt remain absent | `.omo/evidence/task-6-fix2/red-symlink-regressions.log`; `.omo/evidence/task-6-fix2/green-symlink-regressions.log` |
+| Honest aggregate clean-install state with separate LongTable source checks | `npm test -- tests/e2e/public-proposal-install.test.ts` | exit 0; 1 file/10 tests; E2E asserts `exitCode === 1`, `report.ok === false`, and KPP's worker warning while preserving setup/Public Proposal/LongTable assertions | `.omo/evidence/task-6-fix2/clean-install-e2e.log` |
+| Direct partial-gate observable | `node --input-type=module -e '<runCleanEnvironmentFixture probe>'` | probe exit 0; fixture `exitCode: 1`, `reportOk: false`, KPP doctor command exit 0, worker check `warn`/`PP_WORKER_PROTOCOL_MISSING` | `.omo/evidence/task-6-fix2/clean-install-partial-gate.json` |
+| Focused Task 6 regression suite | `npm test -- packages/core/test/adoption.test.ts tests/integration/adopt.test.ts apps/public-proposal-cli/test/setup.test.ts apps/public-proposal-cli/test/uninstall-update.test.ts apps/public-proposal-cli/test/doctor.test.ts` | exit 0; 5 files/71 tests | `.omo/evidence/task-6-fix2/focused-task-6-tests.log` |
+| Type safety | `npm run typecheck` | exit 0 | `.omo/evidence/task-6-fix2/typecheck.log` |
+| Build | `npm run build` | exit 0 | `.omo/evidence/task-6-fix2/build.log` |
+| Diff hygiene | `git diff --check e2afb84` | exit 0, empty output | `.omo/evidence/task-6-fix2/diff-check.log` |
+
+The pre-existing untracked installer plan remained untouched. No push,
+publish, or merge was performed.

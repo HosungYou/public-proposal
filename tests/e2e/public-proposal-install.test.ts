@@ -13,9 +13,11 @@ afterEach(async () => {
 });
 
 describe("public proposal clean installation", () => {
-  it("reports the packaged plugin, KPP, LongTable, and worker at their pinned versions", async () => {
+  it("reports the packaged plugin and independent LongTable source while the managed-worker gate is explicitly partial", async () => {
     const result = await runCleanInstallFixture();
 
+    expect(result.exitCode).toBe(1);
+    expect(result.report.ok).toBe(false);
     expect(result.report).toMatchObject({
       envelopes: {
         setup: { ok: true },
@@ -41,7 +43,19 @@ describe("public proposal clean installation", () => {
         registeredSkills: {
           longtable: true,
           longtableResearch: true,
-        },
+      },
+    });
+    const kppDoctor = result.report.commands.find(({ name }) => name === "kpp doctor");
+    if (kppDoctor === undefined) throw new Error("clean-install fixture did not run kpp doctor");
+    expect(JSON.parse(kppDoctor.stdout)).toMatchObject({
+      ok: true,
+      data: { checks: expect.arrayContaining([
+      expect.objectContaining({
+        name: "worker_protocol",
+        status: "warn",
+        code: "PP_WORKER_PROTOCOL_MISSING",
+      }),
+      ]) },
     });
     expect(result.report.commands.map(({ name }) => name)).toEqual([
       "public-proposal setup",

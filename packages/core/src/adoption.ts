@@ -75,6 +75,8 @@ export async function adoptProject(
 ): Promise<AdoptionReport> {
   const legacyRoot = resolve(input.root);
   const projectRoot = resolve(input.outputRoot ?? input.root);
+  await assertNotSymbolicLink(legacyRoot);
+  if (projectRoot !== legacyRoot) await assertNotSymbolicLink(projectRoot);
   await requireDirectory(legacyRoot);
   const receiptPath = join(projectRoot, ADOPTION_RECEIPT);
   const previous = await readAdoptionReceipt(receiptPath);
@@ -355,6 +357,13 @@ async function expandReadableFiles(path: string): Promise<string[]> {
 async function requireDirectory(path: string): Promise<void> {
   const metadata = await stat(path).catch(() => null);
   if (!metadata?.isDirectory()) throw new KppError("KPP_INPUT_ADOPTION_ROOT", "adopt root는 읽을 수 있는 디렉터리여야 합니다.", { path });
+}
+
+async function assertNotSymbolicLink(path: string): Promise<void> {
+  const metadata = await lstat(path).catch(() => undefined);
+  if (metadata?.isSymbolicLink() === true) {
+    throw new KppError("KPP_INPUT_ADOPTION_SYMLINK", "adopt root와 output root는 심볼릭 링크일 수 없습니다.", { path });
+  }
 }
 
 async function requireFile(path: string): Promise<string> {
