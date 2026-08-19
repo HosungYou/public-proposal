@@ -152,13 +152,19 @@ export {
   type ReviewerFindingV1,
 } from "./review-finding.js";
 export {
+  ApprovedPolicyBindingV1Schema,
   DecisionPromotionReceiptV1Schema,
   DecisionScopePromotionV1Schema,
+  PolicyApprovalV1Schema,
   PolicyBindingV1Schema,
+  PolicyProvenanceV1Schema,
   ProjectPolicyDecisionV1Schema,
+  type ApprovedPolicyBindingV1,
   type DecisionPromotionReceiptV1,
   type DecisionScopePromotionV1,
+  type PolicyApprovalV1,
   type PolicyBindingV1,
+  type PolicyProvenanceV1,
   type ProjectPolicyDecisionV1,
 } from "./policy.js";
 export {

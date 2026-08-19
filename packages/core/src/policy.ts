@@ -1,4 +1,5 @@
 import {
+  ApprovedPolicyBindingV1Schema,
   DecisionPromotionReceiptV1Schema,
   type DecisionScope,
   type PolicyBindingV1,
@@ -15,6 +16,7 @@ export type DecisionAcceptanceResult =
   | { readonly ok: false; readonly code: "PP_DECISION_ACCEPTANCE_AMBIGUOUS" | "PP_DECISION_ACCEPTANCE_MISSING" | "PP_DECISION_ACCEPTANCE_UNRECOGNIZED" };
 
 export interface DecisionScopeResolutionInput {
+  readonly decisionId: string;
   readonly currentScope: DecisionScope;
   readonly requestedScope: DecisionScope;
   readonly promotionReceipt?: unknown;
@@ -22,7 +24,7 @@ export interface DecisionScopeResolutionInput {
 
 export type DecisionScopeResolution =
   | { readonly ok: true; readonly scope: DecisionScope }
-  | { readonly ok: false; readonly code: "PP_DECISION_SCOPE_PROMOTION_REQUIRED" | "PP_DECISION_PROMOTION_RECEIPT_INVALID" };
+  | { readonly ok: false; readonly code: "PP_DECISION_SCOPE_PROMOTION_REQUIRED" | "PP_DECISION_PROMOTION_RECEIPT_INVALID" | "PP_DECISION_PROMOTION_RECEIPT_MISMATCH" };
 
 export interface PositivePolicyInput {
   readonly issuerRule?: PolicyBindingV1;
@@ -34,7 +36,7 @@ export interface PositivePolicyInput {
 
 export type PositivePolicyResolution =
   | { readonly ok: true; readonly source: "issuer_rule" | "project_decision" | "proposal_family_profile" | "reference_pattern" | "plugin_default"; readonly value: string }
-  | { readonly ok: false; readonly code: "PP_POLICY_ISSUER_CONFLICT" | "PP_POLICY_ID_MISMATCH" };
+  | { readonly ok: false; readonly code: "PP_POLICY_ISSUER_CONFLICT" | "PP_POLICY_ID_MISMATCH" | "PP_POLICY_BINDING_UNAPPROVED" };
 
 const BARE_ACCEPTANCES = new Set(["응", "수용", "제안대로"]);
 
@@ -52,12 +54,20 @@ export function resolveDecisionScope(input: DecisionScopeResolutionInput): Decis
   }
   if (input.promotionReceipt === undefined) return { ok: false, code: "PP_DECISION_SCOPE_PROMOTION_REQUIRED" };
   const parsed = DecisionPromotionReceiptV1Schema.safeParse(input.promotionReceipt);
-  return parsed.success
-    ? { ok: true, scope: input.requestedScope }
-    : { ok: false, code: "PP_DECISION_PROMOTION_RECEIPT_INVALID" };
+  if (!parsed.success) return { ok: false, code: "PP_DECISION_PROMOTION_RECEIPT_INVALID" };
+  if (parsed.data.decisionId !== input.decisionId) {
+    return { ok: false, code: "PP_DECISION_PROMOTION_RECEIPT_MISMATCH" };
+  }
+  return { ok: true, scope: input.requestedScope };
 }
 
 export function resolvePositivePolicy(input: PositivePolicyInput): PositivePolicyResolution {
+  if (
+    (input.proposalFamilyProfile !== undefined && !ApprovedPolicyBindingV1Schema.safeParse(input.proposalFamilyProfile).success)
+    || (input.referencePattern !== undefined && !ApprovedPolicyBindingV1Schema.safeParse(input.referencePattern).success)
+  ) {
+    return { ok: false, code: "PP_POLICY_BINDING_UNAPPROVED" };
+  }
   const candidates = [
     input.issuerRule,
     input.projectDecision,
@@ -84,5 +94,13 @@ export function resolvePositivePolicy(input: PositivePolicyInput): PositivePolic
 }
 
 function requiresPromotionReceipt(currentScope: DecisionScope, requestedScope: DecisionScope): boolean {
-  return currentScope === "project" && (requestedScope === "proposal_family" || requestedScope === "global");
+  const scopeRank: Record<DecisionScope, number> = {
+    temporary: 0,
+    document: 1,
+    project: 2,
+    proposal_family: 3,
+    global: 4,
+  };
+  return (requestedScope === "proposal_family" || requestedScope === "global")
+    && scopeRank[requestedScope] > scopeRank[currentScope];
 }

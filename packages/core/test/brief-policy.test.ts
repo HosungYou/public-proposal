@@ -42,11 +42,13 @@ describe("living brief and positive policy", () => {
 
   it("requires a human promotion receipt before widening a project decision", () => {
     expect(resolveDecisionScope({
+      decisionId: "decision-1",
       currentScope: "project",
       requestedScope: "proposal_family",
     })).toMatchObject({ ok: false, code: "PP_DECISION_SCOPE_PROMOTION_REQUIRED" });
 
     expect(resolveDecisionScope({
+      decisionId: "decision-1",
       currentScope: "project",
       requestedScope: "global",
       promotionReceipt: {
@@ -55,6 +57,30 @@ describe("living brief and positive policy", () => {
         approvedAt: "2026-08-19T00:00:00.000Z",
       },
     })).toEqual({ ok: true, scope: "global" });
+  });
+
+  it.each(["document", "temporary", "proposal_family"] as const)(
+    "requires a promotion receipt for %s to global",
+    (currentScope) => {
+      expect(resolveDecisionScope({
+        decisionId: "decision-1",
+        currentScope,
+        requestedScope: "global",
+      })).toMatchObject({ ok: false, code: "PP_DECISION_SCOPE_PROMOTION_REQUIRED" });
+    },
+  );
+
+  it("rejects a promotion receipt for a different decision", () => {
+    expect(resolveDecisionScope({
+      decisionId: "decision-1",
+      currentScope: "document",
+      requestedScope: "proposal_family",
+      promotionReceipt: {
+        decisionId: "decision-2",
+        approvedBy: "proposal-owner",
+        approvedAt: "2026-08-19T00:00:00.000Z",
+      },
+    })).toMatchObject({ ok: false, code: "PP_DECISION_PROMOTION_RECEIPT_MISMATCH" });
   });
 
   it("rejects issuer conflicts without an explicit current-project exception", () => {
@@ -71,6 +97,26 @@ describe("living brief and positive policy", () => {
     })).toMatchObject({ ok: true, source: "project_decision", value: "30" });
   });
 
+  it.each([
+    ["proposalFamilyProfile", "proposal_family_profile"],
+    ["referencePattern", "reference_pattern"],
+  ] as const)("rejects an unapproved %s binding", (bindingKey, _source) => {
+    expect(resolvePositivePolicy({
+      [bindingKey]: { policyId: "page-limit", value: "20" },
+      pluginDefault: { policyId: "page-limit", value: "25" },
+    })).toMatchObject({ ok: false, code: "PP_POLICY_BINDING_UNAPPROVED" });
+  });
+
+  it.each([
+    ["proposalFamilyProfile", "proposal_family_profile"],
+    ["referencePattern", "reference_pattern"],
+  ] as const)("uses an approved %s binding", (bindingKey, source) => {
+    expect(resolvePositivePolicy({
+      [bindingKey]: approvedBinding("page-limit", "20"),
+      pluginDefault: { policyId: "page-limit", value: "25" },
+    })).toMatchObject({ ok: true, source, value: "20" });
+  });
+
   it("locks a brief with its doctrine, active decisions, and input hash", async () => {
     const root = await createRequirementsLockedProject(temporaryDirectories);
     const receipt = await lockLivingBrief(root, validBrief());
@@ -80,6 +126,22 @@ describe("living brief and positive policy", () => {
     expect(receipt.inputs).toContainEqual(expect.objectContaining({ name: "doctrine" }));
   });
 });
+
+function approvedBinding(policyId: string, value: string) {
+  return {
+    policyId,
+    value,
+    approval: {
+      approvedBy: "proposal-owner",
+      approvedAt: "2026-08-19T00:00:00.000Z",
+    },
+    provenance: {
+      sourceId: "reference-1",
+      sourcePath: "references/reference-1.json",
+      artifactHash: "a".repeat(64),
+    },
+  };
+}
 
 function validBrief() {
   return {
