@@ -16,6 +16,7 @@ export const PROJECT_FILE_NAME = "kpp.project.yaml";
 export const PROJECT_DIRECTORIES = [
   "sources",
   "requirements",
+  "brief",
   "evidence",
   "content",
   "figures",

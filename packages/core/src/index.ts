@@ -23,17 +23,37 @@ export {
 export { type ProposalClass } from "@longtable/kpp-schemas";
 export {
   advanceProject,
+  adaptLegacyEvidenceLockedState,
   allowedNext,
   PROJECT_STATES,
   verifyProjectState,
 } from "./state-machine.js";
 export {
+  RECEIPT_FILE_NAMES,
   verifyReceipt,
   writeReceipt,
   type ReceiptInput,
   type ReceiptVerification,
   type ReceiptVerificationMismatch,
 } from "./receipts.js";
+export {
+  diffBrief,
+  livingBriefPath,
+  lockLivingBrief,
+  readLivingBrief,
+  type BriefDiff,
+} from "./brief-store.js";
+export {
+  recordDecisionAcceptance,
+  resolveDecisionScope,
+  resolvePositivePolicy,
+  type DecisionAcceptanceInput,
+  type DecisionAcceptanceResult,
+  type DecisionScopeResolution,
+  type DecisionScopeResolutionInput,
+  type PositivePolicyInput,
+  type PositivePolicyResolution,
+} from "./policy.js";
 export {
   lockRequirements,
   type RequirementLockInput,

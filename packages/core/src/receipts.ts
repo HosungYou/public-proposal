@@ -5,6 +5,7 @@ import {
   ReceiptSchema,
   type ProjectState,
   type Receipt,
+  type ReceiptInputRecord,
   type ReceiptResult,
 } from "@longtable/kpp-schemas";
 import { KppError } from "./errors.js";
@@ -14,9 +15,28 @@ import { withReceiptPathLock } from "./receipt-lock.js";
 const DEFAULT_SCHEMA_VERSION = "1.0.0";
 const DEFAULT_TOOL_VERSION = "0.1.0";
 
+/** Canonical stage-to-receipt binding shared by all KPP state consumers. */
+export const RECEIPT_FILE_NAMES: Readonly<Partial<Record<ProjectState, string>>> = {
+  SOURCE_LOCKED: "source-lock.json",
+  REQUIREMENTS_LOCKED: "requirements-lock.json",
+  BRIEF_LOCKED: "brief-lock.json",
+  RESEARCH_LOCKED: "research-bundle-lock.json",
+  EVIDENCE_LOCKED: "evidence-lock.json",
+  DESIGN_LOCKED: "design-lock.json",
+  REPRESENTATIVE_REVIEW_REQUIRED: "representative-review.json",
+  REPRESENTATIVE_APPROVED: "representative-approval.json",
+  CONTENT_APPROVED: "content-approval.json",
+  BUILT: "build.json",
+  RENDERED: "render.json",
+  AUDITED: "audit.json",
+  HUMAN_APPROVED: "approval.json",
+  RELEASED: "release.json",
+};
+
 export interface ReceiptInput {
   readonly stage: ProjectState;
   readonly files: readonly string[];
+  readonly inputs?: readonly ReceiptInputRecord[];
   readonly output: string;
   readonly inputReceiptHashes?: readonly string[];
   readonly result?: ReceiptResult;
@@ -46,6 +66,7 @@ export async function writeReceipt(input: ReceiptInput): Promise<Receipt> {
     createdAt: new Date().toISOString(),
     toolVersion: input.toolVersion ?? DEFAULT_TOOL_VERSION,
     files: files.sort(compareFileRecords),
+    inputs: input.inputs ?? [],
     inputReceiptHashes: [...(input.inputReceiptHashes ?? [])].sort(),
     result: input.result ?? "PASS",
   }, input.output);

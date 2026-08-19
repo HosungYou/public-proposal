@@ -43,7 +43,31 @@ describe("project state transitions", () => {
   it("returns only the adjacent state as an allowed next transition", () => {
     expect(allowedNext("INIT")).toEqual(["SOURCE_LOCKED"]);
     expect(allowedNext("SOURCE_LOCKED")).toEqual(["REQUIREMENTS_LOCKED"]);
+    expect(allowedNext("REQUIREMENTS_LOCKED")).toEqual(["BRIEF_LOCKED", "EVIDENCE_LOCKED"]);
+    expect(allowedNext("DESIGN_LOCKED")).toEqual(["REPRESENTATIVE_REVIEW_REQUIRED"]);
     expect(allowedNext("RELEASED")).toEqual([]);
+  });
+
+  it("requires representative approval before content approval on the vNext path", async () => {
+    const root = await createProjectRoot(temporaryDirectories);
+    await writeStageReceipt(root, "SOURCE_LOCKED");
+    await advanceProject(root, "SOURCE_LOCKED");
+    await writeStageReceipt(root, "REQUIREMENTS_LOCKED", {
+      inputReceiptHashes: [await sha256File(receiptPath(root, "SOURCE_LOCKED"))],
+    });
+    await advanceProject(root, "REQUIREMENTS_LOCKED");
+    await writeStageReceipt(root, "BRIEF_LOCKED", {
+      inputReceiptHashes: [await sha256File(receiptPath(root, "REQUIREMENTS_LOCKED"))],
+    });
+    await advanceProject(root, "BRIEF_LOCKED");
+    await writeStageReceipt(root, "DESIGN_LOCKED", {
+      inputReceiptHashes: [await sha256File(receiptPath(root, "BRIEF_LOCKED"))],
+    });
+    await advanceProject(root, "DESIGN_LOCKED");
+
+    await expect(advanceProject(root, "CONTENT_APPROVED")).rejects.toMatchObject({
+      code: "KPP_STATE_INVALID_TRANSITION",
+    });
   });
 
   it("requires a valid passing receipt for the adjacent transition", async () => {
@@ -237,8 +261,12 @@ function receiptPath(root: string, stage: Parameters<typeof writeReceipt>[0]["st
   const filenames: Partial<Record<Parameters<typeof writeReceipt>[0]["stage"], string>> = {
     SOURCE_LOCKED: "source-lock.json",
     REQUIREMENTS_LOCKED: "requirements-lock.json",
+    BRIEF_LOCKED: "brief-lock.json",
+    RESEARCH_LOCKED: "research-bundle-lock.json",
     EVIDENCE_LOCKED: "evidence-lock.json",
     DESIGN_LOCKED: "design-lock.json",
+    REPRESENTATIVE_REVIEW_REQUIRED: "representative-review.json",
+    REPRESENTATIVE_APPROVED: "representative-approval.json",
     CONTENT_APPROVED: "content-approval.json",
     BUILT: "build.json",
     RENDERED: "render.json",

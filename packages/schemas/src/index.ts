@@ -118,11 +118,57 @@ export {
   type ProjectState,
 } from "./project.js";
 export {
+  DecisionRecordV1Schema,
+  DecisionScopeSchema,
+  DecisionSourceSchema,
+  DecisionStatusSchema,
+  LivingProposalBriefV1Schema,
+  OpenDecisionV1Schema,
+  ReaderTaskSchema,
+  ReferenceBindingV1Schema,
+  type DecisionRecordV1,
+  type DecisionScope,
+  type DecisionSource,
+  type DecisionStatus,
+  type LivingProposalBriefV1,
+  type OpenDecisionV1,
+  type ReaderTask,
+  type ReferenceBindingV1,
+} from "./living-brief.js";
+export {
+  ArgumentMoveSchema,
+  SectionPlanItemV1Schema,
+  SectionPlanV1Schema,
+  VisualNeedV1Schema,
+  type ArgumentMove,
+  type SectionPlanItemV1,
+  type SectionPlanV1,
+  type VisualNeedV1,
+} from "./section-plan.js";
+export {
+  PatchProposalV1Schema,
+  ReviewerFindingV1Schema,
+  type PatchProposalV1,
+  type ReviewerFindingV1,
+} from "./review-finding.js";
+export {
+  DecisionPromotionReceiptV1Schema,
+  DecisionScopePromotionV1Schema,
+  PolicyBindingV1Schema,
+  ProjectPolicyDecisionV1Schema,
+  type DecisionPromotionReceiptV1,
+  type DecisionScopePromotionV1,
+  type PolicyBindingV1,
+  type ProjectPolicyDecisionV1,
+} from "./policy.js";
+export {
   ReceiptFileSchema,
+  ReceiptInputSchema,
   ReceiptResultSchema,
   ReceiptSchema,
   type Receipt,
   type ReceiptFile,
+  type ReceiptInputRecord,
   type ReceiptResult,
 } from "./receipt.js";
 export {
