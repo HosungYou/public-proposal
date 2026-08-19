@@ -6,9 +6,11 @@ const PUBLISHED_DOCTOR = "npx --yes @longtable/public-proposal@0.1.3 doctor --js
 const GLOBAL_DOCTOR_LINE = /^public-proposal doctor --json$/mu;
 const UNPINNED_COMMAND_LINE = /^\s*npx(?: --yes)? @longtable\/public-proposal (?:setup|doctor|update|uninstall)\b.*$/mu;
 const FUTURE_VNEXT_SETUP = "npx --yes @longtable/public-proposal@<vnext-version> setup --provider codex";
-const ADOPT_COMMAND = "kpp adopt <legacy-project> --source <source-packet> --master <working-master> --json";
 const LEGACY_HEADING = /^(?:#{2,3}) Published 0\.1\.3 legacy\/current behavior$/mu;
 const NEXT_HEADING = /^#{2,3} /mu;
+const ADOPTION_HEADING = /^#{2,3} (?:Adopt|Adoption|vNext-only adoption)[^\n]*$/imu;
+const ADOPT_COMMAND_TOKEN = /\bkpp\s+adopt\b/i;
+const ADOPTION_PUBLICATION_GATE = /\bvNext[- ]only\b[\s\S]*\bunavailable\b[\s\S]*\bpublication\b[\s\S]*\bintegrity\s+verification\b/i;
 
 async function readInstallationDocs(): Promise<InstallationDocs> {
   const [readme, install, packageReadme, beta, matrixRaw] = await Promise.all([
@@ -59,8 +61,15 @@ test("published 0.1.3 command matrices do not advertise the vNext-only adopt com
     const remainder = document.slice(start);
     const nextHeading = remainder.match(NEXT_HEADING);
     const legacyMatrix = remainder.slice(0, nextHeading?.index ?? remainder.length);
-    expect(legacyMatrix).not.toContain(ADOPT_COMMAND);
-    expect(document).toContain("Adoption is a vNext-only command and is unavailable from published 0.1.3 until vNext publication and integrity verification.");
+    expect(legacyMatrix).not.toMatch(ADOPT_COMMAND_TOKEN);
+
+    const adoptionHeading = document.match(ADOPTION_HEADING);
+    expect(adoptionHeading, "each install document must isolate its vNext adoption section").not.toBeNull();
+    const adoptionStart = (adoptionHeading?.index ?? 0) + (adoptionHeading?.[0].length ?? 0);
+    const adoptionRemainder = document.slice(adoptionStart);
+    const adoptionNextHeading = adoptionRemainder.match(NEXT_HEADING);
+    const adoptionSection = adoptionRemainder.slice(0, adoptionNextHeading?.index ?? adoptionRemainder.length);
+    expect(adoptionSection).toMatch(ADOPTION_PUBLICATION_GATE);
   }
 });
 
