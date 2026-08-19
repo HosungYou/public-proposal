@@ -1,7 +1,9 @@
 import { createHash } from "node:crypto";
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { execFile } from "node:child_process";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { promisify } from "node:util";
 import { afterEach, describe, expect, it } from "vitest";
 import type { SectionPlanItemV1 } from "@longtable/kpp-schemas";
 import {
@@ -16,6 +18,8 @@ import {
   recordFindingRebuttal,
   recordReviewerFinding,
 } from "../src/section-authoring.js";
+
+const execFileAsync = promisify(execFile);
 
 describe("section-centered authoring", () => {
   const temporaryDirectories: string[] = [];
@@ -65,22 +69,24 @@ describe("section-centered authoring", () => {
     expect(JSON.stringify(persisted)).not.toContain("evaluatorAnswer");
   });
 
-  it("requires two independent editorial findings before a prose hold", () => {
+  it("requires two independent persisted editorial findings before a prose hold", async () => {
+    const root = await createRoot(temporaryDirectories);
     const findings = [finding("Korean Prose Reviewer", "section-1"), finding("Evaluator Red Team", "section-1")];
-    const decision = adjudicate({
-      findings,
-      runs: successfulRuns(findings),
-    });
+    await persistAdjudicationEvidence(root, "editorial", findings);
+    const decision = await adjudicate({ root, stage: "editorial" });
 
     expect(decision.status).toBe("EDITORIAL_REVIEW_REQUIRED");
     expect(decision.receipt.decisions).toHaveLength(2);
   });
 
-  it("does not let a single editorial reviewer hold a section and blocks hard authority violations", () => {
+  it("does not let a single persisted editorial reviewer hold a section and blocks hard authority violations", async () => {
+    const root = await createRoot(temporaryDirectories);
     const prose = finding("Korean Prose Reviewer", "section-1");
     const compliance = finding("RFP/Compliance Reviewer", "section-1", "issuer", "blocker");
-    expect(adjudicate({ findings: [prose], runs: successfulRuns([prose]) }).status).toBe("ACCEPT");
-    expect(adjudicate({ findings: [compliance], runs: successfulRuns([compliance]) })).toMatchObject({
+    await persistAdjudicationEvidence(root, "prose-only", [prose]);
+    expect((await adjudicate({ root, stage: "prose-only" })).status).toBe("ACCEPT");
+    await persistAdjudicationEvidence(root, "compliance", [compliance]);
+    await expect(adjudicate({ root, stage: "compliance" })).resolves.toMatchObject({
       status: "BLOCKED",
     });
   });
@@ -129,34 +135,39 @@ describe("section-centered authoring", () => {
     });
   });
 
-  it("quarantines partial runs and invalidates only findings whose input changed", () => {
-    const result = adjudicate({
-      findings: [
-        { ...finding("Korean Prose Reviewer", "section-1"), inputHash: hash("changed"), runId: "partial" },
-        { ...finding("Visual/Render Reviewer", "section-2", "visual"), inputHash: hash("stable"), runId: "stable" },
-      ],
-      runs: [
-        { runId: "partial", status: "PARTIAL", inputHash: hash("changed"), reviewerIdentity: "partial-reviewer" },
-        { runId: "timeout", status: "TIMEOUT", inputHash: hash("changed"), reviewerIdentity: "timeout-reviewer" },
-        { runId: "stable", status: "SUCCEEDED", inputHash: hash("stable"), reviewerIdentity: "stable-reviewer" },
-      ],
-      changedInputHashes: [hash("changed")],
-    });
+  it("quarantines non-successful persisted runs and invalidates only persisted findings whose input changed", async () => {
+    const root = await createRoot(temporaryDirectories);
+    const changed = { ...finding("Korean Prose Reviewer", "section-1"), inputHash: hash("changed") };
+    const stable = { ...finding("Visual/Render Reviewer", "section-2", "visual"), inputHash: hash("stable") };
+    await persistAdjudicationEvidence(root, "adjudication", [changed, stable]);
+    await recordAgentRun(root, { stage: "adjudication", run: { runId: "partial", status: "PARTIAL", inputHash: hash("changed"), reviewerIdentity: "partial-reviewer" } });
+    await recordAgentRun(root, { stage: "adjudication", run: { runId: "timeout", status: "TIMEOUT", inputHash: hash("changed"), reviewerIdentity: "timeout-reviewer" } });
+    const result = await adjudicate({ root, stage: "adjudication", changedInputHashes: [hash("changed")] });
 
     expect(result.quarantinedRunIds).toEqual(["partial", "timeout"]);
-    expect(result.excludedFindingIds).toEqual(["Korean Prose Reviewer-section-1"]);
-    expect(result.invalidatedFindingIds).toEqual([]);
+    expect(result.excludedFindingIds).toEqual([]);
+    expect(result.invalidatedFindingIds).toEqual([changed.findingId]);
     expect(result.reusableFindingIds).toEqual(["Visual/Render Reviewer-section-2"]);
   });
 
-  it("excludes a quarantined finding from adjudication so it cannot block or be accepted", () => {
+  it("rejects fabricated caller success records so they cannot revive a persisted quarantined run", async () => {
+    const root = await createRoot(temporaryDirectories);
     const quarantined = { ...finding("RFP/Compliance Reviewer", "section-1", "issuer", "blocker"), runId: "quarantined" };
-    const result = adjudicate({
-      findings: [quarantined],
-      runs: [{ runId: "quarantined", status: "QUARANTINED", inputHash: quarantined.inputHash, reviewerIdentity: "agent-q" }],
+    await recordAgentRun(root, {
+      stage: "quarantined",
+      run: { runId: "quarantined", status: "QUARANTINED", inputHash: quarantined.inputHash, reviewerIdentity: "agent-q" },
     });
+    await recordReviewerFinding(root, { stage: "quarantined", finding: quarantined });
+    await expect(adjudicate({
+      root,
+      stage: "quarantined",
+      findings: [quarantined],
+      runs: [{ runId: "quarantined", status: "SUCCEEDED", inputHash: quarantined.inputHash, reviewerIdentity: "forged-success" }],
+    } as unknown as Parameters<typeof adjudicate>[0])).rejects.toMatchObject({ code: "PP_ADJUDICATION_CALLER_RECORDS_FORBIDDEN" });
 
+    const result = await adjudicate({ root, stage: "quarantined" });
     expect(result.status).toBe("ACCEPT");
+    expect(result.quarantinedRunIds).toEqual(["quarantined"]);
     expect(result.excludedFindingIds).toEqual([quarantined.findingId]);
     expect(result.receipt.decisions).toEqual([]);
   });
@@ -191,6 +202,64 @@ describe("section-centered authoring", () => {
     await expect(recordAutomaticSectionRevision(root, { stage: "representative", sectionId: "section-1", revisionId: "revision-2" })).resolves.toBeUndefined();
     await expect(recordAutomaticSectionRevision(root, { stage: "representative", sectionId: "section-1", revisionId: "revision-3" }))
       .rejects.toMatchObject({ code: "PP_SECTION_AUTO_REVISION_LIMIT" });
+  });
+
+  it("serializes concurrent mutations across independent Node processes so each durable cap admits only one final operation", async () => {
+    const root = await createRoot(temporaryDirectories);
+    for (let index = 0; index < 11; index += 1) {
+      await recordAgentRun(root, {
+        stage: "concurrent-runs",
+        run: { runId: `run-${index}`, status: "SUCCEEDED", inputHash: hash(`concurrent-run-${index}`), reviewerIdentity: `agent-${index}` },
+      });
+    }
+    const runResults = await Promise.all([
+      runMutationInChild("recordAgentRun", root, { stage: "concurrent-runs", run: { runId: "run-11", status: "SUCCEEDED", inputHash: hash("concurrent-run-11"), reviewerIdentity: "agent-11" } }),
+      runMutationInChild("recordAgentRun", root, { stage: "concurrent-runs", run: { runId: "run-12", status: "SUCCEEDED", inputHash: hash("concurrent-run-12"), reviewerIdentity: "agent-12" } }),
+    ]);
+    expect(runResults.sort()).toEqual(["PP_AGENT_STAGE_RUN_LIMIT", "fulfilled"]);
+
+    const persistedFinding = finding("Korean Prose Reviewer", "section-concurrent", "editorial", "warning");
+    await persistAdjudicationEvidence(root, "concurrent-actions", [persistedFinding]);
+    const rebuttalResults = await Promise.all([
+      runMutationInChild("recordFindingRebuttal", root, { stage: "concurrent-actions", findingId: persistedFinding.findingId, rebuttalId: "rebuttal-a" }),
+      runMutationInChild("recordFindingRebuttal", root, { stage: "concurrent-actions", findingId: persistedFinding.findingId, rebuttalId: "rebuttal-b" }),
+    ]);
+    expect(rebuttalResults.sort()).toEqual(["PP_AGENT_REBUTTAL_LIMIT", "fulfilled"]);
+
+    await recordAutomaticSectionRevision(root, { stage: "concurrent-actions", sectionId: "section-concurrent", revisionId: "revision-a" });
+    const revisionResults = await Promise.all([
+      runMutationInChild("recordAutomaticSectionRevision", root, { stage: "concurrent-actions", sectionId: "section-concurrent", revisionId: "revision-b" }),
+      runMutationInChild("recordAutomaticSectionRevision", root, { stage: "concurrent-actions", sectionId: "section-concurrent", revisionId: "revision-c" }),
+    ]);
+    expect(revisionResults.sort()).toEqual(["PP_SECTION_AUTO_REVISION_LIMIT", "fulfilled"]);
+  });
+
+  it("fails closed when the persisted execution ledger is malformed or tampered", async () => {
+    const root = await createRoot(temporaryDirectories);
+    await recordAgentRun(root, {
+      stage: "tampered",
+      run: { runId: "run-1", status: "SUCCEEDED", inputHash: hash("tampered"), reviewerIdentity: "agent-1" },
+    });
+    await writeFile(join(root, "content", "agent-execution-state.json"), JSON.stringify({
+      schemaVersion: "agent-execution-state/v1",
+      stages: { tampered: { runs: [{ runId: "run-1", status: "FORGED" }], findings: [], rebuttals: [], automaticRevisions: [] } },
+    }), "utf8");
+
+    await expect(adjudicate({ root, stage: "tampered" })).rejects.toMatchObject({ code: "PP_AGENT_EXECUTION_STATE_INVALID" });
+
+    await writeFile(join(root, "content", "agent-execution-state.json"), JSON.stringify({
+      schemaVersion: "agent-execution-state/v1",
+      stages: {
+        tampered: {
+          runs: [{ runId: "run-1", status: "SUCCEEDED", inputHash: hash("tampered"), reviewerIdentity: "agent-1" }],
+          findings: [{ findingId: "missing-required-reviewer-finding-fields" }],
+          rebuttals: [],
+          automaticRevisions: [],
+        },
+      },
+    }), "utf8");
+
+    await expect(adjudicate({ root, stage: "tampered" })).rejects.toMatchObject({ code: "PP_AGENT_EXECUTION_STATE_INVALID" });
   });
 });
 
@@ -268,13 +337,42 @@ function approval(role: "problem" | "method" | "execution") {
   };
 }
 
-function successfulRuns(findings: readonly ReturnType<typeof finding>[]) {
-  return findings.map((entry) => ({
-    runId: entry.runId,
-    status: "SUCCEEDED" as const,
-    inputHash: entry.inputHash,
-    reviewerIdentity: `agent-${entry.reviewerRole}`,
-  }));
+async function persistAdjudicationEvidence(
+  root: string,
+  stage: string,
+  findings: readonly ReturnType<typeof finding>[],
+): Promise<void> {
+  for (const entry of findings) {
+    await recordAgentRun(root, {
+      stage,
+      run: {
+        runId: entry.runId,
+        status: "SUCCEEDED",
+        inputHash: entry.inputHash,
+        reviewerIdentity: `agent-${stage}-${entry.reviewerRole}`,
+      },
+    });
+    await recordReviewerFinding(root, { stage, finding: entry });
+  }
+}
+
+type ChildMutation = "recordAgentRun" | "recordFindingRebuttal" | "recordAutomaticSectionRevision";
+
+async function runMutationInChild(method: ChildMutation, root: string, input: Record<string, unknown>): Promise<string> {
+  const moduleUrl = new URL("../src/section-authoring.ts", import.meta.url).href;
+  const program = [
+    `import { ${method} } from ${JSON.stringify(moduleUrl)};`,
+    "try {",
+    `  await ${method}(${JSON.stringify(root)}, ${JSON.stringify(input)});`,
+    '  process.stdout.write("fulfilled");',
+    "} catch (error) {",
+    '  process.stdout.write(error && typeof error === "object" && "code" in error ? String(error.code) : "unknown-error");',
+    "}",
+  ].join("\n");
+  const { stdout } = await execFileAsync(process.execPath, ["--import", "tsx", "--input-type=module", "--eval", program], {
+    cwd: process.cwd(),
+  });
+  return stdout.trim();
 }
 
 async function persistRepresentativeEvidence(

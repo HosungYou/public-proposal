@@ -1,13 +1,16 @@
 import { createHash, randomUUID } from "node:crypto";
 import { mkdir, open, readFile, rename, rm } from "node:fs/promises";
 import { basename, dirname, join, resolve } from "node:path";
+import { z } from "zod";
 import { ReviewerFindingV1Schema, type LivingProposalBriefV1, type SectionPlanItemV1, type SectionPlanV1 } from "@longtable/kpp-schemas";
 
 const SECTION_PLAN_FILE_NAME = "section-plan.json";
 const REPRESENTATIVE_APPROVAL_FILE_NAME = "representative-approval.json";
 const FULL_AUTHORING_FILE_NAME = "full-authoring-request.json";
 const AGENT_EXECUTION_FILE_NAME = "agent-execution-state.json";
-const executionStateQueues = new Map<string, Promise<void>>();
+const AGENT_EXECUTION_LOCK_DIRECTORY = ".agent-execution-state.lock";
+const AGENT_EXECUTION_LOCK_ATTEMPTS = 400;
+const AGENT_EXECUTION_LOCK_DELAY_MS = 5;
 
 export const POSITIVE_PROPOSAL_DOCTRINE = [
   "발주처의 평가 질문에 먼저 직접 답하고, 필요한 전제와 범위를 분명히 한다.",
@@ -102,8 +105,8 @@ export interface AgentStageExecutionState {
 }
 
 export interface AdjudicationInput {
-  readonly findings: readonly ReviewerFinding[];
-  readonly runs?: readonly AgentRun[];
+  readonly root: string;
+  readonly stage: string;
   readonly changedInputHashes?: readonly string[];
 }
 
@@ -205,6 +208,7 @@ export async function recordAgentRun(
   input: { readonly stage: string; readonly run: AgentRun },
 ): Promise<AgentRun> {
   const root = resolve(rootInput);
+  assertValidAgentRun(input.run);
   return mutateAgentExecutionState(root, (state) => {
     const stage = mutableStage(state, input.stage);
     if (stage.runs.some(({ runId }) => runId === input.run.runId)) {
@@ -236,7 +240,7 @@ export async function recordReviewerFinding(
       throw new SectionAuthoringError("PP_REVIEWER_FINDING_DUPLICATE", "Reviewer finding ID는 stage 안에서 고유해야 합니다.", { findingId: input.finding.findingId });
     }
     const run = stage.runs.find(({ runId }) => runId === input.finding.runId);
-    assertEligibleFindingRun(input.finding, run);
+    assertFindingRunBinding(input.finding, run);
     stage.findings.push(copyFinding(input.finding));
     return input.finding;
   });
@@ -279,13 +283,20 @@ export async function recordAutomaticSectionRevision(
   });
 }
 
-export function adjudicate(input: AdjudicationInput): AdjudicationResult {
-  const runsById = new Map((input.runs ?? []).map((run) => [run.runId, run]));
+export async function adjudicate(input: AdjudicationInput): Promise<AdjudicationResult> {
+  assertNoCallerSuppliedAdjudicationRecords(input);
+  const root = resolve(input.root);
+  const state = await readLockedAgentExecutionState(root);
+  const stage = state.stages[input.stage];
+  if (stage === undefined) {
+    throw new SectionAuthoringError("PP_AGENT_ADJUDICATION_STAGE_UNKNOWN", "Adjudication할 persisted stage를 찾을 수 없습니다.", { stage: input.stage });
+  }
+  const runsById = new Map(stage.runs.map((run) => [run.runId, run]));
   const changedInputHashes = new Set(input.changedInputHashes ?? []);
   const invalidated: ReviewerFinding[] = [];
   const excluded: ReviewerFinding[] = [];
   const activeFindings: ReviewerFinding[] = [];
-  for (const finding of input.findings) {
+  for (const finding of stage.findings) {
     const run = runsById.get(finding.runId);
     assertFindingRunBinding(finding, run, "PP_FINDING_RUN_UNVERIFIED");
     if (run.status !== "SUCCEEDED") {
@@ -296,7 +307,7 @@ export function adjudicate(input: AdjudicationInput): AdjudicationResult {
       activeFindings.push(finding);
     }
   }
-  const quarantinedRunIds = (input.runs ?? [])
+  const quarantinedRunIds = stage.runs
     .filter((run) => run.status !== "SUCCEEDED")
     .map(({ runId }) => runId);
   const hardBlocker = activeFindings.some((finding) => finding.severity === "blocker" && finding.authorityClass !== "editorial");
@@ -463,14 +474,34 @@ interface MutableAgentStageExecutionState {
   automaticRevisions: { sectionId: string; revisionId: string }[];
 }
 
+const AgentRunV1Schema = z.object({
+  runId: z.string().min(1),
+  status: z.enum(["SUCCEEDED", "PARTIAL", "TIMEOUT", "QUARANTINED"]),
+  inputHash: z.string().regex(/^[a-f0-9]{64}$/i),
+  reviewerIdentity: z.string().min(1),
+}).strict();
+
+const AgentExecutionStateV1Schema = z.object({
+  schemaVersion: z.literal("agent-execution-state/v1"),
+  stages: z.record(z.string().min(1), z.object({
+    runs: z.array(AgentRunV1Schema),
+    findings: z.array(ReviewerFindingV1Schema),
+    rebuttals: z.array(z.object({ findingId: z.string().min(1), rebuttalId: z.string().min(1) }).strict()),
+    automaticRevisions: z.array(z.object({ sectionId: z.string().min(1), revisionId: z.string().min(1) }).strict()),
+  }).strict()),
+}).strict();
+
 async function readAgentExecutionState(root: string): Promise<MutableAgentExecutionState> {
   const path = join(root, "content", AGENT_EXECUTION_FILE_NAME);
   try {
-    const parsed = JSON.parse(await readFile(path, "utf8")) as Partial<MutableAgentExecutionState>;
-    if (parsed.schemaVersion !== "agent-execution-state/v1" || parsed.stages === undefined || typeof parsed.stages !== "object") {
-      throw new SectionAuthoringError("PP_AGENT_EXECUTION_STATE_INVALID", "Agent execution state 형식이 올바르지 않습니다.", { path });
+    const parsed = AgentExecutionStateV1Schema.safeParse(JSON.parse(await readFile(path, "utf8")));
+    if (!parsed.success) {
+      throw new SectionAuthoringError("PP_AGENT_EXECUTION_STATE_INVALID", "Agent execution state 형식이 올바르지 않습니다.", {
+        path,
+        actual: parsed.error.issues,
+      });
     }
-    return parsed as MutableAgentExecutionState;
+    return parsed.data as MutableAgentExecutionState;
   } catch (error) {
     if (error instanceof SectionAuthoringError) throw error;
     if (isFileMissing(error)) {
@@ -487,24 +518,39 @@ async function writeAgentExecutionState(root: string, state: MutableAgentExecuti
   await writeJsonAtomically(join(root, "content", AGENT_EXECUTION_FILE_NAME), state);
 }
 
+async function readLockedAgentExecutionState(root: string): Promise<MutableAgentExecutionState> {
+  return withAgentExecutionStateLock(root, async () => readAgentExecutionState(root));
+}
+
 async function mutateAgentExecutionState<T>(
   root: string,
   mutate: (state: MutableAgentExecutionState) => T,
 ): Promise<T> {
-  const previous = executionStateQueues.get(root) ?? Promise.resolve();
-  const operation = previous.catch(() => undefined).then(async () => {
+  return withAgentExecutionStateLock(root, async () => {
     const state = await readAgentExecutionState(root);
     const result = mutate(state);
     await writeAgentExecutionState(root, state);
     return result;
   });
-  const completion = operation.then(() => undefined, () => undefined);
-  executionStateQueues.set(root, completion);
-  try {
-    return await operation;
-  } finally {
-    if (executionStateQueues.get(root) === completion) executionStateQueues.delete(root);
+}
+
+async function withAgentExecutionStateLock<T>(root: string, operation: () => Promise<T>): Promise<T> {
+  const lockPath = join(root, "content", AGENT_EXECUTION_LOCK_DIRECTORY);
+  await mkdir(dirname(lockPath), { recursive: true });
+  for (let attempt = 0; attempt < AGENT_EXECUTION_LOCK_ATTEMPTS; attempt += 1) {
+    try {
+      await mkdir(lockPath, { mode: 0o700 });
+      try {
+        return await operation();
+      } finally {
+        await rm(lockPath, { recursive: true, force: true });
+      }
+    } catch (error) {
+      if (!isAlreadyExists(error)) throw error;
+      await delay(AGENT_EXECUTION_LOCK_DELAY_MS);
+    }
   }
+  throw new SectionAuthoringError("PP_AGENT_EXECUTION_LOCK_TIMEOUT", "Agent execution state lock을 획득하지 못했습니다.", { root });
 }
 
 function mutableStage(state: MutableAgentExecutionState, stageId: string): MutableAgentStageExecutionState {
@@ -527,6 +573,20 @@ function assertEligibleFindingRun(
       runId: finding.runId,
       status: run.status,
     });
+  }
+}
+
+function assertValidAgentRun(run: AgentRun): void {
+  const parsed = AgentRunV1Schema.safeParse(run);
+  if (!parsed.success) {
+    throw new SectionAuthoringError("PP_AGENT_RUN_INVALID", "Agent run 형식이 올바르지 않습니다.", { actual: parsed.error.issues });
+  }
+}
+
+function assertNoCallerSuppliedAdjudicationRecords(input: AdjudicationInput): void {
+  const candidate = input as unknown as Record<string, unknown>;
+  if ("findings" in candidate || "runs" in candidate) {
+    throw new SectionAuthoringError("PP_ADJUDICATION_CALLER_RECORDS_FORBIDDEN", "Adjudication은 caller-provided findings/runs가 아니라 persisted execution ledger만 사용합니다.");
   }
 }
 
@@ -559,6 +619,14 @@ function copyFinding(finding: ReviewerFinding): ReviewerFinding {
 
 function isFileMissing(error: unknown): boolean {
   return typeof error === "object" && error !== null && "code" in error && error.code === "ENOENT";
+}
+
+function isAlreadyExists(error: unknown): boolean {
+  return typeof error === "object" && error !== null && "code" in error && error.code === "EEXIST";
+}
+
+async function delay(milliseconds: number): Promise<void> {
+  await new Promise<void>((resolveDelay) => setTimeout(resolveDelay, milliseconds));
 }
 
 function assertValidSectionPlan(plan: SectionPlanV1): void {
