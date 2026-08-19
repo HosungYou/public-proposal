@@ -81,3 +81,10 @@ export function runProposalClassFixture(input: {
 
 export function verifyPackageContracts(): Promise<unknown>;
 export function runReleaseVerification(): Promise<unknown>;
+export function validateBenchmarkEvidence(report: unknown): {
+  readonly ok: boolean;
+  readonly code:
+    | "PP_BENCHMARK_EVIDENCE_INVALID"
+    | "PP_EFFECTIVENESS_HUMAN_EVALUATION_REQUIRED"
+    | "PP_EFFECTIVENESS_VALIDATED";
+};

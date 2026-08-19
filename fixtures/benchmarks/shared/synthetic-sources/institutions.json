@@ -1,0 +1,23 @@
+{
+  "schemaVersion": "1.0.0",
+  "institutions": [
+    {
+      "institutionId": "SYNTH-RESEARCH-AGENCY",
+      "name": "가상정책연구원",
+      "kind": "synthetic",
+      "mandate": "지역 정책사업의 성과를 검증하고 공개 가능한 개선안을 제시한다."
+    },
+    {
+      "institutionId": "SYNTH-POLICY-INSTITUTE",
+      "name": "가상미래정책원",
+      "kind": "synthetic",
+      "mandate": "공공서비스 접근성에 관한 학술·정책 근거를 종합한다."
+    },
+    {
+      "institutionId": "SYNTH-PROCUREMENT-OFFICE",
+      "name": "가상공공조달원",
+      "kind": "synthetic",
+      "mandate": "내부 업무안내 문서를 명료하고 일관된 서식으로 정비한다."
+    }
+  ]
+}

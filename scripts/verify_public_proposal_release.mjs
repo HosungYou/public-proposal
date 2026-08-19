@@ -27,6 +27,19 @@ const LONGTABLE_VERSION = "0.1.72";
 const WORKER_PROTOCOL = "1.0.0";
 const REQUIRED_RESEARCH_CLASSES = ["academic_research", "research_service", "policy_research"];
 
+export function validateBenchmarkEvidence(report) {
+  if (report === null || typeof report !== "object"
+    || report.protocolVersion !== "1.0.0"
+    || report.scorerVersion !== "1.0.0"
+    || report.rawEvidencePreserved !== true) {
+    return { ok: false, code: "PP_BENCHMARK_EVIDENCE_INVALID" };
+  }
+  if (report.effectivenessValidated !== true || report.humanEvaluationRequired === true) {
+    return { ok: false, code: "PP_EFFECTIVENESS_HUMAN_EVALUATION_REQUIRED" };
+  }
+  return { ok: true, code: "PP_EFFECTIVENESS_VALIDATED" };
+}
+
 export async function runCleanEnvironmentFixture() {
   const fixtureRoot = await mkdtemp(join(tmpdir(), "public-proposal-clean-install-"));
   const installRoot = join(fixtureRoot, "install");

@@ -1,0 +1,42 @@
+{
+  "schemaVersion": "1.0.0",
+  "fixtureId": "policy-research",
+  "proposalClass": "policy_research",
+  "synthetic": true,
+  "customerData": false,
+  "institutionId": "SYNTH-POLICY-INSTITUTE",
+  "sources": [
+    {
+      "sourceId": "SYNTH-INSTITUTIONS",
+      "path": "../shared/synthetic-sources/institutions.json",
+      "sha256": "be13c4425cc6cf48b2b7d64ecfd7d12526155cde30b1c95641c72ae96dcc494f"
+    },
+    {
+      "sourceId": "SYNTH-REQUIREMENTS",
+      "path": "../shared/synthetic-sources/requirements.json",
+      "sha256": "50b3c3138d8014d107f7933fbe3dd31dec5628a6f4e00350fca35a94336cdab8"
+    }
+  ],
+  "requirements": [
+    { "requirementId": "PR-01", "mandatory": true }
+  ],
+  "permittedDataOperations": ["source_selection", "citation_slot_binding", "evidence_synthesis"],
+  "targetClaims": [
+    {
+      "claimId": "PR-CLM-01",
+      "mandatory": true,
+      "question": "정책질문에 답하려면 어떤 근거를 어떤 기준으로 선별해야 하는가?",
+      "requiredSourceIds": ["SYNTH-REQUIREMENTS"]
+    }
+  ],
+  "figureQuestions": [
+    {
+      "figureId": "PR-FIG-01",
+      "mandatory": true,
+      "question": "탐색에서 인용까지의 근거 선별 경로는 무엇인가?",
+      "requiredSourceIds": ["SYNTH-REQUIREMENTS"]
+    }
+  ],
+  "readerTasks": ["연구질문과 근거의 대응 확인하기", "선별 기준 확인하기", "인용 가능 경로 확인하기"],
+  "researchExpectation": { "longTableInvocation": "required", "expectedCount": 1 }
+}

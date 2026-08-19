@@ -1,0 +1,42 @@
+{
+  "schemaVersion": "1.0.0",
+  "fixtureId": "general-procurement",
+  "proposalClass": "general_procurement",
+  "synthetic": true,
+  "customerData": false,
+  "institutionId": "SYNTH-PROCUREMENT-OFFICE",
+  "sources": [
+    {
+      "sourceId": "SYNTH-INSTITUTIONS",
+      "path": "../shared/synthetic-sources/institutions.json",
+      "sha256": "be13c4425cc6cf48b2b7d64ecfd7d12526155cde30b1c95641c72ae96dcc494f"
+    },
+    {
+      "sourceId": "SYNTH-REQUIREMENTS",
+      "path": "../shared/synthetic-sources/requirements.json",
+      "sha256": "50b3c3138d8014d107f7933fbe3dd31dec5628a6f4e00350fca35a94336cdab8"
+    }
+  ],
+  "requirements": [
+    { "requirementId": "GP-01", "mandatory": true }
+  ],
+  "permittedDataOperations": ["formatting_only"],
+  "targetClaims": [
+    {
+      "claimId": "GP-CLM-01",
+      "mandatory": true,
+      "question": "원문 절차를 변경하지 않고 읽기 순서를 명확히 했는가?",
+      "requiredSourceIds": ["SYNTH-REQUIREMENTS"]
+    }
+  ],
+  "figureQuestions": [
+    {
+      "figureId": "GP-FIG-01",
+      "mandatory": true,
+      "question": "업무 절차를 원문 순서대로 한눈에 확인할 수 있는가?",
+      "requiredSourceIds": ["SYNTH-REQUIREMENTS"]
+    }
+  ],
+  "readerTasks": ["업무 절차의 순서 확인하기", "담당자 행동 찾기", "원문과 재구성 문서 대조하기"],
+  "researchExpectation": { "longTableInvocation": "forbidden", "expectedCount": 0 }
+}

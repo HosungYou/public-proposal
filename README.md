@@ -59,6 +59,19 @@ An `AI-assisted draft` or a technical audit pass is not submission readiness. Re
 
 Customer documents, private evidence, personnel records, pricing, and bid-specific facts must remain in a separate project workspace.
 
+## Effectiveness benchmark
+
+The repository includes three source-hashed, synthetic benchmark classes and a deterministic A/B/C harness for the 0.1.3 baseline, conditional LongTable routing, and structured review. The harness preserves raw outputs and creates an arm-free human evaluation packet, but it does not call a model and cannot establish production efficacy. `effectivenessValidated` stays false until complete blinded Owner, Procurement, and Research/Editorial judgments satisfy the promotion thresholds. Benchmark scoring never sets `releaseReady`.
+
+Run the local contract harness with:
+
+```bash
+node scripts/run_proposal_benchmark.mjs --fixture-set fixtures/benchmarks --out .artifacts/benchmark
+node scripts/score_proposal_benchmark.mjs --input .artifacts/benchmark --output .artifacts/benchmark/report.json
+```
+
+See [the benchmark protocol](docs/BENCHMARKING.md) for fixed budgets, scorer fields, human packet format, limitations, and promotion thresholds.
+
 ### Adopt an existing draft
 
 Use `adopt` when a legacy proposal directory has no KPP state:

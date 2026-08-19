@@ -1,0 +1,23 @@
+{
+  "schemaVersion": "1.0.0",
+  "requirements": [
+    {
+      "requirementId": "RS-01",
+      "fixtureId": "research-service",
+      "text": "연도별 참여율 변화와 정책적 시사점을 근거와 함께 제시한다.",
+      "mandatory": true
+    },
+    {
+      "requirementId": "PR-01",
+      "fixtureId": "policy-research",
+      "text": "가상 정책질문에 답할 문헌 근거의 탐색·선별·인용 경로를 제시한다.",
+      "mandatory": true
+    },
+    {
+      "requirementId": "GP-01",
+      "fixtureId": "general-procurement",
+      "text": "제공된 업무 절차를 변경하지 않고 한눈에 읽히는 문서로 재구성한다.",
+      "mandatory": true
+    }
+  ]
+}

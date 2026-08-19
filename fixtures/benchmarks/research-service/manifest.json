@@ -1,0 +1,47 @@
+{
+  "schemaVersion": "1.0.0",
+  "fixtureId": "research-service",
+  "proposalClass": "research_service",
+  "synthetic": true,
+  "customerData": false,
+  "institutionId": "SYNTH-RESEARCH-AGENCY",
+  "sources": [
+    {
+      "sourceId": "SYNTH-INSTITUTIONS",
+      "path": "../shared/synthetic-sources/institutions.json",
+      "sha256": "be13c4425cc6cf48b2b7d64ecfd7d12526155cde30b1c95641c72ae96dcc494f"
+    },
+    {
+      "sourceId": "SYNTH-REQUIREMENTS",
+      "path": "../shared/synthetic-sources/requirements.json",
+      "sha256": "50b3c3138d8014d107f7933fbe3dd31dec5628a6f4e00350fca35a94336cdab8"
+    },
+    {
+      "sourceId": "SYNTH-SERIES",
+      "path": "../shared/synthetic-sources/series.csv",
+      "sha256": "0cd6228a034011df34bbf94372056764d5fa1f1dc2250c1fff26f8e85c00f0e6"
+    }
+  ],
+  "requirements": [
+    { "requirementId": "RS-01", "mandatory": true }
+  ],
+  "permittedDataOperations": ["percentage(participants,eligible)", "difference(year_over_year)"],
+  "targetClaims": [
+    {
+      "claimId": "RS-CLM-01",
+      "mandatory": true,
+      "question": "2023년부터 2025년까지 참여율은 어떻게 변했는가?",
+      "requiredSourceIds": ["SYNTH-SERIES"]
+    }
+  ],
+  "figureQuestions": [
+    {
+      "figureId": "RS-FIG-01",
+      "mandatory": true,
+      "question": "연도별 참여율의 변화는 어떠한가?",
+      "requiredSourceIds": ["SYNTH-SERIES"]
+    }
+  ],
+  "readerTasks": ["요구사항에 대한 직접 답변 찾기", "수치의 출처와 변환식 확인하기", "실행 가능한 시사점 판단하기"],
+  "researchExpectation": { "longTableInvocation": "required", "expectedCount": 1 }
+}

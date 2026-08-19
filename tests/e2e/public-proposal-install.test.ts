@@ -4,6 +4,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import {
   runCleanEnvironmentFixture,
   runProposalClassFixture,
+  validateBenchmarkEvidence,
 } from "../../scripts/verify_public_proposal_release.mjs";
 
 const temporaryRoots: string[] = [];
@@ -143,6 +144,18 @@ describe("proposal-class research matrix", () => {
     const result = await runAcademicFixture({ proposalClass: "document_restyle", researchLock: false });
 
     expect(result.envelope.code).not.toMatch(/^PP_(?:RESEARCH|LONGTABLE)/u);
+  });
+});
+
+describe("benchmark release boundary", () => {
+  it("keeps machine-only effectiveness evidence outside release readiness", () => {
+    expect(validateBenchmarkEvidence({
+      protocolVersion: "1.0.0",
+      scorerVersion: "1.0.0",
+      effectivenessValidated: false,
+      humanEvaluationRequired: true,
+      rawEvidencePreserved: true,
+    })).toEqual({ ok: false, code: "PP_EFFECTIVENESS_HUMAN_EVALUATION_REQUIRED" });
   });
 });
 
