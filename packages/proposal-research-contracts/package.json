@@ -1,0 +1,42 @@
+{
+  "name": "@longtable/proposal-research-contracts",
+  "version": "0.1.0",
+  "description": "Pure versioned schemas for the Public Proposal research bridge.",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/HosungYou/public-proposal.git",
+    "directory": "packages/proposal-research-contracts"
+  },
+  "homepage": "https://github.com/HosungYou/public-proposal#readme",
+  "bugs": {
+    "url": "https://github.com/HosungYou/public-proposal/issues"
+  },
+  "keywords": [
+    "public-proposal",
+    "research",
+    "contracts",
+    "schemas",
+    "provenance"
+  ],
+  "type": "module",
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "publishConfig": {
+    "access": "public"
+  },
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc --noEmit -p tsconfig.json"
+  },
+  "dependencies": {
+    "zod": "4.4.3"
+  }
+}
