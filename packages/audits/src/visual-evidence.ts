@@ -1,8 +1,8 @@
 import { createHash } from "node:crypto";
-import { readFileSync, realpathSync } from "node:fs";
+import { readFile, realpath } from "node:fs/promises";
+import { join, relative, resolve, sep } from "node:path";
+import { sha256File, verifyReceipt } from "@longtable/kpp-core";
 import {
-  KPP_FINAL_RENDERER_NAME,
-  KPP_FINAL_RENDERER_VERSION,
   VISUAL_EVIDENCE_RENDERER_VERSION,
   canonicalFigureInputsJson,
   compileFigureExpected,
@@ -22,19 +22,12 @@ export interface FigureSemanticAuditInput {
   readonly references: readonly GovernedFigureReference[];
   readonly artifact: VisualEvidenceFigureArtifact;
   readonly pageArtifact?: FigureA4PageArtifact | FigureA4PageFixture;
-  readonly pageArtifactReader?: FigurePageArtifactReader;
+  /** Trusted KPP project boundary. Programmatic callers cannot replace its filesystem reader. */
+  readonly projectRoot?: string;
+  /** Persisted manifest from the KPP RENDERED generation. */
+  readonly renderManifestPath?: string;
   readonly humanReviews?: readonly HumanFigureReview[];
 }
-
-export interface FigurePageArtifactReader {
-  readonly realpath: (path: string) => string;
-  readonly readFile: (path: string) => Uint8Array;
-}
-
-const NODE_PAGE_ARTIFACT_READER: FigurePageArtifactReader = {
-  realpath: realpathSync,
-  readFile: readFileSync,
-};
 
 export interface FigureAuditReport {
   readonly schemaVersion: "figure-audit/v1";
@@ -47,11 +40,11 @@ export interface FigureAuditReport {
 }
 
 /** Independent QA reconstructs the expected artifact from governed inputs. */
-export function auditFigureSemantics(input: FigureSemanticAuditInput): FigureAuditReport {
+export async function auditFigureSemantics(input: FigureSemanticAuditInput): Promise<FigureAuditReport> {
   const findings: AuditFinding[] = [];
   const expected = reconstructExpected(input, findings);
   auditDataSemantics(input, findings);
-  auditSvgAndPage(input, expected, findings);
+  await auditSvgAndPage(input, expected, findings);
   auditHumanApproval(input, expected, findings);
   return {
     schemaVersion: "figure-audit/v1",
@@ -133,7 +126,7 @@ function auditDataSemantics(input: FigureSemanticAuditInput, findings: AuditFind
   }
 }
 
-function auditSvgAndPage(input: FigureSemanticAuditInput, expected: VisualEvidenceFigureArtifact | undefined, findings: AuditFinding[]): void {
+async function auditSvgAndPage(input: FigureSemanticAuditInput, expected: VisualEvidenceFigureArtifact | undefined, findings: AuditFinding[]): Promise<void> {
   const measurement = measureSvg(input.artifact.svg);
   if (measurement.clipped > 0) add(findings, "PP_FIGURE_CLIPPING", "Rendered marks are clipped by the SVG viewBox.", { actual: measurement.clipped });
   if (measurement.minimumContrast < 4.5) add(findings, "PP_FIGURE_CONTRAST", "Text or essential marks do not meet a 4.5:1 contrast ratio.", { actual: measurement.minimumContrast });
@@ -153,7 +146,7 @@ function auditSvgAndPage(input: FigureSemanticAuditInput, expected: VisualEviden
     add(findings, "PP_FIGURE_RENDER_PROVENANCE_MISSING", "Synthetic page fixtures are not final-render evidence; a canonical KPP render receipt is required.");
     return;
   }
-  if (!validateFinalRenderProvenance(page, input.pageArtifactReader ?? NODE_PAGE_ARTIFACT_READER, findings)) return;
+  if (!(await validateFinalRenderProvenance(page, input, findings))) return;
   if (page.figureId !== input.spec.figureId || page.renderPath.trim().length === 0
     || page.pageLocator.trim().length === 0 || page.bytes.byteLength === 0 || page.sha256 !== sha256Bytes(page.bytes)) {
     add(findings, "PP_FIGURE_RENDER_ARTIFACT_MISMATCH", "Actual rendered-page bytes, hash, render path, or locator are invalid.");
@@ -181,49 +174,126 @@ function auditSvgAndPage(input: FigureSemanticAuditInput, expected: VisualEviden
   if (expected !== undefined && pageMeasurement.figureSvgSha256 !== expected.sha256) add(findings, "PP_FIGURE_RENDER_ARTIFACT_MISMATCH", "Actual page embeds a figure other than the independently reconstructed artifact.");
 }
 
-function validateFinalRenderProvenance(
+async function validateFinalRenderProvenance(
   page: FigureA4PageArtifact,
-  reader: FigurePageArtifactReader,
+  input: FigureSemanticAuditInput,
   findings: AuditFinding[],
-): boolean {
-  const receipt = page.provenance.renderReceipt;
-  const { receiptSha256: _receiptSha256, ...receiptPayload } = receipt;
-  const structurallyValid = page.provenance.schemaVersion === "visual-evidence-page-provenance/v1"
-    && receipt.schemaVersion === "kpp-final-render-receipt/v1"
-    && receipt.receiptId.trim().length > 0
-    && Number.isFinite(Date.parse(receipt.issuedAt))
-    && receipt.renderer.name === KPP_FINAL_RENDERER_NAME
-    && receipt.renderer.version === KPP_FINAL_RENDERER_VERSION
-    && receipt.pageLocator === page.pageLocator
-    && receipt.outputSha256 === page.sha256
-    && receipt.receiptSha256 === sha256(canonicalFigureInputsJson(receiptPayload));
-  if (!structurallyValid) {
-    add(findings, "PP_FIGURE_RENDER_PROVENANCE_MISMATCH", "Final-render receipt identity or hash bindings are invalid.");
-    return false;
-  }
+): Promise<boolean> {
   try {
-    const outputRealpath = reader.realpath(page.renderPath);
-    const sourceRealpath = reader.realpath(receipt.sourceDocumentRealpath);
-    const executableRealpath = reader.realpath(receipt.renderer.executableRealpath);
-    const outputBytes = reader.readFile(outputRealpath);
-    const sourceBytes = reader.readFile(sourceRealpath);
-    const executableBytes = reader.readFile(executableRealpath);
-    const validBytes = outputRealpath === receipt.outputRealpath
-      && sourceRealpath === receipt.sourceDocumentRealpath
-      && executableRealpath === receipt.renderer.executableRealpath
-      && sha256Bytes(outputBytes) === receipt.outputSha256
-      && sha256Bytes(sourceBytes) === receipt.sourceDocumentSha256
-      && sha256Bytes(executableBytes) === receipt.renderer.executableSha256
-      && Buffer.from(outputBytes).equals(Buffer.from(page.bytes));
-    if (!validBytes) {
-      add(findings, "PP_FIGURE_RENDER_PROVENANCE_MISMATCH", "Declared source, renderer, or output path bytes do not match the final-render receipt.");
-      return false;
+    if (input.projectRoot === undefined || input.renderManifestPath === undefined) throw new Error("trusted project root and render manifest are required");
+    const projectRoot = await realpath(resolve(input.projectRoot));
+    const manifestPath = await realpath(resolve(input.renderManifestPath));
+    const currentGeneration = await realpath(join(projectRoot, "rendered", "current"));
+    if (!isWithin(projectRoot, manifestPath) || !isWithin(currentGeneration, manifestPath)) throw new Error("render manifest is outside the current KPP generation");
+
+    const buildReceiptPath = join(projectRoot, "receipts", "build.json");
+    const renderReceiptPath = join(projectRoot, "receipts", "render.json");
+    const [buildVerification, renderVerification, buildReceiptSha256] = await Promise.all([
+      verifyReceipt(buildReceiptPath),
+      verifyReceipt(renderReceiptPath),
+      sha256File(buildReceiptPath),
+    ]);
+    if (!buildVerification.valid || buildVerification.receipt.stage !== "BUILT" || buildVerification.receipt.result !== "PASS") throw new Error("BUILT receipt is not current PASS");
+    if (!renderVerification.valid || renderVerification.receipt.stage !== "RENDERED" || renderVerification.receipt.result !== "PASS") throw new Error("RENDERED receipt is not current PASS");
+    if (!renderVerification.receipt.inputReceiptHashes.includes(buildReceiptSha256)) throw new Error("RENDERED receipt is not chained to the current BUILT receipt");
+
+    const manifestBytes = await readFile(manifestPath);
+    const manifest = parseRenderManifest(manifestBytes);
+    const manifestRecord = await matchingReceiptFile(renderVerification.receipt.files, manifestPath);
+    if (manifestRecord?.sha256 !== sha256Bytes(manifestBytes)) throw new Error("render manifest is not bound by the RENDERED receipt");
+
+    const sourcePath = await realpath(manifest.input.docx.path);
+    const outputPath = await realpath(page.renderPath);
+    const pdfPath = await realpath(manifest.output.pdf.path);
+    if (!isWithin(projectRoot, sourcePath) || !isWithin(currentGeneration, outputPath) || !isWithin(currentGeneration, pdfPath)) throw new Error("render inputs or outputs escape the KPP project generation");
+    const pageNumber = parsePageLocator(page.pageLocator);
+    const pageRecord = manifest.output.pages.find((record) => record.page === pageNumber);
+    if (pageRecord === undefined || await realpath(pageRecord.path) !== outputPath) throw new Error("page locator is not present in the render manifest");
+
+    const [sourceBytes, outputBytes, pdfBytes] = await Promise.all([readFile(sourcePath), readFile(outputPath), readFile(pdfPath)]);
+    const sourceHash = sha256Bytes(sourceBytes);
+    const outputHash = sha256Bytes(outputBytes);
+    const pdfHash = sha256Bytes(pdfBytes);
+    if (manifest.input.docx.sha256 !== sourceHash
+      || manifest.output.pdf.sha256 !== pdfHash || manifest.output.pdf.bytes !== pdfBytes.byteLength
+      || pageRecord.sha256 !== outputHash || pageRecord.bytes !== outputBytes.byteLength
+      || page.sha256 !== outputHash || !Buffer.from(page.bytes).equals(outputBytes)) throw new Error("manifest or page hashes do not bind the current bytes");
+
+    const buildSource = await matchingReceiptFile(buildVerification.receipt.files, sourcePath);
+    const renderSource = await matchingReceiptFile(renderVerification.receipt.files, sourcePath);
+    const renderPdf = await matchingReceiptFile(renderVerification.receipt.files, pdfPath);
+    const renderPage = await matchingReceiptFile(renderVerification.receipt.files, outputPath);
+    if (buildSource?.sha256 !== sourceHash || renderSource?.sha256 !== sourceHash
+      || renderPdf?.sha256 !== pdfHash || renderPage?.sha256 !== outputHash) throw new Error("document or outputs are not bound by the KPP receipt chain");
+
+    for (const executable of Object.values(manifest.executables)) {
+      const executablePath = await realpath(executable.path);
+      if (executable.realpath !== executablePath || executable.sha256 !== await sha256File(executablePath)) throw new Error(`renderer executable is stale: ${executable.path}`);
     }
   } catch (error) {
-    add(findings, "PP_FIGURE_RENDER_PROVENANCE_MISMATCH", "Final-render provenance paths could not be independently read.", { actual: error instanceof Error ? error.message : String(error) });
+    add(findings, "PP_FIGURE_RENDER_PROVENANCE_MISMATCH", "Persisted KPP BUILT/RENDERED receipts, manifest, document, renderer, or page bytes could not be independently verified.", { actual: error instanceof Error ? error.message : String(error) });
     return false;
   }
   return true;
+}
+
+interface RenderPathHash { readonly path: string; readonly sha256: string }
+interface RenderManifestPage extends RenderPathHash { readonly page: number; readonly bytes: number }
+interface RenderManifestExecutable extends RenderPathHash { readonly name: string; readonly realpath: string; readonly version: string }
+interface TrustedRenderManifest {
+  readonly schemaVersion: "1.0.0";
+  readonly rendererVersion: "0.1.0";
+  readonly input: { readonly docx: RenderPathHash };
+  readonly output: { readonly pdf: RenderPathHash & { readonly bytes: number; readonly pages: number }; readonly pages: readonly RenderManifestPage[] };
+  readonly executables: Readonly<Record<string, RenderManifestExecutable>>;
+}
+
+function parseRenderManifest(bytes: Uint8Array): TrustedRenderManifest {
+  const value: unknown = JSON.parse(Buffer.from(bytes).toString("utf8"));
+  if (!isRecord(value) || value.schemaVersion !== "1.0.0" || value.rendererVersion !== "0.1.0"
+    || !isRecord(value.input) || !isPathHash(value.input.docx)
+    || !isRecord(value.output) || !isRecord(value.output.pdf) || !isPathHash(value.output.pdf)
+    || !Number.isInteger(value.output.pdf.bytes) || Number(value.output.pdf.bytes) < 1
+    || !Number.isInteger(value.output.pdf.pages) || Number(value.output.pdf.pages) < 1 || !Array.isArray(value.output.pages)
+    || !value.output.pages.every(isRenderPage) || !isRecord(value.executables)) throw new Error("render manifest structure is invalid");
+  const pages = value.output.pages as RenderManifestPage[];
+  if (pages.length !== value.output.pdf.pages || pages.some((page, index) => page.page !== index + 1)) throw new Error("render manifest page set is incomplete");
+  const executableRecord = value.executables as Record<string, unknown>;
+  const executables = ["soffice", "pdfinfo", "pdftotext", "pdftoppm"].map((name) => executableRecord[name]);
+  if (!executables.every((entry) => isPathHash(entry) && typeof entry.name === "string"
+    && typeof entry.realpath === "string" && typeof entry.version === "string")) throw new Error("render manifest renderer identities are invalid");
+  return value as unknown as TrustedRenderManifest;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === "object" && !Array.isArray(value);
+}
+
+function isPathHash(value: unknown): value is Record<string, unknown> & RenderPathHash {
+  return isRecord(value) && typeof value.path === "string" && /^[a-f0-9]{64}$/iu.test(String(value.sha256));
+}
+
+function isRenderPage(value: unknown): value is RenderManifestPage {
+  return isPathHash(value) && Number.isInteger(value.page) && Number(value.page) > 0 && Number.isInteger(value.bytes) && Number(value.bytes) > 0;
+}
+
+function parsePageLocator(locator: string): number {
+  const match = /^page:(\d+)$/u.exec(locator);
+  if (match === null || Number(match[1]) < 1) throw new Error("page locator is invalid");
+  return Number(match[1]);
+}
+
+async function matchingReceiptFile(files: readonly { readonly path: string; readonly sha256: string }[], target: string) {
+  const canonicalTarget = await realpath(target);
+  for (const file of files) {
+    if (await realpath(file.path).catch(() => undefined) === canonicalTarget) return file;
+  }
+  return undefined;
+}
+
+function isWithin(parent: string, child: string): boolean {
+  const candidate = relative(parent, child);
+  return candidate === "" || (!candidate.startsWith(`..${sep}`) && candidate !== ".." && !candidate.startsWith(sep));
 }
 
 function auditHumanApproval(input: FigureSemanticAuditInput, expected: VisualEvidenceFigureArtifact | undefined, findings: AuditFinding[]): void {

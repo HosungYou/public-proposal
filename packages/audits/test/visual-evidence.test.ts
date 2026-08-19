@@ -1,5 +1,9 @@
 import { createHash } from "node:crypto";
+import { mkdir, mkdtemp, readFile, realpath, symlink, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { dirname, join } from "node:path";
 import { describe, expect, it } from "vitest";
+import { writeReceipt } from "@longtable/kpp-core";
 import {
   KPP_FINAL_RENDERER_NAME,
   KPP_FINAL_RENDERER_VERSION,
@@ -20,7 +24,7 @@ import {
   type VisualEvidenceData,
   type VisualEvidenceFigureArtifact,
 } from "@longtable/kpp-renderers";
-import { auditFigureSemantics, type FigurePageArtifactReader, type FigureSemanticAuditInput } from "../src/index.js";
+import { auditFigureSemantics, type FigureSemanticAuditInput } from "../src/index.js";
 
 const SOURCE_SHA = "1".repeat(64);
 const REFERENCE_SHA = "2".repeat(64);
@@ -106,31 +110,43 @@ describe("independent visual evidence audit", () => {
   it("blocks a synthetic renderFigureA4Page artifact without canonical render provenance", async () => {
     const input = await validAuditInput();
     const synthetic = renderFigureA4Page(input.artifact, validPageContext, { renderPath: "/arbitrary/synthetic-page.svg" });
-    const report = auditFigureSemantics({ ...input, pageArtifact: synthetic });
+    const report = await auditFigureSemantics({ ...input, pageArtifact: synthetic });
 
     expect(report.status).toBe("BLOCKED");
     expect(report.findings).toContainEqual(expect.objectContaining({ code: "PP_FIGURE_RENDER_PROVENANCE_MISSING" }));
   });
 
-  it("blocks when declared final-render path bytes differ from the receipt", async () => {
+  it("blocks when a fake reader hides tampered persisted final-render bytes", async () => {
     const input = await validAuditInput();
-    const reader = input.pageArtifactReader!;
     const outputPath = input.pageArtifact!.renderPath;
-    const report = auditFigureSemantics({
+    const originalBytes = input.pageArtifact!.bytes;
+    await writeFile(outputPath, "tampered-final-render", "utf8");
+    const report = await auditFigureSemantics({
       ...input,
       pageArtifactReader: {
-        ...reader,
-        readFile: (path) => path === outputPath ? Buffer.from("tampered-final-render") : reader.readFile(path),
+        realpath: (path: string) => path,
+        readFile: (path: string) => path === outputPath ? originalBytes : Buffer.from("forged"),
       },
+    } as FigureSemanticAuditInput);
+
+    expect(report.findings).toContainEqual(expect.objectContaining({ code: "PP_FIGURE_RENDER_PROVENANCE_MISMATCH" }));
+  });
+
+  it("blocks a self-authored final-render receipt when no persisted KPP RENDERED boundary exists", async () => {
+    const input = await validAuditInput();
+    const report = await auditFigureSemantics({
+      ...input,
+      projectRoot: join(tmpdir(), "missing-kpp-render-boundary"),
     });
 
+    expect(report.status).toBe("BLOCKED");
     expect(report.findings).toContainEqual(expect.objectContaining({ code: "PP_FIGURE_RENDER_PROVENANCE_MISMATCH" }));
   });
 
   it("blocks when no actual rendered-page artifact is supplied", async () => {
     const input = await validAuditInput();
     const { pageArtifact: _pageArtifact, ...missing } = input;
-    const report = auditFigureSemantics(missing as FigureSemanticAuditInput);
+    const report = await auditFigureSemantics(missing as FigureSemanticAuditInput);
 
     expect(report.status).toBe("BLOCKED");
     expect(report.findings).toContainEqual(expect.objectContaining({ code: "PP_FIGURE_RENDER_ARTIFACT_MISSING" }));
@@ -140,8 +156,8 @@ describe("independent visual evidence audit", () => {
     const input = await validAuditInput();
     const pageSvg = Buffer.from(input.pageArtifact!.bytes).toString("utf8")
       .replace(input.artifact.sha256, "0".repeat(64));
-    const bound = bindPageFixture(asFixture(input.pageArtifact!, Buffer.from(pageSvg)));
-    const report = auditFigureSemantics({ ...input, ...bound });
+    const bound = await bindPageFixture(asFixture(input.pageArtifact!, Buffer.from(pageSvg)));
+    const report = await auditFigureSemantics({ ...input, ...bound });
 
     expect(report.status).toBe("BLOCKED");
     expect(report.findings).toContainEqual(expect.objectContaining({ code: "PP_FIGURE_RENDER_ARTIFACT_MISMATCH" }));
@@ -151,15 +167,15 @@ describe("independent visual evidence audit", () => {
     const input = await validAuditInput();
     const pageSvg = Buffer.from(input.pageArtifact!.bytes).toString("utf8")
       .replace(/data-bbox-x="20" data-bbox-y="23"/u, 'data-bbox-x="20" data-bbox-y="159"');
-    const bound = bindPageFixture(asFixture(input.pageArtifact!, Buffer.from(pageSvg)));
-    const report = auditFigureSemantics({ ...input, ...bound });
+    const bound = await bindPageFixture(asFixture(input.pageArtifact!, Buffer.from(pageSvg)));
+    const report = await auditFigureSemantics({ ...input, ...bound });
 
     expect(report.findings).toContainEqual(expect.objectContaining({ code: "PP_FIGURE_LABEL_COLLISION" }));
   });
 
   it("passes a genuine receipt-bound final-render fixture without granting human approval", async () => {
     const input = await validAuditInput();
-    const report = auditFigureSemantics(input);
+    const report = await auditFigureSemantics(input);
 
     expect(report.status, JSON.stringify(report.findings)).toBe("PASS");
     expect(report.auditorBoundary).toBe("INDEPENDENT_QA_ONLY");
@@ -192,8 +208,8 @@ describe("independent visual evidence audit", () => {
         outputSha256: sha256(svg),
       },
     };
-    const bound = bindPageFixture(renderFigureA4Page(artifact, validPageContext, { renderPath: "/canonical/rendered/proposal-page-5.svg" }));
-    const report = auditFigureSemantics({ ...input, artifact, ...bound });
+    const bound = await bindPageFixture(renderFigureA4Page(artifact, validPageContext, { renderPath: "/canonical/rendered/proposal-page-5.svg" }));
+    const report = await auditFigureSemantics({ ...input, artifact, ...bound });
 
     expect(report.status).toBe("BLOCKED");
     expect(report.findings).toContainEqual(expect.objectContaining({ code: "PP_FIGURE_ARTIFACT_MISMATCH" }));
@@ -205,14 +221,14 @@ describe("independent visual evidence audit", () => {
     const shortSeries = {
       datasets: [{ ...validData.datasets[0]!, observations: validData.datasets[0]!.observations.slice(0, 7) }],
     };
-    const report = auditFigureSemantics({ ...input, data: shortSeries });
+    const report = await auditFigureSemantics({ ...input, data: shortSeries });
 
     expect(report.findings).toContainEqual(expect.objectContaining({ code: "PP_FIGURE_SAMPLE_INSUFFICIENT" }));
   });
 
   it("blocks unresolved evidence and claim bindings", async () => {
     const input = await validAuditInput();
-    const report = auditFigureSemantics({ ...input, spec: { ...input.spec, evidenceIds: ["EV-MISSING"] } });
+    const report = await auditFigureSemantics({ ...input, spec: { ...input.spec, evidenceIds: ["EV-MISSING"] } });
 
     expect(report.status).toBe("BLOCKED");
     expect(report.findings).toContainEqual(expect.objectContaining({ code: "PP_FIGURE_EVIDENCE_UNRESOLVED" }));
@@ -234,7 +250,7 @@ describe("independent visual evidence audit", () => {
     };
     const spec = { ...input.spec, dataIds: ["DATA-TREND-001", "DATA-OTHER"] };
     const data = { datasets: [validData.datasets[0]!, secondDataset] };
-    const report = auditFigureSemantics({ ...input, spec, data });
+    const report = await auditFigureSemantics({ ...input, spec, data });
 
     expect(report.findings).toContainEqual(expect.objectContaining({ code: "PP_FIGURE_SOURCE_DATA_MISMATCH" }));
     expect(report.findings).toContainEqual(expect.objectContaining({ code: "PP_FIGURE_UNIT_MISMATCH" }));
@@ -250,15 +266,15 @@ describe("independent visual evidence audit", () => {
   ] as const)("blocks %s from the measured final-page artifact", async (_name, override, code) => {
     const input = await validAuditInput();
     const pageContext = { ...validPageContext, ...override };
-    const bound = bindPageFixture(renderFigureA4Page(input.artifact, pageContext, { renderPath: "/canonical/rendered/proposal-page.svg" }));
-    const report = auditFigureSemantics({ ...input, ...bound });
+    const bound = await bindPageFixture(renderFigureA4Page(input.artifact, pageContext, { renderPath: "/canonical/rendered/proposal-page.svg" }));
+    const report = await auditFigureSemantics({ ...input, ...bound });
 
     expect(report.findings).toContainEqual(expect.objectContaining({ code }));
   });
 
   it("requires two independent hash-bound approval receipts before human_approved", async () => {
     const input = await validAuditInput();
-    const report = auditFigureSemantics({
+    const report = await auditFigureSemantics({
       ...input,
       spec: { ...input.spec, approvalStatus: "human_approved" },
       humanReviews: [reviewReceipt(input, "reviewer-1")],
@@ -272,8 +288,8 @@ describe("independent visual evidence audit", () => {
     const input = await validAuditInput();
     const reviews = [reviewReceipt(input, "reviewer-1"), reviewReceipt(input, "reviewer-2")];
     const pageContext = { ...validPageContext, pageLocator: "page:6", sectionCallout: `${validPageContext.sectionCallout} 수정` };
-    const bound = bindPageFixture(renderFigureA4Page(input.artifact, pageContext, { renderPath: "/canonical/rendered/proposal-page-6.svg" }));
-    const report = auditFigureSemantics({
+    const bound = await bindPageFixture(renderFigureA4Page(input.artifact, pageContext, { renderPath: "/canonical/rendered/proposal-page-6.svg" }));
+    const report = await auditFigureSemantics({
       ...input,
       spec: { ...input.spec, approvalStatus: "human_approved" },
       ...bound,
@@ -287,7 +303,7 @@ describe("independent visual evidence audit", () => {
   it("accepts human_approved only with two current independent approval receipts", async () => {
     const input = await validAuditInput();
     const reviews = [reviewReceipt(input, "reviewer-1"), reviewReceipt(input, "reviewer-2")];
-    const report = auditFigureSemantics({
+    const report = await auditFigureSemantics({
       ...input,
       spec: { ...input.spec, approvalStatus: "human_approved" },
       humanReviews: reviews,
@@ -307,7 +323,7 @@ describe("independent visual evidence audit", () => {
       publiclyReleasable: true,
       sourceLineageClass: "project_private" as const,
     }];
-    const report = auditFigureSemantics({ ...input, references });
+    const report = await auditFigureSemantics({ ...input, references });
 
     expect(report.status).toBe("BLOCKED");
     expect(report.findings).toContainEqual(expect.objectContaining({ code: "PP_FIGURE_REFERENCE_UNGOVERNED" }));
@@ -322,7 +338,7 @@ describe("independent visual evidence audit", () => {
       publiclyReleasable: true,
       humanPromoted: true,
     }];
-    const report = auditFigureSemantics({ ...input, references });
+    const report = await auditFigureSemantics({ ...input, references });
 
     expect(report.findings).toContainEqual(expect.objectContaining({ code: "PP_FIGURE_REFERENCE_UNGOVERNED" }));
   });
@@ -330,7 +346,7 @@ describe("independent visual evidence audit", () => {
 
 async function validAuditInput(): Promise<FigureSemanticAuditInput> {
   const artifact = await compileFigure(validSpec, validData, validReferences);
-  const bound = bindPageFixture(renderFigureA4Page(artifact, validPageContext, { renderPath: "/canonical/rendered/proposal-page-5.svg" }));
+  const bound = await bindPageFixture(renderFigureA4Page(artifact, validPageContext, { renderPath: "/canonical/rendered/proposal-page-5.svg" }));
   return {
     spec: validSpec,
     data: validData,
@@ -341,32 +357,56 @@ async function validAuditInput(): Promise<FigureSemanticAuditInput> {
   };
 }
 
-function bindPageFixture(fixture: FigureA4PageFixture): {
+async function bindPageFixture(fixture: FigureA4PageFixture): Promise<{
   pageArtifact: FigureA4PageArtifact;
-  pageArtifactReader: FigurePageArtifactReader;
-} {
-  const sourceDocumentRealpath = "/canonical/build/proposal.docx";
-  const executableRealpath = "/canonical/bin/kpp-render";
+  projectRoot: string;
+  renderManifestPath: string;
+}> {
+  const projectRoot = await mkdtemp(join(tmpdir(), "kpp-visual-render-"));
+  const sourceDocumentRealpath = join(projectRoot, "build", "proposal.docx");
+  const buildManifestPath = join(projectRoot, "build", "build.json");
+  const generationPath = join(projectRoot, "rendered", "generations", "generation-1");
+  const renderManifestPath = join(generationPath, "render.json");
+  const outputRealpath = join(generationPath, `page-${fixture.pageLocator.replace("page:", "").padStart(4, "0")}.svg`);
+  const pdfPath = join(generationPath, "proposal.pdf");
+  const executableRealpath = join(projectRoot, "tools", "kpp-render");
   const sourceBytes = Buffer.from("canonical-final-docx-bytes", "utf8");
   const executableBytes = Buffer.from("trusted-kpp-renderer-bytes", "utf8");
+  await Promise.all([
+    mkdir(dirname(sourceDocumentRealpath), { recursive: true }),
+    mkdir(generationPath, { recursive: true }),
+    mkdir(dirname(executableRealpath), { recursive: true }),
+    mkdir(join(projectRoot, "receipts"), { recursive: true }),
+  ]);
+  await Promise.all([
+    writeFile(sourceDocumentRealpath, sourceBytes),
+    writeFile(buildManifestPath, '{"schemaVersion":"1.0.0"}\n', "utf8"),
+    writeFile(outputRealpath, fixture.bytes),
+    writeFile(pdfPath, "%PDF-1.7\n%%EOF\n", "ascii"),
+    writeFile(executableRealpath, executableBytes),
+  ]);
+  const canonicalSource = await realpath(sourceDocumentRealpath);
+  const canonicalOutput = await realpath(outputRealpath);
+  const canonicalExecutable = await realpath(executableRealpath);
   const receiptPayload = {
     schemaVersion: "kpp-final-render-receipt/v1" as const,
     receiptId: `RENDER-${fixture.figureId}-${fixture.pageLocator}`,
     issuedAt: "2026-08-19T10:00:00.000Z",
-    sourceDocumentRealpath,
+    sourceDocumentRealpath: canonicalSource,
     sourceDocumentSha256: sha256Bytes(sourceBytes),
-    outputRealpath: fixture.renderPath,
+    outputRealpath: canonicalOutput,
     outputSha256: fixture.sha256,
     pageLocator: fixture.pageLocator,
     renderer: {
       name: KPP_FINAL_RENDERER_NAME,
       version: KPP_FINAL_RENDERER_VERSION,
-      executableRealpath,
+      executableRealpath: canonicalExecutable,
       executableSha256: sha256Bytes(executableBytes),
     },
   };
   const pageArtifact: FigureA4PageArtifact = {
     ...fixture,
+    renderPath: canonicalOutput,
     schemaVersion: "visual-evidence-rendered-page/v1",
     provenance: {
       schemaVersion: "visual-evidence-page-provenance/v1",
@@ -376,24 +416,48 @@ function bindPageFixture(fixture: FigureA4PageFixture): {
       },
     },
   };
-  const files = new Map<string, Uint8Array>([
-    [sourceDocumentRealpath, sourceBytes],
-    [executableRealpath, executableBytes],
-    [fixture.renderPath, fixture.bytes],
-  ]);
+  const executable = {
+    name: "kpp-render",
+    path: canonicalExecutable,
+    realpath: canonicalExecutable,
+    sha256: sha256Bytes(executableBytes),
+    version: KPP_FINAL_RENDERER_VERSION,
+  };
+  const pdfBytes = await readFile(pdfPath);
+  const pageNumber = Number(fixture.pageLocator.replace("page:", ""));
+  const pages = await Promise.all(Array.from({ length: pageNumber }, async (_, index) => {
+    const page = index + 1;
+    if (page === pageNumber) return { page, path: canonicalOutput, sha256: fixture.sha256, bytes: fixture.bytes.byteLength };
+    const path = join(generationPath, `page-${String(page).padStart(4, "0")}.svg`);
+    const bytes = Buffer.from(`<svg width="210mm" height="297mm" viewBox="0 0 210 297"><text>${page}</text></svg>`, "utf8");
+    await writeFile(path, bytes);
+    return { page, path, sha256: sha256Bytes(bytes), bytes: bytes.byteLength };
+  }));
+  const manifest = {
+    schemaVersion: "1.0.0",
+    rendererVersion: "0.1.0",
+    input: { docx: { path: canonicalSource, sha256: sha256Bytes(sourceBytes) } },
+    output: {
+      pdf: { path: pdfPath, sha256: sha256Bytes(pdfBytes), bytes: pdfBytes.byteLength, pages: pageNumber },
+      pages,
+    },
+    executables: { soffice: executable, pdfinfo: executable, pdftotext: executable, pdftoppm: executable },
+    raster: { dpi: 200, format: "svg" },
+  };
+  await writeFile(renderManifestPath, `${JSON.stringify(manifest, null, 2)}\n`, "utf8");
+  await symlink(join("generations", "generation-1"), join(projectRoot, "rendered", "current"), "dir");
+  const buildReceiptPath = join(projectRoot, "receipts", "build.json");
+  await writeReceipt({ stage: "BUILT", files: [sourceDocumentRealpath, buildManifestPath], output: buildReceiptPath });
+  await writeReceipt({
+    stage: "RENDERED",
+    files: [sourceDocumentRealpath, renderManifestPath, pdfPath, ...pages.map((page) => page.path)],
+    inputReceiptHashes: [sha256Bytes(await readFile(buildReceiptPath))],
+    output: join(projectRoot, "receipts", "render.json"),
+  });
   return {
     pageArtifact,
-    pageArtifactReader: {
-      realpath: (path) => {
-        if (!files.has(path)) throw new Error(`missing fixture realpath: ${path}`);
-        return path;
-      },
-      readFile: (path) => {
-        const bytes = files.get(path);
-        if (bytes === undefined) throw new Error(`missing fixture bytes: ${path}`);
-        return bytes;
-      },
-    },
+    projectRoot,
+    renderManifestPath,
   };
 }
 

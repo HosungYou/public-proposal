@@ -38,7 +38,6 @@ export {
 export {
   auditFigureSemantics,
   type FigureAuditReport,
-  type FigurePageArtifactReader,
   type FigureSemanticAuditInput,
 } from "./visual-evidence.js";
 export {
@@ -82,8 +81,12 @@ export async function auditProposal(input: ProposalAuditInput): Promise<Proposal
     auditFigureArtifacts(input.figures),
     auditReleaseReadiness(resolve(input.root), receiptBindings),
     auditCrossSurfaceLineage(input.docx.docxPath, input.renderManifestPath),
-    ...(input.semanticFigures ?? []).map((figure) => {
-      const report = auditFigureSemantics(figure);
+    ...(input.semanticFigures ?? []).map(async (figure) => {
+      const report = await auditFigureSemantics({
+        ...figure,
+        projectRoot: resolve(input.root),
+        renderManifestPath: input.renderManifestPath,
+      });
       return makeSlice(report.findings, []);
     }),
   ];
