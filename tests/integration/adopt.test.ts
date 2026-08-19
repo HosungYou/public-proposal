@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, realpath, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -37,7 +37,7 @@ describe("kpp adopt CLI", () => {
   });
 
   async function temporaryRoot(prefix: string): Promise<string> {
-    const root = await mkdtemp(join(tmpdir(), prefix));
+    const root = await realpath(await mkdtemp(join(tmpdir(), prefix)));
     roots.push(root);
     return root;
   }

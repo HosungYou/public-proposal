@@ -1,4 +1,4 @@
-import { copyFile, mkdtemp, mkdir, readFile, rm, symlink, writeFile } from "node:fs/promises";
+import { copyFile, mkdtemp, mkdir, readFile, realpath, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -92,6 +92,22 @@ describe("legacy project adoption", () => {
     await expect(readFile(join(targetRoot, "receipts", "adoption.json"), "utf8")).rejects.toMatchObject({ code: "ENOENT" });
   });
 
+  it("rejects an adoption root behind a symlinked ancestor before it can mutate the target", async () => {
+    const targetParent = await temporaryRoot("kpp-adopt-ancestor-target-");
+    const targetRoot = join(targetParent, "legacy");
+    const parentRoot = await temporaryRoot("kpp-adopt-ancestor-parent-");
+    const linkedAncestor = join(parentRoot, "linked-parent");
+    await mkdir(targetRoot);
+    await writeFile(join(targetRoot, "working-master.docx"), "legacy draft", "utf8");
+    await symlink(targetParent, linkedAncestor, "dir");
+
+    await expect(adoptProject({ root: join(linkedAncestor, "legacy") })).rejects.toMatchObject({
+      code: "KPP_INPUT_ADOPTION_SYMLINK",
+    });
+    await expect(readFile(join(targetRoot, "kpp.project.yaml"), "utf8")).rejects.toMatchObject({ code: "ENOENT" });
+    await expect(readFile(join(targetRoot, "receipts", "adoption.json"), "utf8")).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
   it("rejects an existing symlink output root before it can mutate the target", async () => {
     const legacyRoot = await temporaryRoot("kpp-adopt-output-symlink-legacy-");
     const targetRoot = await temporaryRoot("kpp-adopt-output-symlink-target-");
@@ -101,6 +117,23 @@ describe("legacy project adoption", () => {
     await symlink(targetRoot, linkedOutputRoot, "dir");
 
     await expect(adoptProject({ root: legacyRoot, outputRoot: linkedOutputRoot })).rejects.toMatchObject({
+      code: "KPP_INPUT_ADOPTION_SYMLINK",
+    });
+    await expect(readFile(join(targetRoot, "kpp.project.yaml"), "utf8")).rejects.toMatchObject({ code: "ENOENT" });
+    await expect(readFile(join(targetRoot, "receipts", "adoption.json"), "utf8")).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
+  it("rejects an existing output root behind a symlinked ancestor", async () => {
+    const legacyRoot = await temporaryRoot("kpp-adopt-output-ancestor-legacy-");
+    const targetParent = await temporaryRoot("kpp-adopt-output-ancestor-target-");
+    const targetRoot = join(targetParent, "project");
+    const parentRoot = await temporaryRoot("kpp-adopt-output-ancestor-parent-");
+    const linkedAncestor = join(parentRoot, "linked-parent");
+    await writeFile(join(legacyRoot, "working-master.docx"), "legacy draft", "utf8");
+    await mkdir(targetRoot);
+    await symlink(targetParent, linkedAncestor, "dir");
+
+    await expect(adoptProject({ root: legacyRoot, outputRoot: join(linkedAncestor, "project") })).rejects.toMatchObject({
       code: "KPP_INPUT_ADOPTION_SYMLINK",
     });
     await expect(readFile(join(targetRoot, "kpp.project.yaml"), "utf8")).rejects.toMatchObject({ code: "ENOENT" });
@@ -152,7 +185,7 @@ describe("legacy project adoption", () => {
   });
 
   async function temporaryRoot(prefix: string): Promise<string> {
-    const root = await mkdtemp(join(tmpdir(), prefix));
+    const root = await realpath(await mkdtemp(join(tmpdir(), prefix)));
     roots.push(root);
     return root;
   }

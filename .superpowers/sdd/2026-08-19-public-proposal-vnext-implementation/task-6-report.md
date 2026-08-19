@@ -132,3 +132,26 @@ changed.
 
 The pre-existing untracked installer plan remained untouched. No push,
 publish, or merge was performed.
+
+## Fix round 3 — 2026-08-19
+
+Adoption now validates every existing component of `input.root` and an
+existing `outputRoot` before discovery, staging, or publication. A symbolic
+link at either final component or any ancestor fails closed with
+`KPP_INPUT_ADOPTION_SYMLINK`; the linked target retains neither
+`kpp.project.yaml` nor an adoption receipt. Test fixtures canonicalize macOS
+`/var` temporary paths to `/private/var`: this keeps the strict product policy
+intact while exercising ordinary non-symlink roots.
+
+### Fix-round evidence
+
+| Success criterion | Exact scenario and invocation | Binary observable | Captured artifact |
+| --- | --- | --- | --- |
+| Ancestor symlink rejection (TDD) | First ran `npx vitest run packages/core/test/adoption.test.ts --no-file-parallelism` after adding input-root and existing-output-root ancestor-link regressions, before production code | exit 1; both promises resolved, proving the bypass existed | `.omo/evidence/task-6-fix3/report.md` |
+| Input and existing output-root boundary | `npm test -- packages/core/test/adoption.test.ts tests/integration/adopt.test.ts apps/public-proposal-cli/test/setup.test.ts apps/public-proposal-cli/test/uninstall-update.test.ts apps/public-proposal-cli/test/doctor.test.ts` | exit 0; 5 files, 73 tests; direct and ancestor link tests reject with `KPP_INPUT_ADOPTION_SYMLINK`, while canonical ordinary roots adopt successfully | `.omo/evidence/task-6-fix3/report.md` |
+| Honest separate-LongTable clean-install gate | `npm test -- tests/e2e/public-proposal-install.test.ts` | exit 0; 1 file, 10 tests; preserves explicit aggregate partial-gate assertions (`exitCode: 1`, `report.ok: false`, `PP_WORKER_PROTOCOL_MISSING`) | `.omo/evidence/task-6-fix3/report.md` |
+| Type safety, build, and diff hygiene | `npm run typecheck`; `npm run build`; `git diff --check e2afb84`; `git diff --check` | each exit 0; both diff checks empty | `.omo/evidence/task-6-fix3/report.md` |
+
+No managed-worker behavior, release logic, setup/update/uninstall ownership,
+atomic adoption, rollback, or LongTable/customer-state handling changed. No
+push, publish, or merge was performed.

@@ -75,8 +75,8 @@ export async function adoptProject(
 ): Promise<AdoptionReport> {
   const legacyRoot = resolve(input.root);
   const projectRoot = resolve(input.outputRoot ?? input.root);
-  await assertNotSymbolicLink(legacyRoot);
-  if (projectRoot !== legacyRoot) await assertNotSymbolicLink(projectRoot);
+  await assertPathContainsNoSymbolicLink(legacyRoot);
+  if (projectRoot !== legacyRoot) await assertPathContainsNoSymbolicLink(projectRoot);
   await requireDirectory(legacyRoot);
   const receiptPath = join(projectRoot, ADOPTION_RECEIPT);
   const previous = await readAdoptionReceipt(receiptPath);
@@ -359,10 +359,21 @@ async function requireDirectory(path: string): Promise<void> {
   if (!metadata?.isDirectory()) throw new KppError("KPP_INPUT_ADOPTION_ROOT", "adopt root는 읽을 수 있는 디렉터리여야 합니다.", { path });
 }
 
-async function assertNotSymbolicLink(path: string): Promise<void> {
-  const metadata = await lstat(path).catch(() => undefined);
-  if (metadata?.isSymbolicLink() === true) {
-    throw new KppError("KPP_INPUT_ADOPTION_SYMLINK", "adopt root와 output root는 심볼릭 링크일 수 없습니다.", { path });
+async function assertPathContainsNoSymbolicLink(path: string): Promise<void> {
+  let current: string = sep;
+  for (const part of resolve(path).split(sep).filter(Boolean)) {
+    current = join(current, part);
+    const metadata = await lstat(current).catch((error) => {
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined;
+      throw new KppError("KPP_INPUT_ADOPTION_ROOT", "adopt root와 output root 경로를 읽을 수 없습니다.", {
+        path: current,
+        actual: error instanceof Error ? error.message : String(error),
+      });
+    });
+    if (metadata?.isSymbolicLink() === true) {
+      throw new KppError("KPP_INPUT_ADOPTION_SYMLINK", "adopt root와 output root 경로에는 심볼릭 링크가 포함될 수 없습니다.", { path: current });
+    }
+    if (metadata === undefined) return;
   }
 }
 
