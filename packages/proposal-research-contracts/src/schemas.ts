@@ -14,6 +14,7 @@ export const ResearchProposalClassSchema = z.enum([
   "research_service",
   "policy_research",
   "general_procurement",
+  "document_restyle",
 ]);
 
 export const SourceClassSchema = z.enum([
@@ -237,6 +238,15 @@ export const EvidenceDataBundleV1Schema = z.object({
         });
       }
     }
+    for (const [sourceIndex, sourceId] of figure.sourceCaption.sourceIds.entries()) {
+      if (!sourceIds.has(sourceId)) {
+        context.addIssue({
+          code: "custom",
+          message: `figure caption source id ${sourceId} is not present in sources`,
+          path: ["figures", figureIndex, "sourceCaption", "sourceIds", sourceIndex],
+        });
+      }
+    }
   }
 
   for (const [datasetIndex, dataset] of bundle.datasets.entries()) {
@@ -257,6 +267,15 @@ export const EvidenceDataBundleV1Schema = z.object({
         context.addIssue({ code: "custom", message: `transformation source id ${sourceId} is not present in sources`, path: ["transformations", transformationIndex, "inputSourceIds"] });
       }
     }
+    for (const [datasetIndex, datasetId] of (transformation.inputDatasetIds ?? []).entries()) {
+      if (!datasetIds.has(datasetId)) {
+        context.addIssue({
+          code: "custom",
+          message: `transformation input dataset id ${datasetId} is not present in datasets`,
+          path: ["transformations", transformationIndex, "inputDatasetIds", datasetIndex],
+        });
+      }
+    }
     for (const claimId of transformation.claimIds) {
       if (!claimIds.has(claimId)) {
         context.addIssue({ code: "custom", message: `transformation claim id ${claimId} is not present in claims`, path: ["transformations", transformationIndex, "claimIds"] });
@@ -269,6 +288,27 @@ export const EvidenceDataBundleV1Schema = z.object({
     }
     if (transformation.outputDatasetId !== undefined && !datasetIds.has(transformation.outputDatasetId)) {
       context.addIssue({ code: "custom", message: `transformation output dataset id ${transformation.outputDatasetId} is not present in datasets`, path: ["transformations", transformationIndex, "outputDatasetId"] });
+    }
+  }
+
+  for (const [claimIndex, claim] of bundle.claims.entries()) {
+    for (const [sourceIndex, sourceId] of claim.sourceIds.entries()) {
+      if (!sourceIds.has(sourceId)) {
+        context.addIssue({
+          code: "custom",
+          message: `claim source id ${sourceId} is not present in sources`,
+          path: ["claims", claimIndex, "sourceIds", sourceIndex],
+        });
+      }
+    }
+    for (const [dataIndex, dataId] of claim.dataIds.entries()) {
+      if (!datasetIds.has(dataId)) {
+        context.addIssue({
+          code: "custom",
+          message: `claim data id ${dataId} is not present in datasets`,
+          path: ["claims", claimIndex, "dataIds", dataIndex],
+        });
+      }
     }
   }
 });
