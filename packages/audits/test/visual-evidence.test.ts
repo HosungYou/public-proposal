@@ -1,6 +1,8 @@
 import { createHash } from "node:crypto";
 import { describe, expect, it } from "vitest";
 import {
+  KPP_FINAL_RENDERER_NAME,
+  KPP_FINAL_RENDERER_VERSION,
   R08_TOKEN_PROFILE,
   R08_TOKEN_PROFILE_SHA256,
   VISUAL_EVIDENCE_FONT_PROFILE,
@@ -10,13 +12,15 @@ import {
   compileFigure,
   renderFigureA4Page,
   type FigureA4Context,
+  type FigureA4PageArtifact,
+  type FigureA4PageFixture,
   type GovernedFigureReference,
   type HumanFigureReview,
   type SemanticFigureSpecV1_1,
   type VisualEvidenceData,
   type VisualEvidenceFigureArtifact,
 } from "@longtable/kpp-renderers";
-import { auditFigureSemantics, type FigureSemanticAuditInput } from "../src/index.js";
+import { auditFigureSemantics, type FigurePageArtifactReader, type FigureSemanticAuditInput } from "../src/index.js";
 
 const SOURCE_SHA = "1".repeat(64);
 const REFERENCE_SHA = "2".repeat(64);
@@ -99,6 +103,30 @@ const validPageContext: FigureA4Context = {
 };
 
 describe("independent visual evidence audit", () => {
+  it("blocks a synthetic renderFigureA4Page artifact without canonical render provenance", async () => {
+    const input = await validAuditInput();
+    const synthetic = renderFigureA4Page(input.artifact, validPageContext, { renderPath: "/arbitrary/synthetic-page.svg" });
+    const report = auditFigureSemantics({ ...input, pageArtifact: synthetic });
+
+    expect(report.status).toBe("BLOCKED");
+    expect(report.findings).toContainEqual(expect.objectContaining({ code: "PP_FIGURE_RENDER_PROVENANCE_MISSING" }));
+  });
+
+  it("blocks when declared final-render path bytes differ from the receipt", async () => {
+    const input = await validAuditInput();
+    const reader = input.pageArtifactReader!;
+    const outputPath = input.pageArtifact!.renderPath;
+    const report = auditFigureSemantics({
+      ...input,
+      pageArtifactReader: {
+        ...reader,
+        readFile: (path) => path === outputPath ? Buffer.from("tampered-final-render") : reader.readFile(path),
+      },
+    });
+
+    expect(report.findings).toContainEqual(expect.objectContaining({ code: "PP_FIGURE_RENDER_PROVENANCE_MISMATCH" }));
+  });
+
   it("blocks when no actual rendered-page artifact is supplied", async () => {
     const input = await validAuditInput();
     const { pageArtifact: _pageArtifact, ...missing } = input;
@@ -112,8 +140,8 @@ describe("independent visual evidence audit", () => {
     const input = await validAuditInput();
     const pageSvg = Buffer.from(input.pageArtifact!.bytes).toString("utf8")
       .replace(input.artifact.sha256, "0".repeat(64));
-    const pageArtifact = { ...input.pageArtifact!, bytes: Buffer.from(pageSvg), sha256: sha256(pageSvg) };
-    const report = auditFigureSemantics({ ...input, pageArtifact });
+    const bound = bindPageFixture(asFixture(input.pageArtifact!, Buffer.from(pageSvg)));
+    const report = auditFigureSemantics({ ...input, ...bound });
 
     expect(report.status).toBe("BLOCKED");
     expect(report.findings).toContainEqual(expect.objectContaining({ code: "PP_FIGURE_RENDER_ARTIFACT_MISMATCH" }));
@@ -123,13 +151,13 @@ describe("independent visual evidence audit", () => {
     const input = await validAuditInput();
     const pageSvg = Buffer.from(input.pageArtifact!.bytes).toString("utf8")
       .replace(/data-bbox-x="20" data-bbox-y="23"/u, 'data-bbox-x="20" data-bbox-y="159"');
-    const pageArtifact = { ...input.pageArtifact!, bytes: Buffer.from(pageSvg), sha256: sha256(pageSvg) };
-    const report = auditFigureSemantics({ ...input, pageArtifact });
+    const bound = bindPageFixture(asFixture(input.pageArtifact!, Buffer.from(pageSvg)));
+    const report = auditFigureSemantics({ ...input, ...bound });
 
     expect(report.findings).toContainEqual(expect.objectContaining({ code: "PP_FIGURE_LABEL_COLLISION" }));
   });
 
-  it("passes a reconstructed traceable figure without granting human approval", async () => {
+  it("passes a genuine receipt-bound final-render fixture without granting human approval", async () => {
     const input = await validAuditInput();
     const report = auditFigureSemantics(input);
 
@@ -164,8 +192,8 @@ describe("independent visual evidence audit", () => {
         outputSha256: sha256(svg),
       },
     };
-    const pageArtifact = renderFigureA4Page(artifact, validPageContext, { renderPath: "/rendered/proposal-page-5.svg" });
-    const report = auditFigureSemantics({ ...input, artifact, pageArtifact });
+    const bound = bindPageFixture(renderFigureA4Page(artifact, validPageContext, { renderPath: "/canonical/rendered/proposal-page-5.svg" }));
+    const report = auditFigureSemantics({ ...input, artifact, ...bound });
 
     expect(report.status).toBe("BLOCKED");
     expect(report.findings).toContainEqual(expect.objectContaining({ code: "PP_FIGURE_ARTIFACT_MISMATCH" }));
@@ -222,8 +250,8 @@ describe("independent visual evidence audit", () => {
   ] as const)("blocks %s from the measured final-page artifact", async (_name, override, code) => {
     const input = await validAuditInput();
     const pageContext = { ...validPageContext, ...override };
-    const pageArtifact = renderFigureA4Page(input.artifact, pageContext, { renderPath: "/rendered/proposal-page.svg" });
-    const report = auditFigureSemantics({ ...input, pageArtifact });
+    const bound = bindPageFixture(renderFigureA4Page(input.artifact, pageContext, { renderPath: "/canonical/rendered/proposal-page.svg" }));
+    const report = auditFigureSemantics({ ...input, ...bound });
 
     expect(report.findings).toContainEqual(expect.objectContaining({ code }));
   });
@@ -244,11 +272,11 @@ describe("independent visual evidence audit", () => {
     const input = await validAuditInput();
     const reviews = [reviewReceipt(input, "reviewer-1"), reviewReceipt(input, "reviewer-2")];
     const pageContext = { ...validPageContext, pageLocator: "page:6", sectionCallout: `${validPageContext.sectionCallout} 수정` };
-    const pageArtifact = renderFigureA4Page(input.artifact, pageContext, { renderPath: "/rendered/proposal-page-6.svg" });
+    const bound = bindPageFixture(renderFigureA4Page(input.artifact, pageContext, { renderPath: "/canonical/rendered/proposal-page-6.svg" }));
     const report = auditFigureSemantics({
       ...input,
       spec: { ...input.spec, approvalStatus: "human_approved" },
-      pageArtifact,
+      ...bound,
       humanReviews: reviews,
     });
 
@@ -302,14 +330,83 @@ describe("independent visual evidence audit", () => {
 
 async function validAuditInput(): Promise<FigureSemanticAuditInput> {
   const artifact = await compileFigure(validSpec, validData, validReferences);
-  const pageArtifact = renderFigureA4Page(artifact, validPageContext, { renderPath: "/rendered/proposal-page-5.svg" });
+  const bound = bindPageFixture(renderFigureA4Page(artifact, validPageContext, { renderPath: "/canonical/rendered/proposal-page-5.svg" }));
   return {
     spec: validSpec,
     data: validData,
     references: validReferences,
     artifact,
-    pageArtifact,
+    ...bound,
     humanReviews: [],
+  };
+}
+
+function bindPageFixture(fixture: FigureA4PageFixture): {
+  pageArtifact: FigureA4PageArtifact;
+  pageArtifactReader: FigurePageArtifactReader;
+} {
+  const sourceDocumentRealpath = "/canonical/build/proposal.docx";
+  const executableRealpath = "/canonical/bin/kpp-render";
+  const sourceBytes = Buffer.from("canonical-final-docx-bytes", "utf8");
+  const executableBytes = Buffer.from("trusted-kpp-renderer-bytes", "utf8");
+  const receiptPayload = {
+    schemaVersion: "kpp-final-render-receipt/v1" as const,
+    receiptId: `RENDER-${fixture.figureId}-${fixture.pageLocator}`,
+    issuedAt: "2026-08-19T10:00:00.000Z",
+    sourceDocumentRealpath,
+    sourceDocumentSha256: sha256Bytes(sourceBytes),
+    outputRealpath: fixture.renderPath,
+    outputSha256: fixture.sha256,
+    pageLocator: fixture.pageLocator,
+    renderer: {
+      name: KPP_FINAL_RENDERER_NAME,
+      version: KPP_FINAL_RENDERER_VERSION,
+      executableRealpath,
+      executableSha256: sha256Bytes(executableBytes),
+    },
+  };
+  const pageArtifact: FigureA4PageArtifact = {
+    ...fixture,
+    schemaVersion: "visual-evidence-rendered-page/v1",
+    provenance: {
+      schemaVersion: "visual-evidence-page-provenance/v1",
+      renderReceipt: {
+        ...receiptPayload,
+        receiptSha256: sha256(canonicalFigureInputsJson(receiptPayload)),
+      },
+    },
+  };
+  const files = new Map<string, Uint8Array>([
+    [sourceDocumentRealpath, sourceBytes],
+    [executableRealpath, executableBytes],
+    [fixture.renderPath, fixture.bytes],
+  ]);
+  return {
+    pageArtifact,
+    pageArtifactReader: {
+      realpath: (path) => {
+        if (!files.has(path)) throw new Error(`missing fixture realpath: ${path}`);
+        return path;
+      },
+      readFile: (path) => {
+        const bytes = files.get(path);
+        if (bytes === undefined) throw new Error(`missing fixture bytes: ${path}`);
+        return bytes;
+      },
+    },
+  };
+}
+
+function asFixture(page: FigureA4PageArtifact | FigureA4PageFixture, bytes: Uint8Array): FigureA4PageFixture {
+  return {
+    schemaVersion: "visual-evidence-page-fixture/v1",
+    figureId: page.figureId,
+    format: page.format,
+    mediaType: page.mediaType,
+    renderPath: page.renderPath,
+    pageLocator: page.pageLocator,
+    bytes,
+    sha256: sha256Bytes(bytes),
   };
 }
 
@@ -333,4 +430,8 @@ function reviewReceipt(input: FigureSemanticAuditInput, reviewerId: string): Hum
 
 function sha256(value: string): string {
   return createHash("sha256").update(value, "utf8").digest("hex");
+}
+
+function sha256Bytes(value: Uint8Array): string {
+  return createHash("sha256").update(value).digest("hex");
 }

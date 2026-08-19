@@ -18,7 +18,7 @@ import {
   type CanonicalFigureMark,
   type GovernedFigureReference,
   type FigureA4Context,
-  type FigureA4PageArtifact,
+  type FigureA4PageFixture,
   type LibreOfficeFingerprint,
   type RenderFileFingerprint,
   type SemanticFigureSpecV1_1,
@@ -105,12 +105,12 @@ export function compileFigureExpected(
   };
 }
 
-/** Render an exact A4 review surface whose bytes bind figure, locator, caption, and page geometry. */
+/** Fixture-only SVG page constructor. Independent QA requires a separate canonical render receipt. */
 export function renderFigureA4Page(
   artifact: VisualEvidenceFigureArtifact,
   context: FigureA4Context,
   options: { readonly renderPath: string },
-): FigureA4PageArtifact {
+): FigureA4PageFixture {
   const image = Buffer.from(artifact.svg, "utf8").toString("base64");
   const box = context.figureBox;
   const peers = context.peerFigureBoxes.map((peer, index) =>
@@ -128,7 +128,7 @@ export function renderFigureA4Page(
   ].join("\n");
   const bytes = Buffer.from(pageSvg, "utf8");
   return {
-    schemaVersion: "visual-evidence-rendered-page/v1",
+    schemaVersion: "visual-evidence-page-fixture/v1",
     figureId: artifact.figureId,
     format: "svg",
     mediaType: "image/svg+xml",

@@ -38,6 +38,7 @@ export {
 export {
   auditFigureSemantics,
   type FigureAuditReport,
+  type FigurePageArtifactReader,
   type FigureSemanticAuditInput,
 } from "./visual-evidence.js";
 export {

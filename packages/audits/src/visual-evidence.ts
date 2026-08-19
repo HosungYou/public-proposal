@@ -1,9 +1,13 @@
 import { createHash } from "node:crypto";
+import { readFileSync, realpathSync } from "node:fs";
 import {
+  KPP_FINAL_RENDERER_NAME,
+  KPP_FINAL_RENDERER_VERSION,
   VISUAL_EVIDENCE_RENDERER_VERSION,
   canonicalFigureInputsJson,
   compileFigureExpected,
   type FigureA4PageArtifact,
+  type FigureA4PageFixture,
   type GovernedFigureReference,
   type HumanFigureReview,
   type SemanticFigureSpecV1_1,
@@ -17,9 +21,20 @@ export interface FigureSemanticAuditInput {
   readonly data: VisualEvidenceData;
   readonly references: readonly GovernedFigureReference[];
   readonly artifact: VisualEvidenceFigureArtifact;
-  readonly pageArtifact?: FigureA4PageArtifact;
+  readonly pageArtifact?: FigureA4PageArtifact | FigureA4PageFixture;
+  readonly pageArtifactReader?: FigurePageArtifactReader;
   readonly humanReviews?: readonly HumanFigureReview[];
 }
+
+export interface FigurePageArtifactReader {
+  readonly realpath: (path: string) => string;
+  readonly readFile: (path: string) => Uint8Array;
+}
+
+const NODE_PAGE_ARTIFACT_READER: FigurePageArtifactReader = {
+  realpath: realpathSync,
+  readFile: readFileSync,
+};
 
 export interface FigureAuditReport {
   readonly schemaVersion: "figure-audit/v1";
@@ -134,7 +149,12 @@ function auditSvgAndPage(input: FigureSemanticAuditInput, expected: VisualEviden
     add(findings, "PP_FIGURE_RENDER_ARTIFACT_MISSING", "Independent QA requires actual final-page render bytes, path, hash, and page locator.");
     return;
   }
-  if (page.schemaVersion !== "visual-evidence-rendered-page/v1" || page.figureId !== input.spec.figureId || page.renderPath.trim().length === 0
+  if (page.schemaVersion !== "visual-evidence-rendered-page/v1" || !("provenance" in page)) {
+    add(findings, "PP_FIGURE_RENDER_PROVENANCE_MISSING", "Synthetic page fixtures are not final-render evidence; a canonical KPP render receipt is required.");
+    return;
+  }
+  if (!validateFinalRenderProvenance(page, input.pageArtifactReader ?? NODE_PAGE_ARTIFACT_READER, findings)) return;
+  if (page.figureId !== input.spec.figureId || page.renderPath.trim().length === 0
     || page.pageLocator.trim().length === 0 || page.bytes.byteLength === 0 || page.sha256 !== sha256Bytes(page.bytes)) {
     add(findings, "PP_FIGURE_RENDER_ARTIFACT_MISMATCH", "Actual rendered-page bytes, hash, render path, or locator are invalid.");
     return;
@@ -159,6 +179,51 @@ function auditSvgAndPage(input: FigureSemanticAuditInput, expected: VisualEviden
   if (pageMeasurement.labelCollisions > 0) add(findings, "PP_FIGURE_LABEL_COLLISION", "Actual-page text bounding boxes collide.", { actual: pageMeasurement.labelCollisions });
   if (pageMeasurement.repeatedGeometry > 2) add(findings, "PP_FIGURE_GEOMETRY_REPEATED", "Repeated actual-page figure geometry creates a card-wall pattern.", { actual: pageMeasurement.repeatedGeometry });
   if (expected !== undefined && pageMeasurement.figureSvgSha256 !== expected.sha256) add(findings, "PP_FIGURE_RENDER_ARTIFACT_MISMATCH", "Actual page embeds a figure other than the independently reconstructed artifact.");
+}
+
+function validateFinalRenderProvenance(
+  page: FigureA4PageArtifact,
+  reader: FigurePageArtifactReader,
+  findings: AuditFinding[],
+): boolean {
+  const receipt = page.provenance.renderReceipt;
+  const { receiptSha256: _receiptSha256, ...receiptPayload } = receipt;
+  const structurallyValid = page.provenance.schemaVersion === "visual-evidence-page-provenance/v1"
+    && receipt.schemaVersion === "kpp-final-render-receipt/v1"
+    && receipt.receiptId.trim().length > 0
+    && Number.isFinite(Date.parse(receipt.issuedAt))
+    && receipt.renderer.name === KPP_FINAL_RENDERER_NAME
+    && receipt.renderer.version === KPP_FINAL_RENDERER_VERSION
+    && receipt.pageLocator === page.pageLocator
+    && receipt.outputSha256 === page.sha256
+    && receipt.receiptSha256 === sha256(canonicalFigureInputsJson(receiptPayload));
+  if (!structurallyValid) {
+    add(findings, "PP_FIGURE_RENDER_PROVENANCE_MISMATCH", "Final-render receipt identity or hash bindings are invalid.");
+    return false;
+  }
+  try {
+    const outputRealpath = reader.realpath(page.renderPath);
+    const sourceRealpath = reader.realpath(receipt.sourceDocumentRealpath);
+    const executableRealpath = reader.realpath(receipt.renderer.executableRealpath);
+    const outputBytes = reader.readFile(outputRealpath);
+    const sourceBytes = reader.readFile(sourceRealpath);
+    const executableBytes = reader.readFile(executableRealpath);
+    const validBytes = outputRealpath === receipt.outputRealpath
+      && sourceRealpath === receipt.sourceDocumentRealpath
+      && executableRealpath === receipt.renderer.executableRealpath
+      && sha256Bytes(outputBytes) === receipt.outputSha256
+      && sha256Bytes(sourceBytes) === receipt.sourceDocumentSha256
+      && sha256Bytes(executableBytes) === receipt.renderer.executableSha256
+      && Buffer.from(outputBytes).equals(Buffer.from(page.bytes));
+    if (!validBytes) {
+      add(findings, "PP_FIGURE_RENDER_PROVENANCE_MISMATCH", "Declared source, renderer, or output path bytes do not match the final-render receipt.");
+      return false;
+    }
+  } catch (error) {
+    add(findings, "PP_FIGURE_RENDER_PROVENANCE_MISMATCH", "Final-render provenance paths could not be independently read.", { actual: error instanceof Error ? error.message : String(error) });
+    return false;
+  }
+  return true;
 }
 
 function auditHumanApproval(input: FigureSemanticAuditInput, expected: VisualEvidenceFigureArtifact | undefined, findings: AuditFinding[]): void {

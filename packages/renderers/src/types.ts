@@ -21,6 +21,8 @@ export const R08_TOKEN_PROFILE_SHA256 = createHash("sha256")
 /** The version is part of every vNext visual artifact hash. */
 export const VISUAL_EVIDENCE_RENDERER_VERSION = "1.0.0" as const;
 export const VISUAL_EVIDENCE_RENDERER_NAME = "@longtable/kpp-renderers" as const;
+export const KPP_FINAL_RENDERER_NAME = "@longtable/kpp-cli" as const;
+export const KPP_FINAL_RENDERER_VERSION = "0.2.1" as const;
 export const VISUAL_EVIDENCE_FONT_PROFILE = "Noto-Sans-CJK-KR-2.004" as const;
 export const VISUAL_EVIDENCE_FONT_PROFILE_SHA256 = createHash("sha256")
   .update(stableCanonicalJson({
@@ -239,8 +241,7 @@ export interface FigureA4Context {
   readonly peerFigureBoxes: readonly FigureBox[];
 }
 
-export interface FigureA4PageArtifact {
-  readonly schemaVersion: "visual-evidence-rendered-page/v1";
+interface FigureA4PageBytes {
   readonly figureId: string;
   readonly format: "svg" | "pdf" | "docx-render";
   readonly mediaType: string;
@@ -248,6 +249,37 @@ export interface FigureA4PageArtifact {
   readonly pageLocator: string;
   readonly bytes: Uint8Array;
   readonly sha256: string;
+}
+
+/** Synthetic layout fixture only. It is never sufficient evidence for independent page QA. */
+export interface FigureA4PageFixture extends FigureA4PageBytes {
+  readonly schemaVersion: "visual-evidence-page-fixture/v1";
+}
+
+export interface KppFinalRenderReceipt {
+  readonly schemaVersion: "kpp-final-render-receipt/v1";
+  readonly receiptId: string;
+  readonly issuedAt: string;
+  readonly sourceDocumentRealpath: string;
+  readonly sourceDocumentSha256: string;
+  readonly outputRealpath: string;
+  readonly outputSha256: string;
+  readonly pageLocator: string;
+  readonly renderer: {
+    readonly name: typeof KPP_FINAL_RENDERER_NAME;
+    readonly version: typeof KPP_FINAL_RENDERER_VERSION;
+    readonly executableRealpath: string;
+    readonly executableSha256: string;
+  };
+  readonly receiptSha256: string;
+}
+
+export interface FigureA4PageArtifact extends FigureA4PageBytes {
+  readonly schemaVersion: "visual-evidence-rendered-page/v1";
+  readonly provenance: {
+    readonly schemaVersion: "visual-evidence-page-provenance/v1";
+    readonly renderReceipt: KppFinalRenderReceipt;
+  };
 }
 
 export interface HumanFigureReview {
