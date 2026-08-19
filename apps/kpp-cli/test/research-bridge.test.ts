@@ -31,6 +31,8 @@ describe("proposal research bridge", () => {
     expect(request.sourcePriority[0]).toBe("user_provided");
     expect(request.requirementIds).toEqual(["REQ-INSTITUTION-METRIC"]);
     expect(request.budgets).toEqual({ fullPass: 1, deltaPasses: 2 });
+    expect(request.requirementsLockSha256).toMatch(/^[a-f0-9]{64}$/u);
+    expect(request.routingDecision).toBe("required");
     expect((await routeResearch({ proposalClass: request.proposalClass, academicEvidence: true })).invocations)
       .toEqual(["longtable"]);
 
@@ -49,11 +51,15 @@ describe("proposal research bridge", () => {
   });
 
   it("runs no LongTable call for ordinary general procurement", async () => {
+    const root = await createLockedRequirementsProject(temporaryDirectories, "general_procurement");
+    const request = await createResearchRequest(root, validRequestOptions());
     const result = await routeResearch({
-      proposalClass: "general_procurement",
-      academicEvidence: false,
+      proposalClass: request.proposalClass,
+      academicEvidence: request.targetArtifacts.includes("method"),
+      routingDecision: request.routingDecision,
     });
 
+    expect(request.routingDecision).toBe("prohibited");
     expect(result.invocations).toEqual([]);
   });
 
@@ -103,6 +109,68 @@ describe("proposal research bridge", () => {
 
     await expect(importEvidenceBundle(root, unsupportedInstitutionFixture))
       .rejects.toMatchObject({ code: "PP_REQUIRED_DATA_GAP" });
+  });
+
+  it("rejects a complete bundle that omits a required target figure", async () => {
+    const root = await createLockedRequirementsProject(temporaryDirectories, "research_service");
+    const request = await createResearchRequest(root, validRequestOptions());
+    const bundlePath = await writeBundleFixture(temporaryDirectories, request, {
+      figures: [],
+      transformations: [{ ...validBundleParts().transformations[0]!, figureIds: [] }],
+    });
+
+    await expect(importEvidenceBundle(root, bundlePath))
+      .rejects.toMatchObject({ code: "PP_REQUIRED_DATA_GAP" });
+  });
+
+  it("rejects request mutation that retains a caller-visible request id", async () => {
+    const root = await createLockedRequirementsProject(temporaryDirectories, "research_service");
+    const request = await createResearchRequest(root, validRequestOptions());
+    const requestPath = join(root, "evidence", "research-lock", "request.json");
+    const mutated = JSON.parse(await readFile(requestPath, "utf8")) as ProposalResearchRequestV1;
+    await writeFile(requestPath, `${JSON.stringify({
+      ...mutated,
+      requiredData: mutated.requiredData.map((field) => ({ ...field, definition: `${field.definition} 변조` })),
+    }, null, 2)}\n`, "utf8");
+    const bundlePath = await writeBundleFixture(temporaryDirectories, request);
+
+    await expect(importEvidenceBundle(root, bundlePath))
+      .rejects.toMatchObject({ code: "PP_RESEARCH_REQUEST_INVALID" });
+  });
+
+  it("rejects a malformed SUCCEEDED handoff wire object", async () => {
+    const root = await createLockedRequirementsProject(temporaryDirectories, "research_service");
+    const request = await createResearchRequest(root, validRequestOptions());
+    const bundlePath = await writeBundleFixture(temporaryDirectories, request);
+    const directory = join(bundlePath, "..");
+    await writeFile(join(directory, "handoff.json"), '{"status":"SUCCEEDED"}\n', "utf8");
+    const bundle = JSON.parse(await readFile(bundlePath, "utf8")) as EvidenceDataBundleV1;
+    await writeFile(bundlePath, `${JSON.stringify({
+      ...bundle,
+      files: await Promise.all(bundle.files.map(async (file) => file.path === "handoff.json"
+        ? { ...file, sha256: await core.sha256File(join(directory, file.path)) }
+        : file)),
+    }, null, 2)}\n`, "utf8");
+
+    await expect(importEvidenceBundle(root, bundlePath))
+      .rejects.toMatchObject({ code: "PP_RESEARCH_BUNDLE_INVALID" });
+  });
+
+  it.each([
+    ["raw/institution.json", "SECRET"],
+    ["normalized/dataset.json", "RESTRICTED_PROOF"],
+  ] as const)("rejects classified bundle file %s", async (relativePath, classification) => {
+    const root = await createLockedRequirementsProject(temporaryDirectories, "research_service");
+    const request = await createResearchRequest(root, validRequestOptions());
+    const bundlePath = await writeBundleFixture(temporaryDirectories, request);
+    const bundle = JSON.parse(await readFile(bundlePath, "utf8")) as EvidenceDataBundleV1;
+    await writeFile(bundlePath, `${JSON.stringify({
+      ...bundle,
+      files: bundle.files.map((file) => file.path === relativePath ? { ...file, classification } : file),
+    }, null, 2)}\n`, "utf8");
+
+    await expect(importEvidenceBundle(root, bundlePath))
+      .rejects.toMatchObject({ code: "PP_RESEARCH_BUNDLE_INVALID" });
   });
 
   it("rejects time, unit, grain, entity, and file-hash mismatches before receipt creation", async () => {
@@ -248,7 +316,18 @@ async function writeBundleFixture(
     "claims/candidates.json": "{\"claimIds\":[\"CLAIM-INSTITUTION-METRIC\"]}\n",
     "figures/specs.json": "{\"figureIds\":[\"FIG-INSTITUTION-TREND\"]}\n",
     "gaps/gaps.json": "{\"gaps\":[]}\n",
-    "handoff.json": "{\"status\":\"SUCCEEDED\"}\n",
+    "handoff.json": `${JSON.stringify({
+      schemaVersion: "proposal-research-handoff/v1",
+      status: "SUCCEEDED",
+      bundleId: `bundle-${request.requestId}`,
+      requestId: request.requestId,
+      accountableSynthesis: {
+        owner: "LongTable Evidence Synthesizer",
+        roles: [],
+        unresolvedGapIds: [],
+      },
+      searchBudget: { fullPassesUsed: 1, deltaPassesUsed: 0 },
+    })}\n`,
     "source-manifest.jsonl": "{\"sourceId\":\"source-official\"}\n",
   };
   for (const [relativePath, contents] of Object.entries(artifactContents)) {
@@ -259,6 +338,7 @@ async function writeBundleFixture(
   const files = await Promise.all(Object.keys(artifactContents).map(async (path) => ({
     path,
     sha256: await core.sha256File(join(directory, path)),
+    classification: "PUBLIC" as const,
   })));
   const parts = validBundleParts();
   const bundle: EvidenceDataBundleV1 = {

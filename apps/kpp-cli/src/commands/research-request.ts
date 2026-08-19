@@ -24,6 +24,7 @@ export async function researchRequestCommand(
     route: await routeResearch({
       proposalClass: request.proposalClass,
       academicEvidence: request.targetArtifacts.includes("method"),
+      routingDecision: request.routingDecision,
     }),
   });
 }

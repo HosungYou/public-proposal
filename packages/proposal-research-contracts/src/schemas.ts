@@ -31,6 +31,13 @@ export const SourceClassSchema = z.enum([
 ]);
 
 export const PrivacyClassSchema = z.enum(["PUBLIC", "PROJECT_CONFIDENTIAL"]);
+export const ResearchRoutingDecisionSchema = z.enum(["required", "prohibited"]);
+export const EvidenceFileClassificationSchema = z.enum([
+  "PUBLIC",
+  "PROJECT_CONFIDENTIAL",
+  "RESTRICTED_PROOF",
+  "SECRET",
+]);
 
 export const TargetArtifactSchema = z.enum(["claim", "table", "figure", "method"]);
 
@@ -76,6 +83,8 @@ export const ProposalResearchRequestV1Schema = z.object({
   targetArtifacts: z.array(TargetArtifactSchema).min(1),
   budgets: ResearchBudgetSchema,
   privacyClass: PrivacyClassSchema,
+  requirementsLockSha256: Sha256Schema,
+  routingDecision: ResearchRoutingDecisionSchema,
 }).strict();
 
 export const EvidenceFileV1Schema = z.object({
@@ -84,6 +93,23 @@ export const EvidenceFileV1Schema = z.object({
   sha256: Sha256Schema,
   mediaType: IdentifierSchema.optional(),
   bytes: z.number().int().nonnegative().optional(),
+  classification: EvidenceFileClassificationSchema,
+}).strict();
+
+export const ProposalResearchHandoffV1Schema = z.object({
+  schemaVersion: z.literal("proposal-research-handoff/v1"),
+  status: z.enum(["SUCCEEDED", "QUARANTINED"]),
+  bundleId: IdentifierSchema,
+  requestId: IdentifierSchema,
+  accountableSynthesis: z.object({
+    owner: IdentifierSchema,
+    roles: z.array(IdentifierSchema),
+    unresolvedGapIds: z.array(IdentifierSchema),
+  }).strict(),
+  searchBudget: z.object({
+    fullPassesUsed: z.literal(1),
+    deltaPassesUsed: z.number().int().min(0).max(2),
+  }).strict(),
 }).strict();
 
 const SourceLocatorSchema = z.union([
@@ -315,6 +341,7 @@ export const EvidenceDataBundleV1Schema = z.object({
 
 export type ProposalResearchRequestV1 = z.infer<typeof ProposalResearchRequestV1Schema>;
 export type EvidenceFileV1 = z.infer<typeof EvidenceFileV1Schema>;
+export type ProposalResearchHandoffV1 = z.infer<typeof ProposalResearchHandoffV1Schema>;
 export type SourceRecordV1 = z.infer<typeof SourceRecordV1Schema>;
 export type NormalizedDatasetV1 = z.infer<typeof NormalizedDatasetV1Schema>;
 export type TransformationLineageV1 = z.infer<typeof TransformationLineageV1Schema>;

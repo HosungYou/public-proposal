@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 import {
   EvidenceDataBundleV1Schema,
+  EvidenceFileV1Schema,
+  ProposalResearchHandoffV1Schema,
   ProposalResearchRequestV1Schema,
   sha256Canonical,
 } from "../src/index.js";
@@ -20,6 +22,8 @@ describe("proposal research contracts", () => {
       targetArtifacts: ["claim", "figure"],
       budgets: { fullPass: 1, deltaPasses: 2 },
       privacyClass: "PUBLIC",
+      requirementsLockSha256: "a".repeat(64),
+      routingDecision: "required",
     });
     expect(result.success).toBe(true);
   });
@@ -38,12 +42,38 @@ describe("proposal research contracts", () => {
       targetArtifacts: ["method"],
       budgets: { fullPass: 1, deltaPasses: 2 },
       privacyClass: "PUBLIC",
+      requirementsLockSha256: "b".repeat(64),
+      routingDecision: "prohibited",
     });
     expect(result.success).toBe(true);
   });
 
   it("changes the canonical hash when a lineage field changes", () => {
     expect(sha256Canonical({ a: 1 })).not.toBe(sha256Canonical({ a: 2 }));
+  });
+
+  it("requires an explicit evidence-file classification", () => {
+    expect(EvidenceFileV1Schema.safeParse({
+      path: "raw/source.json",
+      sha256: "a".repeat(64),
+    }).success).toBe(false);
+    expect(EvidenceFileV1Schema.safeParse({
+      path: "raw/source.json",
+      sha256: "a".repeat(64),
+      classification: "PUBLIC",
+    }).success).toBe(true);
+  });
+
+  it("accepts only the exact proposal research handoff wire shape", () => {
+    expect(ProposalResearchHandoffV1Schema.safeParse({ status: "SUCCEEDED" }).success).toBe(false);
+    expect(ProposalResearchHandoffV1Schema.safeParse({
+      schemaVersion: "proposal-research-handoff/v1",
+      status: "SUCCEEDED",
+      bundleId: "bundle-1",
+      requestId: "request-1",
+      accountableSynthesis: { owner: "owner", roles: [], unresolvedGapIds: [] },
+      searchBudget: { fullPassesUsed: 1, deltaPassesUsed: 0 },
+    }).success).toBe(true);
   });
 
   it("rejects a bundle with an untraceable figure point", () => {

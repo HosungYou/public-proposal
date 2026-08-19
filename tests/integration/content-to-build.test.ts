@@ -412,6 +412,7 @@ async function createResearchBundleLock(
       targetFigureIds: ["FIG-SCHEDULE-001"],
     }],
     privacyClass: "PUBLIC",
+    academicEvidence: true,
   }, null, 2)}\n`, "utf8");
   const requestResult = await runCli([
     "research-request",
@@ -434,7 +435,18 @@ async function createResearchBundleLock(
     "figures/specs.json": '{"figureId":"FIG-SCHEDULE-001"}\n',
     "gaps/gaps.json": '{"gaps":[]}\n',
     "source-manifest.jsonl": '{"sourceId":"SOURCE-OFFICIAL"}\n',
-    "handoff.json": '{"status":"SUCCEEDED"}\n',
+    "handoff.json": `${JSON.stringify({
+      schemaVersion: "proposal-research-handoff/v1",
+      status: "SUCCEEDED",
+      bundleId: `bundle-${proposalClass}`,
+      requestId: requestEnvelope.data.request.requestId,
+      accountableSynthesis: {
+        owner: "LongTable Evidence Synthesizer",
+        roles: [],
+        unresolvedGapIds: [],
+      },
+      searchBudget: { fullPassesUsed: 1, deltaPassesUsed: 0 },
+    })}\n`,
   };
   for (const [relativePath, contents] of Object.entries(artifactContents)) {
     const path = join(bundleRoot, relativePath);
@@ -444,6 +456,7 @@ async function createResearchBundleLock(
   const files = await Promise.all(Object.keys(artifactContents).map(async (path) => ({
     path,
     sha256: await core.sha256File(join(bundleRoot, path)),
+    classification: "PUBLIC",
   })));
   const bundlePath = join(bundleRoot, "bundle.json");
   await writeFile(bundlePath, `${JSON.stringify({

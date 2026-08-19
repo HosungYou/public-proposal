@@ -21,6 +21,7 @@ import {
 } from "node:path";
 import {
   EvidenceDataBundleV1Schema,
+  ProposalResearchHandoffV1Schema,
   ProposalResearchRequestV1Schema,
   sha256Canonical,
   type EvidenceDataBundleV1,
@@ -86,6 +87,7 @@ type RequiredDataField = ProposalResearchRequestV1["requiredData"][number];
 
 export interface ResearchRequestOptions {
   readonly requestId?: string;
+  readonly academicEvidence?: boolean;
   readonly institution: {
     readonly canonicalName: string;
     readonly aliases: readonly string[];
@@ -115,6 +117,7 @@ export interface ResearchRequestOptions {
 export interface ResearchRouteInput {
   readonly proposalClass: ProposalClass;
   readonly academicEvidence: boolean;
+  readonly routingDecision?: ProposalResearchRequestV1["routingDecision"];
 }
 
 export interface ResearchRouteResult {
@@ -142,7 +145,7 @@ export async function createResearchRequest(
 ): Promise<ProposalResearchRequestV1> {
   const root = resolve(rootInput);
   const project = await readProject(root);
-  const { requirements, path: requirementsPath } = await readLockedRequirements(root);
+  const { requirements, receiptSha256: requirementsLockSha256 } = await readLockedRequirements(root);
   validateRequestOptions(requirements, options);
   const requirementIds = requirements.requirements.map(({ requirementId }) => requirementId);
   const targetArtifacts = options.targetArtifacts === undefined
@@ -160,11 +163,16 @@ export async function createResearchRequest(
     targetArtifacts,
     budgets: { fullPass: 1 as const, deltaPasses: 2 as const },
     privacyClass: options.privacyClass ?? "PUBLIC" as const,
+    requirementsLockSha256,
+    routingDecision: requiresResearchLock(project.proposalClass, options.academicEvidence === true)
+      ? "required" as const
+      : "prohibited" as const,
   };
-  const requestId = options.requestId ?? `request-${sha256Canonical({
-    ...requestSeed,
-    requirementsSha256: await sha256File(requirementsPath),
-  }).slice(0, 20)}`;
+  const canonicalId = canonicalRequestId(requestSeed);
+  if (options.requestId !== undefined && options.requestId !== canonicalId) {
+    invalidRequest("request_id_not_canonical", options.requestId);
+  }
+  const requestId = canonicalId;
   const parsed = ProposalResearchRequestV1Schema.safeParse({ requestId, ...requestSeed });
   if (!parsed.success) {
     throw new KppError("PP_RESEARCH_REQUEST_INVALID", "연구 요청 형식이 올바르지 않습니다.", {
@@ -178,7 +186,9 @@ export async function createResearchRequest(
 
 export async function routeResearch(input: ResearchRouteInput): Promise<ResearchRouteResult> {
   return {
-    invocations: requiresResearchLock(input.proposalClass, input.academicEvidence)
+    invocations: (input.routingDecision === undefined
+      ? requiresResearchLock(input.proposalClass, input.academicEvidence)
+      : input.routingDecision === "required")
       ? ["longtable"]
       : [],
   };
@@ -213,6 +223,15 @@ export async function importEvidenceBundle(
     });
   }
   const bundle = parsed.data;
+  const restrictedFile = bundle.files.find(({ classification }) =>
+    classification === "SECRET" || classification === "RESTRICTED_PROOF",
+  );
+  if (restrictedFile !== undefined) {
+    throw new KppError("PP_RESEARCH_BUNDLE_INVALID", "제한 등급 파일은 연구 bundle에 포함할 수 없습니다.", {
+      path: restrictedFile.path,
+      actual: { classification: restrictedFile.classification },
+    });
+  }
   if (bundle.status !== "complete") {
     throw new KppError("PP_RESEARCH_BUNDLE_INVALID", "완료되지 않은 연구 bundle은 KPP 입력으로 가져올 수 없습니다.", {
       path: bundlePath,
@@ -328,6 +347,20 @@ export function validateBundleLineage(
       && gap.status === "resolved"
       && (gap.kind === "official_source_unavailable" || gap.kind === "required_data_gap"),
     );
+    for (const claimId of field.targetClaimIds ?? []) {
+      const claim = bundle.claims.find((candidate) => candidate.claimId === claimId);
+      if (claim === undefined) throw requiredDataError(field.fieldId, "target_claim_missing");
+      if (datasets.length > 0 && !claim.dataIds.some((dataId) => datasets.some(({ datasetId }) => datasetId === dataId))) {
+        throw requiredDataError(field.fieldId, "target_claim_unbound");
+      }
+    }
+    for (const figureId of field.targetFigureIds ?? []) {
+      const figure = bundle.figures.find((candidate) => candidate.figureId === figureId);
+      if (figure === undefined) throw requiredDataError(field.fieldId, "target_figure_missing");
+      if (datasets.length > 0 && !figure.dataIds.some((dataId) => datasets.some(({ datasetId }) => datasetId === dataId))) {
+        throw requiredDataError(field.fieldId, "target_figure_unbound");
+      }
+    }
     if (datasets.length === 0) {
       if (resolvedGap) continue;
       throw requiredDataError(field.fieldId, "missing_dataset");
@@ -365,9 +398,24 @@ export function validateBundleLineage(
       const claim = bundle.claims.find((candidate) => candidate.claimId === claimId);
       if (claim === undefined || !claim.sourceIds.some((sourceId) => {
         const source = sourceById.get(sourceId);
-        return source !== undefined && source.verified === true && OFFICIAL_SOURCE_CLASSES.has(source.sourceClass);
+        return source !== undefined
+          && source.verified === true
+          && OFFICIAL_SOURCE_CLASSES.has(source.sourceClass)
+          && allowed.has(source.sourceClass);
       })) {
         throw requiredDataError(field.fieldId, "target_claim_official_source_missing");
+      }
+    }
+    for (const figureId of field.targetFigureIds ?? []) {
+      const figure = bundle.figures.find((candidate) => candidate.figureId === figureId)!;
+      if (!figure.sourceCaption.sourceIds.some((sourceId) => {
+        const source = sourceById.get(sourceId);
+        return source !== undefined
+          && source.verified === true
+          && OFFICIAL_SOURCE_CLASSES.has(source.sourceClass)
+          && allowed.has(source.sourceClass);
+      })) {
+        throw requiredDataError(field.fieldId, "target_figure_official_source_missing");
       }
     }
     for (const dataset of datasets) {
@@ -400,6 +448,7 @@ export function researchRequestPath(rootInput: string): string {
 async function readLockedRequirements(root: string): Promise<{
   readonly requirements: ConfirmedRequirements;
   readonly path: string;
+  readonly receiptSha256: string;
 }> {
   const path = join(root, "requirements", "requirements.json");
   const receiptPath = join(root, "receipts", "requirements-lock.json");
@@ -431,7 +480,7 @@ async function readLockedRequirements(root: string): Promise<{
       actual: verification.mismatches,
     });
   }
-  return { requirements: parsed.data, path };
+  return { requirements: parsed.data, path, receiptSha256: await sha256File(receiptPath) };
 }
 
 function validateRequestOptions(
@@ -517,10 +566,40 @@ async function readBoundResearchRequest(
   const path = researchRequestPath(root);
   const raw = await readJson(path, "PP_RESEARCH_REQUEST_INVALID", "연구 요청을 읽을 수 없습니다.");
   const parsed = ProposalResearchRequestV1Schema.safeParse(raw);
-  if (!parsed.success || parsed.data.requestId !== requestId) {
+  if (!parsed.success) {
+    throw new KppError("PP_RESEARCH_REQUEST_INVALID", "저장된 연구 요청 형식이 올바르지 않습니다.", {
+      path,
+      actual: parsed.error.issues,
+    });
+  }
+  if (parsed.data.requestId !== requestId) {
     throw new KppError("PP_RESEARCH_BUNDLE_INVALID", "연구 bundle이 현재 KPP 요청과 일치하지 않습니다.", {
-      expected: parsed.success ? parsed.data.requestId : null,
+      expected: parsed.data.requestId,
       actual: requestId,
+    });
+  }
+  const locked = await readLockedRequirements(root);
+  const currentRequirementIds = locked.requirements.requirements.map(({ requirementId }) => requirementId);
+  const { requestId: storedRequestId, ...requestSeed } = parsed.data;
+  if (
+    parsed.data.requirementsLockSha256 !== locked.receiptSha256
+    || JSON.stringify(parsed.data.requirementIds) !== JSON.stringify(currentRequirementIds)
+    || storedRequestId !== canonicalRequestId(requestSeed)
+  ) {
+    throw new KppError("PP_RESEARCH_REQUEST_INVALID", "연구 요청이 현재 요구사항 잠금과 정규 요청 식별자에 결속되지 않았습니다.", {
+      expected: {
+        requirementsLockSha256: locked.receiptSha256,
+        requestId: canonicalRequestId(requestSeed),
+      },
+      actual: {
+        requirementsLockSha256: parsed.data.requirementsLockSha256,
+        requestId: storedRequestId,
+      },
+    });
+  }
+  if (parsed.data.routingDecision !== "required") {
+    throw new KppError("PP_RESEARCH_BUNDLE_INVALID", "LongTable 금지 라우팅 요청에는 연구 bundle을 가져올 수 없습니다.", {
+      actual: { routingDecision: parsed.data.routingDecision },
     });
   }
   return parsed.data;
@@ -584,26 +663,25 @@ async function verifySucceededHandoff(
   bundle: EvidenceDataBundleV1,
 ): Promise<void> {
   const path = files.find((file) => file.relativePath === "handoff.json")!.sourcePath;
-  const handoff = await readJson(path, "PP_RESEARCH_BUNDLE_INVALID", "연구 bundle handoff를 읽을 수 없습니다.");
-  if (
-    handoff === null
-    || typeof handoff !== "object"
-    || Array.isArray(handoff)
-    || (handoff as Record<string, unknown>).status !== "SUCCEEDED"
-  ) {
+  const raw = await readJson(path, "PP_RESEARCH_BUNDLE_INVALID", "연구 bundle handoff를 읽을 수 없습니다.");
+  const parsed = ProposalResearchHandoffV1Schema.safeParse(raw);
+  if (!parsed.success || parsed.data.status !== "SUCCEEDED") {
     throw new KppError("PP_RESEARCH_BUNDLE_INVALID", "SUCCEEDED handoff만 KPP 입력으로 가져올 수 있습니다.", {
       path,
       expected: "SUCCEEDED",
-      actual: handoff,
+      actual: parsed.success ? parsed.data.status : parsed.error.issues,
     });
   }
-  const record = handoff as Record<string, unknown>;
-  if (record.bundleId !== undefined && record.bundleId !== bundle.bundleId) {
-    throw new KppError("PP_RESEARCH_BUNDLE_INVALID", "연구 handoff bundle ID가 일치하지 않습니다.", {
-      expected: bundle.bundleId,
-      actual: record.bundleId,
+  if (parsed.data.bundleId !== bundle.bundleId || parsed.data.requestId !== bundle.requestId) {
+    throw new KppError("PP_RESEARCH_BUNDLE_INVALID", "연구 handoff 식별자가 bundle과 일치하지 않습니다.", {
+      expected: { bundleId: bundle.bundleId, requestId: bundle.requestId },
+      actual: { bundleId: parsed.data.bundleId, requestId: parsed.data.requestId },
     });
   }
+}
+
+function canonicalRequestId(request: Omit<ProposalResearchRequestV1, "requestId">): string {
+  return `request-${sha256Canonical(request).slice(0, 20)}`;
 }
 
 async function installBundle(
