@@ -20,6 +20,38 @@ export const R08_TOKEN_PROFILE_SHA256 = createHash("sha256")
 
 /** The version is part of every vNext visual artifact hash. */
 export const VISUAL_EVIDENCE_RENDERER_VERSION = "1.0.0" as const;
+export const VISUAL_EVIDENCE_RENDERER_NAME = "@longtable/kpp-renderers" as const;
+export const VISUAL_EVIDENCE_FONT_PROFILE = "Noto-Sans-CJK-KR-2.004" as const;
+export const VISUAL_EVIDENCE_FONT_PROFILE_SHA256 = createHash("sha256")
+  .update(stableCanonicalJson({
+    family: "Noto Sans CJK KR",
+    fallback: "Noto Sans KR",
+    profile: VISUAL_EVIDENCE_FONT_PROFILE,
+  }))
+  .digest("hex");
+
+export interface LibreOfficeFingerprint {
+  readonly name: "LibreOffice";
+  readonly executablePath: string;
+  readonly executableSha256: string;
+  readonly version: string;
+}
+
+export interface SemanticRendererFingerprint {
+  readonly renderer: {
+    readonly name: typeof VISUAL_EVIDENCE_RENDERER_NAME;
+    readonly version: typeof VISUAL_EVIDENCE_RENDERER_VERSION;
+  };
+  readonly tokenProfile: {
+    readonly id: typeof R08_TOKEN_PROFILE;
+    readonly sha256: typeof R08_TOKEN_PROFILE_SHA256;
+  };
+  readonly fontProfile: {
+    readonly id: typeof VISUAL_EVIDENCE_FONT_PROFILE;
+    readonly sha256: typeof VISUAL_EVIDENCE_FONT_PROFILE_SHA256;
+  };
+  readonly rasterizer: LibreOfficeFingerprint;
+}
 
 export type FigureRelationship =
   | "trend"
@@ -34,6 +66,7 @@ export interface SemanticFigureSpecV1 {
   readonly schemaVersion: "semantic-figure-spec/v1";
   readonly figureId: string;
   readonly requirementIds: readonly string[];
+  readonly evidenceIds: readonly string[];
   readonly analyticalQuestion: string;
   readonly readerTask: string;
   readonly supportedTakeaway: string;
@@ -48,6 +81,7 @@ export interface SemanticFigureSpecV1 {
   readonly targetSurface: "A4_DOCX" | "A4_PDF";
   readonly referenceFamily: string;
   readonly rendererVersion: string;
+  readonly rendererFingerprint: SemanticRendererFingerprint;
   readonly approvalStatus: "candidate" | "reviewed" | "human_approved";
 }
 
@@ -101,6 +135,9 @@ export interface GovernedFigureReference {
   readonly pageLocator: string;
   readonly transferBoundary: string;
   readonly approved: boolean;
+  readonly synthetic: boolean;
+  readonly publiclyReleasable: boolean;
+  readonly sourceLineageClass: "public" | "project_private";
 }
 
 export type VisualEvidenceIrFamily =
@@ -128,6 +165,7 @@ export interface CanonicalFigureMark {
   readonly sourceSha256: string;
   readonly rawLocator: string;
   readonly claimIds: readonly string[];
+  readonly evidenceIds: readonly string[];
 }
 
 export interface CanonicalFigureIR {
@@ -151,6 +189,50 @@ export interface FigurePointLineage {
   readonly sourceSha256: string;
   readonly rawLocator: string;
   readonly claimIds: readonly string[];
+  readonly evidenceIds: readonly string[];
+}
+
+export interface FigureBox {
+  readonly xMm: number;
+  readonly yMm: number;
+  readonly widthMm: number;
+  readonly heightMm: number;
+}
+
+export interface FigureA4Context {
+  readonly pageLocator: string;
+  readonly pageWidthMm: number;
+  readonly pageHeightMm: number;
+  readonly figureBox: FigureBox;
+  readonly sectionCallout: string;
+  readonly caption: string;
+  readonly peerFigureBoxes: readonly FigureBox[];
+}
+
+export interface FigureA4PageArtifact {
+  readonly schemaVersion: "visual-evidence-a4-page/v1";
+  readonly figureId: string;
+  readonly pageLocator: string;
+  readonly pageSvg: string;
+  readonly sha256: string;
+  readonly figureSvgSha256: string;
+  readonly contextSha256: string;
+}
+
+export interface HumanFigureReview {
+  readonly reviewId: string;
+  readonly reviewerId: string;
+  readonly reviewedAt: string;
+  readonly reviewedFigureSvgSha256: string;
+  readonly reviewedFigureIrSha256: string;
+  readonly reviewedPageRenderSha256: string;
+  readonly pageLocator: string;
+  readonly renderedInA4Context: boolean;
+  readonly meaning: boolean;
+  readonly trustworthiness: boolean;
+  readonly documentFit: boolean;
+  readonly sendReady: boolean;
+  readonly approvalReceiptSha256: string;
 }
 
 export interface VisualEvidenceFigureArtifact {
@@ -160,14 +242,22 @@ export interface VisualEvidenceFigureArtifact {
   readonly svg: string;
   readonly sha256: string;
   readonly rendererVersion: string;
+  readonly rendererFingerprint: SemanticRendererFingerprint;
+  readonly rendererFingerprintSha256: string;
   readonly approvalStatus: SemanticFigureSpecV1["approvalStatus"];
   readonly compilerApproval: "not_authorized";
   readonly ir: CanonicalFigureIR;
   readonly pointLineage: readonly FigurePointLineage[];
+  readonly captionBindings: {
+    readonly sourceIds: readonly string[];
+    readonly claimIds: readonly string[];
+    readonly evidenceIds: readonly string[];
+  };
   readonly lineage: {
     readonly dataIds: readonly string[];
     readonly sourceIds: readonly string[];
     readonly claimIds: readonly string[];
+    readonly evidenceIds: readonly string[];
     readonly referenceIds: readonly string[];
   };
   readonly hashes: {
@@ -189,6 +279,7 @@ export interface VisualEvidencePngArtifact {
   readonly rendererVersion: string;
   readonly rasterizer: {
     readonly path: string;
+    readonly executableSha256: string;
     readonly version: string;
   };
   readonly lineage: VisualEvidenceFigureArtifact["lineage"];

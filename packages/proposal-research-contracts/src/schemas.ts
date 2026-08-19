@@ -201,6 +201,7 @@ export const SemanticFigureSpecV1Schema = z.object({
   schemaVersion: SemanticFigureSpecVersionSchema,
   figureId: IdentifierSchema,
   requirementIds: z.array(IdentifierSchema),
+  evidenceIds: z.array(IdentifierSchema).min(1),
   analyticalQuestion: IdentifierSchema,
   readerTask: IdentifierSchema,
   supportedTakeaway: IdentifierSchema,
@@ -212,6 +213,17 @@ export const SemanticFigureSpecV1Schema = z.object({
   targetSurface: z.enum(["A4_DOCX", "A4_PDF"]),
   referenceFamily: IdentifierSchema,
   rendererVersion: IdentifierSchema,
+  rendererFingerprint: z.object({
+    renderer: z.object({ name: z.literal("@longtable/kpp-renderers"), version: z.literal("1.0.0") }).strict(),
+    tokenProfile: z.object({ id: z.literal("R08-approved-project-profile"), sha256: z.literal("c6d87996c7ad2dfcce67b6d45373f30ff7026e33ba6fd05a22b1944cfa6f7afa") }).strict(),
+    fontProfile: z.object({ id: z.literal("Noto-Sans-CJK-KR-2.004"), sha256: z.literal("0d0f75a19d1f9993378f58314cdbd7b3926ed6780fd6be2b031a0c67ddf9cd48") }).strict(),
+    rasterizer: z.object({
+      name: z.literal("LibreOffice"),
+      executablePath: IdentifierSchema,
+      executableSha256: Sha256Schema,
+      version: z.string().regex(/^LibreOffice\s+\d+/),
+    }).strict(),
+  }).strict(),
   approvalStatus: z.enum(["candidate", "reviewed", "human_approved"]),
 }).strict();
 

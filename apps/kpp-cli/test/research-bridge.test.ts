@@ -421,6 +421,7 @@ function validBundleParts(): Pick<
       schemaVersion: "semantic-figure-spec/v1",
       figureId: "FIG-INSTITUTION-TREND",
       requirementIds: ["REQ-INSTITUTION-METRIC"],
+      evidenceIds: ["EVIDENCE-INSTITUTION-METRIC"],
       analyticalQuestion: "기관의 연도별 건수는 어떻게 변했는가?",
       readerTask: "연도별 추이를 확인한다.",
       supportedTakeaway: "기관의 연도별 건수를 확인할 수 있다.",
@@ -432,6 +433,7 @@ function validBundleParts(): Pick<
       targetSurface: "A4_DOCX",
       referenceFamily: "comparison_chart",
       rendererVersion: "1.0.0",
+      rendererFingerprint: { renderer: { name: "@longtable/kpp-renderers", version: "1.0.0" }, tokenProfile: { id: "R08-approved-project-profile", sha256: "c6d87996c7ad2dfcce67b6d45373f30ff7026e33ba6fd05a22b1944cfa6f7afa" }, fontProfile: { id: "Noto-Sans-CJK-KR-2.004", sha256: "0d0f75a19d1f9993378f58314cdbd7b3926ed6780fd6be2b031a0c67ddf9cd48" }, rasterizer: { name: "LibreOffice", executablePath: "/test/soffice", executableSha256: "3333333333333333333333333333333333333333333333333333333333333333", version: "LibreOffice 26.2.4.2 20(Build:2)" } },
       approvalStatus: "reviewed",
     }],
   };

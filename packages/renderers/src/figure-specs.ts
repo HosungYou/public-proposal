@@ -1,4 +1,9 @@
 import {
+  R08_TOKEN_PROFILE,
+  R08_TOKEN_PROFILE_SHA256,
+  VISUAL_EVIDENCE_FONT_PROFILE,
+  VISUAL_EVIDENCE_FONT_PROFILE_SHA256,
+  VISUAL_EVIDENCE_RENDERER_NAME,
   VISUAL_EVIDENCE_RENDERER_VERSION,
   stableCanonicalJson,
   type CanonicalFigureIR,
@@ -85,6 +90,7 @@ export function buildCanonicalFigureIR(
         sourceSha256: observation.sourceSha256,
         rawLocator: observation.rawLocator,
         claimIds: [...observation.claimIds].sort(),
+        evidenceIds: [...spec.evidenceIds].sort(),
       });
       pointLineage.push({
         dataId: dataset.dataId,
@@ -93,6 +99,7 @@ export function buildCanonicalFigureIR(
         sourceSha256: observation.sourceSha256,
         rawLocator: observation.rawLocator,
         claimIds: [...observation.claimIds].sort(),
+        evidenceIds: [...spec.evidenceIds].sort(),
       });
     }
   }
@@ -140,12 +147,28 @@ function assertSemanticFigureSpec(spec: SemanticFigureSpecV1): void {
   if (spec.dataIds.length === 0 || new Set(spec.dataIds).size !== spec.dataIds.length) {
     throw new Error("Semantic figure data IDs must be a non-empty unique list");
   }
+  if (spec.evidenceIds.length === 0 || new Set(spec.evidenceIds).size !== spec.evidenceIds.length) {
+    throw new Error("Semantic figure evidence IDs must be a non-empty unique list");
+  }
   if (!(spec.relationship in IR_FAMILY_BY_RELATIONSHIP)) throw new Error("Unsupported semantic figure relationship");
   if (!REFERENCE_FAMILIES[spec.relationship].includes(spec.referenceFamily)) {
     throw new Error(`Semantic relationship and reference family mismatch: ${spec.relationship}/${spec.referenceFamily}`);
   }
   if (spec.rendererVersion !== VISUAL_EVIDENCE_RENDERER_VERSION) {
     throw new Error(`Semantic figure renderer version ${spec.rendererVersion} does not match renderer version ${VISUAL_EVIDENCE_RENDERER_VERSION}`);
+  }
+  const fingerprint = spec.rendererFingerprint;
+  if (fingerprint?.renderer.name !== VISUAL_EVIDENCE_RENDERER_NAME
+    || fingerprint.renderer.version !== VISUAL_EVIDENCE_RENDERER_VERSION
+    || fingerprint.tokenProfile.id !== R08_TOKEN_PROFILE
+    || fingerprint.tokenProfile.sha256 !== R08_TOKEN_PROFILE_SHA256
+    || fingerprint.fontProfile.id !== VISUAL_EVIDENCE_FONT_PROFILE
+    || fingerprint.fontProfile.sha256 !== VISUAL_EVIDENCE_FONT_PROFILE_SHA256
+    || fingerprint.rasterizer.name !== "LibreOffice"
+    || fingerprint.rasterizer.executablePath.trim().length === 0
+    || !SHA256.test(fingerprint.rasterizer.executableSha256)
+    || !/^LibreOffice\s+\d+/u.test(fingerprint.rasterizer.version)) {
+    throw new Error("Semantic renderer fingerprint is missing or does not match the locked renderer, token, font, and LibreOffice identities");
   }
   if (spec.targetSurface !== "A4_DOCX" && spec.targetSurface !== "A4_PDF") throw new Error("Semantic figure target surface must be A4 DOCX or PDF");
   if (!new Set(["candidate", "reviewed", "human_approved"]).has(spec.approvalStatus)) throw new Error("Semantic figure approval status is invalid");
@@ -189,6 +212,18 @@ function assertGovernedReferences(
     if (!REFERENCE_STORAGE_CLASSES.has(reference.storageClass)) throw new Error("Reference storage class is not governed");
     if (!SHA256.test(reference.sourceSha256)) throw new Error(`Reference ${reference.referenceId} has an invalid source hash`);
     if (reference.referenceFamily !== spec.referenceFamily) throw new Error("Approved reference family does not match the semantic spec");
+    if (reference.storageClass === "public_canonical_fixture"
+      && (!reference.synthetic || !reference.publiclyReleasable
+        || reference.sourceLineageClass !== "public" || reference.rightsStatus === "project_private")) {
+      throw new Error("Public canonical fixtures must be synthetic, publicly releasable, public-lineage references");
+    }
+    if (reference.sourceLineageClass === "project_private"
+      && reference.publiclyReleasable) {
+      throw new Error("Project-private source lineage must remain non-public");
+    }
+    if (reference.rightsStatus === "project_private" && reference.sourceLineageClass !== "project_private") {
+      throw new Error("Project-private rights require project-private source lineage");
+    }
   }
   return sorted;
 }

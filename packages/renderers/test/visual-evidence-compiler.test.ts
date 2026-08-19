@@ -1,9 +1,14 @@
 import { describe, expect, it } from "vitest";
 import { realpath } from "node:fs/promises";
 import {
+  R08_TOKEN_PROFILE,
+  R08_TOKEN_PROFILE_SHA256,
+  VISUAL_EVIDENCE_FONT_PROFILE,
+  VISUAL_EVIDENCE_FONT_PROFILE_SHA256,
   VISUAL_EVIDENCE_RENDERER_VERSION,
   compileFigure,
   compileFigurePng,
+  inspectLibreOfficeFingerprint,
   type GovernedFigureReference,
   type SemanticFigureSpecV1,
   type VisualEvidenceData,
@@ -16,6 +21,7 @@ import { resolveTool } from "../../../tests/support/tool-paths.js";
 
 const SOURCE_SHA = "1".repeat(64);
 const REFERENCE_SHA = "2".repeat(64);
+const TEST_EXECUTABLE_SHA = "3".repeat(64);
 
 const validSpec: SemanticFigureSpecV1 = {
   schemaVersion: "semantic-figure-spec/v1",
@@ -25,6 +31,7 @@ const validSpec: SemanticFigureSpecV1 = {
   readerTask: "분기별 변화와 전환점을 확인한다.",
   supportedTakeaway: "최근 8개 분기의 처리량이 점진적으로 증가했다.",
   dataIds: ["DATA-TREND-001"],
+  evidenceIds: ["EV-001"],
   relationship: "trend",
   minimumDataConditions: { minimumTemporalObservations: 8 },
   uncertainty: ["분기 집계치는 월별 변동을 표시하지 않는다."],
@@ -32,6 +39,17 @@ const validSpec: SemanticFigureSpecV1 = {
   targetSurface: "A4_DOCX",
   referenceFamily: "line",
   rendererVersion: VISUAL_EVIDENCE_RENDERER_VERSION,
+  rendererFingerprint: {
+    renderer: { name: "@longtable/kpp-renderers", version: VISUAL_EVIDENCE_RENDERER_VERSION },
+    tokenProfile: { id: R08_TOKEN_PROFILE, sha256: R08_TOKEN_PROFILE_SHA256 },
+    fontProfile: { id: VISUAL_EVIDENCE_FONT_PROFILE, sha256: VISUAL_EVIDENCE_FONT_PROFILE_SHA256 },
+    rasterizer: {
+      name: "LibreOffice",
+      executablePath: "/test/soffice",
+      executableSha256: TEST_EXECUTABLE_SHA,
+      version: "LibreOffice 26.2.4.2 20(Build:2)",
+    },
+  },
   approvalStatus: "reviewed",
 };
 
@@ -62,6 +80,9 @@ const validReferences: readonly GovernedFigureReference[] = [{
   sourceSha256: REFERENCE_SHA,
   pageLocator: "pattern:line-v1",
   transferBoundary: "정보 위계와 선형 추세 문법만 전이",
+  synthetic: false,
+  publiclyReleasable: false,
+  sourceLineageClass: "project_private",
   approved: true,
 }];
 
@@ -86,6 +107,15 @@ describe("visual evidence compiler", () => {
   it("rejects vNext relationship/reference-family and renderer-version mismatches", () => {
     expect(SemanticFigureSpecV1Schema.safeParse({ ...validSpec, referenceFamily: "matrix" }).success).toBe(false);
     expect(SemanticFigureSpecV1Schema.safeParse({ ...validSpec, rendererVersion: "0.0.0" }).success).toBe(false);
+    const { rendererFingerprint: _fingerprint, ...missingFingerprint } = validSpec;
+    expect(SemanticFigureSpecV1Schema.safeParse(missingFingerprint).success).toBe(false);
+    expect(SemanticFigureSpecV1Schema.safeParse({
+      ...validSpec,
+      rendererFingerprint: {
+        ...validSpec.rendererFingerprint,
+        rasterizer: { ...validSpec.rendererFingerprint.rasterizer, version: "LibreOffice 25.0.0" },
+      },
+    }).success).toBe(true);
   });
 
   it("renders the same spec and data to the same SVG hash", async () => {
@@ -98,8 +128,12 @@ describe("visual evidence compiler", () => {
   });
 
   it("rasterizes the same canonical SVG to the same locked PNG hash", async () => {
-    const svg = await compileFigure(validSpec, validData, validReferences);
     const sofficePath = await resolveTool("soffice");
+    const rasterizer = await inspectLibreOfficeFingerprint(sofficePath);
+    const svg = await compileFigure({
+      ...validSpec,
+      rendererFingerprint: { ...validSpec.rendererFingerprint, rasterizer },
+    }, validData, validReferences);
     const first = await compileFigurePng(svg, { sofficePath });
     const second = await compileFigurePng(svg, { sofficePath });
 
@@ -107,6 +141,14 @@ describe("visual evidence compiler", () => {
     expect(Buffer.compare(first.png, second.png)).toBe(0);
     expect(first.sourceSvgSha256).toBe(svg.sha256);
     expect(first.rasterizer.path).toBe(await realpath(sofficePath));
+    const stalePin = await compileFigure({
+      ...validSpec,
+      rendererFingerprint: {
+        ...validSpec.rendererFingerprint,
+        rasterizer: { ...rasterizer, version: `${rasterizer.version} stale` },
+      },
+    }, validData, validReferences);
+    await expect(compileFigurePng(stalePin, { sofficePath })).rejects.toThrow(/identity|version|fingerprint/i);
   }, 60_000);
 
   it.each([
@@ -138,6 +180,7 @@ describe("visual evidence compiler", () => {
       dataIds: ["DATA-TREND-001"],
       sourceIds: ["SRC-001"],
       claimIds: ["CLAIM-001"],
+      evidenceIds: ["EV-001"],
       referenceIds: ["REF-LINE-001"],
     });
     expect(artifact.hashes).toEqual(expect.objectContaining({
@@ -151,6 +194,8 @@ describe("visual evidence compiler", () => {
     expect(artifact.compilerApproval).toBe("not_authorized");
     expect(artifact.svg).toContain(`data-source-sha256="${SOURCE_SHA}"`);
     expect(artifact.svg).toContain('data-claim-ids="CLAIM-001"');
+    expect(artifact.svg).toContain('data-evidence-ids="EV-001"');
+    expect(artifact.svg).toContain("data-renderer-fingerprint-sha256=");
   });
 
   it("rejects data, reference-family, renderer-version, and rights mismatches", async () => {
@@ -179,6 +224,29 @@ describe("visual evidence compiler", () => {
       validData,
       [{ ...validReferences[0]!, rightsStatus: "unknown" } as unknown as GovernedFigureReference],
     )).rejects.toThrow(/rights|reference/i);
+    await expect(compileFigure(
+      validSpec,
+      validData,
+      [{
+        ...validReferences[0]!,
+        storageClass: "public_canonical_fixture",
+        rightsStatus: "project_private",
+        synthetic: false,
+        publiclyReleasable: true,
+        sourceLineageClass: "project_private",
+      }],
+    )).rejects.toThrow(/public|synthetic|private|rights/i);
+    await expect(compileFigure(
+      {
+        ...validSpec,
+        rendererFingerprint: {
+          ...validSpec.rendererFingerprint,
+          tokenProfile: { ...validSpec.rendererFingerprint.tokenProfile, sha256: "0".repeat(64) },
+        },
+      },
+      validData,
+      validReferences,
+    )).rejects.toThrow(/fingerprint|token/i);
   });
 
   it("never promotes reviewed input to human approval", async () => {

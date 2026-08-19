@@ -38,9 +38,7 @@ export {
 export {
   auditFigureSemantics,
   type FigureAuditReport,
-  type FigureRenderContext,
   type FigureSemanticAuditInput,
-  type HumanFigureReview,
 } from "./visual-evidence.js";
 export {
   type AuditArtifact,

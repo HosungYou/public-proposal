@@ -10,11 +10,16 @@ import {
   R08_RENDERER_TOKENS,
   R08_TOKEN_PROFILE,
   R08_TOKEN_PROFILE_SHA256,
+  VISUAL_EVIDENCE_FONT_PROFILE,
+  VISUAL_EVIDENCE_FONT_PROFILE_SHA256,
   VISUAL_EVIDENCE_RENDERER_VERSION,
   escapeXml,
   type CanonicalFigureIR,
   type CanonicalFigureMark,
   type GovernedFigureReference,
+  type FigureA4Context,
+  type FigureA4PageArtifact,
+  type LibreOfficeFingerprint,
   type SemanticFigureSpecV1,
   type VisualEvidenceData,
   type VisualEvidenceFigureArtifact,
@@ -41,11 +46,22 @@ export async function compileFigure(
   data: VisualEvidenceData,
   references: readonly GovernedFigureReference[],
 ): Promise<VisualEvidenceFigureArtifact> {
+  return compileFigureExpected(spec, data, references);
+}
+
+/** Pure reconstruction entrypoint used by independent QA. */
+export function compileFigureExpected(
+  spec: SemanticFigureSpecV1,
+  data: VisualEvidenceData,
+  references: readonly GovernedFigureReference[],
+): VisualEvidenceFigureArtifact {
   const canonical = buildCanonicalFigureIR(spec, data, references);
   const svg = renderCanonicalFigure(canonical.ir, spec);
   const sha256 = hash(svg);
   const sourceIds = sortedUnique(canonical.pointLineage.map((entry) => entry.sourceId));
   const claimIds = sortedUnique(canonical.pointLineage.flatMap((entry) => entry.claimIds));
+  const evidenceIds = sortedUnique(canonical.pointLineage.flatMap((entry) => entry.evidenceIds));
+  const rendererFingerprintSha256 = hash(canonicalFigureInputsJson(spec.rendererFingerprint));
   return {
     schemaVersion: "visual-evidence-artifact/v1",
     figureId: spec.figureId,
@@ -53,14 +69,22 @@ export async function compileFigure(
     svg,
     sha256,
     rendererVersion: VISUAL_EVIDENCE_RENDERER_VERSION,
+    rendererFingerprint: spec.rendererFingerprint,
+    rendererFingerprintSha256,
     approvalStatus: spec.approvalStatus,
     compilerApproval: "not_authorized",
     ir: canonical.ir,
     pointLineage: canonical.pointLineage,
+    captionBindings: {
+      sourceIds: [...spec.sourceCaption.sourceIds].sort(),
+      claimIds,
+      evidenceIds: [...spec.evidenceIds].sort(),
+    },
     lineage: {
       dataIds: [...spec.dataIds].sort(),
       sourceIds,
       claimIds,
+      evidenceIds,
       referenceIds: canonical.references.map((reference) => reference.referenceId),
     },
     hashes: {
@@ -73,6 +97,37 @@ export async function compileFigure(
   };
 }
 
+/** Render an exact A4 review surface whose bytes bind figure, locator, caption, and page geometry. */
+export function renderFigureA4Page(
+  artifact: VisualEvidenceFigureArtifact,
+  context: FigureA4Context,
+): FigureA4PageArtifact {
+  const image = Buffer.from(artifact.svg, "utf8").toString("base64");
+  const box = context.figureBox;
+  const peers = context.peerFigureBoxes.map((peer, index) =>
+    `  <rect data-kpp-role="peer-figure-box" data-peer-index="${index}" x="${peer.xMm}" y="${peer.yMm}" width="${peer.widthMm}" height="${peer.heightMm}" fill="none"/>`,
+  );
+  const pageSvg = [
+    `<svg xmlns="http://www.w3.org/2000/svg" width="${context.pageWidthMm}mm" height="${context.pageHeightMm}mm" viewBox="0 0 ${context.pageWidthMm} ${context.pageHeightMm}" data-page-locator="${escapeXml(context.pageLocator)}" data-figure-svg-sha256="${artifact.sha256}">`,
+    `  <rect width="${context.pageWidthMm}" height="${context.pageHeightMm}" fill="${R08_RENDERER_TOKENS.paper}"/>`,
+    `  <text data-kpp-role="section-callout" x="20" y="28">${escapeXml(context.sectionCallout)}</text>`,
+    `  <image data-kpp-role="figure" x="${box.xMm}" y="${box.yMm}" width="${box.widthMm}" height="${box.heightMm}" href="data:image/svg+xml;base64,${image}"/>`,
+    `  <text data-kpp-role="caption" x="${box.xMm}" y="${box.yMm + box.heightMm + 6}">${escapeXml(context.caption)}</text>`,
+    ...peers,
+    "</svg>",
+    "",
+  ].join("\n");
+  return {
+    schemaVersion: "visual-evidence-a4-page/v1",
+    figureId: artifact.figureId,
+    pageLocator: context.pageLocator,
+    pageSvg,
+    sha256: hash(pageSvg),
+    figureSvgSha256: artifact.sha256,
+    contextSha256: hash(canonicalFigureInputsJson(context)),
+  };
+}
+
 /** Deterministically rasterize canonical SVG bytes with an identified locked tool. */
 export async function compileFigurePng(
   artifact: VisualEvidenceFigureArtifact,
@@ -81,14 +136,11 @@ export async function compileFigurePng(
   if (artifact.sha256 !== hash(artifact.svg) || artifact.hashes.outputSha256 !== artifact.sha256) {
     throw new Error("Cannot rasterize a visual evidence artifact with mismatched SVG lineage");
   }
-  const sofficePath = await resolveSoffice(options.sofficePath);
-  const identity = await execFileAsync(sofficePath, ["--version"], {
-    encoding: "utf8",
-    timeout: 15_000,
-    maxBuffer: 1024 * 1024,
-  });
-  const version = `${identity.stdout}${identity.stderr}`.trim();
-  if (!/^LibreOffice\s+\d+/u.test(version)) throw new Error(`Unsupported LibreOffice rasterizer identity: ${version}`);
+  const fingerprint = await inspectLibreOfficeFingerprint(options.sofficePath);
+  const sofficePath = fingerprint.executablePath;
+  if (canonicalFigureInputsJson(fingerprint) !== canonicalFigureInputsJson(artifact.rendererFingerprint.rasterizer)) {
+    throw new Error("LibreOffice executable identity or version does not match the semantic renderer fingerprint");
+  }
 
   const temporary = await mkdtemp(join(tmpdir(), "kpp-visual-evidence-png-"));
   try {
@@ -118,12 +170,27 @@ export async function compileFigurePng(
       sha256: hash(png),
       sourceSvgSha256: artifact.sha256,
       rendererVersion: artifact.rendererVersion,
-      rasterizer: { path: sofficePath, version },
+      rasterizer: { path: sofficePath, executableSha256: fingerprint.executableSha256, version: fingerprint.version },
       lineage: artifact.lineage,
     };
   } finally {
     await rm(temporary, { recursive: true, force: true });
   }
+}
+
+export async function inspectLibreOfficeFingerprint(configured?: string): Promise<LibreOfficeFingerprint> {
+  const executablePath = await resolveSoffice(configured);
+  const [identity, executable] = await Promise.all([
+    execFileAsync(executablePath, ["--version"], {
+      encoding: "utf8",
+      timeout: 15_000,
+      maxBuffer: 1024 * 1024,
+    }),
+    readFile(executablePath),
+  ]);
+  const version = `${identity.stdout}${identity.stderr}`.trim();
+  if (!/^LibreOffice\s+\d+/u.test(version)) throw new Error(`Unsupported LibreOffice rasterizer identity: ${version}`);
+  return { name: "LibreOffice", executablePath, executableSha256: hash(executable), version };
 }
 
 function renderCanonicalFigure(ir: CanonicalFigureIR, spec: SemanticFigureSpecV1): string {
@@ -144,7 +211,7 @@ function renderCanonicalFigure(ir: CanonicalFigureIR, spec: SemanticFigureSpecV1
 
 function openSvg(ir: CanonicalFigureIR, spec: SemanticFigureSpecV1): string[] {
   return [
-    `<svg xmlns="http://www.w3.org/2000/svg" width="${WIDTH}" height="${HEIGHT}" viewBox="0 0 ${WIDTH} ${HEIGHT}" role="img" aria-labelledby="title description" data-kpp-family="${ir.family}" data-renderer-version="${VISUAL_EVIDENCE_RENDERER_VERSION}" data-spec-version="${spec.schemaVersion}" data-target-surface="${spec.targetSurface}" data-token-profile="${R08_TOKEN_PROFILE}" data-token-hash="${R08_TOKEN_PROFILE_SHA256}">`,
+    `<svg xmlns="http://www.w3.org/2000/svg" width="${WIDTH}" height="${HEIGHT}" viewBox="0 0 ${WIDTH} ${HEIGHT}" role="img" aria-labelledby="title description" data-kpp-family="${ir.family}" data-renderer-version="${VISUAL_EVIDENCE_RENDERER_VERSION}" data-spec-version="${spec.schemaVersion}" data-target-surface="${spec.targetSurface}" data-token-profile="${R08_TOKEN_PROFILE}" data-token-hash="${R08_TOKEN_PROFILE_SHA256}" data-font-profile="${VISUAL_EVIDENCE_FONT_PROFILE}" data-font-hash="${VISUAL_EVIDENCE_FONT_PROFILE_SHA256}" data-renderer-fingerprint-sha256="${hash(canonicalFigureInputsJson(spec.rendererFingerprint))}">`,
     `  <title id="title">${escapeXml(ir.analyticalQuestion)}</title>`,
     `  <desc id="description">${escapeXml(ir.readerTask)}</desc>`,
     `  <rect width="${WIDTH}" height="${HEIGHT}" fill="${R08_RENDERER_TOKENS.paper}"/>`,
@@ -285,6 +352,7 @@ function lineageAttributes(mark: CanonicalFigureMark): string {
     `data-source-sha256="${escapeXml(mark.sourceSha256)}"`,
     `data-raw-locator="${escapeXml(mark.rawLocator)}"`,
     `data-claim-ids="${escapeXml(mark.claimIds.join(" "))}"`,
+    `data-evidence-ids="${escapeXml(mark.evidenceIds.join(" "))}"`,
   ].join(" ");
 }
 

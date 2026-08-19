@@ -48,7 +48,13 @@ export interface FigureArtifact {
 
 export * from "./types.js";
 export * from "./figure-specs.js";
-export { compileFigure, compileFigurePng } from "./visual-evidence-compiler.js";
+export {
+  compileFigure,
+  compileFigureExpected,
+  compileFigurePng,
+  inspectLibreOfficeFingerprint,
+  renderFigureA4Page,
+} from "./visual-evidence-compiler.js";
 export { renderFramework } from "./framework.js";
 export { renderGantt } from "./gantt.js";
 export { renderRaci } from "./raci.js";
