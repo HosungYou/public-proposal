@@ -1,15 +1,17 @@
 import { createHash } from "node:crypto";
 import { execFile } from "node:child_process";
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
 import { afterEach, describe, expect, it } from "vitest";
+import { sha256File, verifyReceipt, writeReceipt } from "@longtable/kpp-core";
 import type { SectionPlanItemV1 } from "@longtable/kpp-schemas";
 import {
   approveRepresentativeSections,
   authorFullDocument,
   buildAgentPacket,
+  createTestAgentExecutionIntegrityAdapter,
   createSectionPlan,
   adjudicate,
   mergeApprovedPatch,
@@ -135,6 +137,24 @@ describe("section-centered authoring", () => {
     });
   });
 
+  it("includes the execution-ledger anchor in the canonical representative-review receipt when a KPP chain exists", async () => {
+    const root = await createRoot(temporaryDirectories);
+    const designInputPath = join(root, "content", "design-lock-input.json");
+    const designReceiptPath = join(root, "receipts", "design-lock.json");
+    await mkdir(join(root, "content"), { recursive: true });
+    await writeFile(designInputPath, "{}\n", "utf8");
+    await writeReceipt({ stage: "DESIGN_LOCKED", files: [designInputPath], output: designReceiptPath });
+
+    const approvals = await Promise.all(REPRESENTATIVE_ROLES.map((role) => persistRepresentativeEvidence(root, role)));
+    await approveRepresentativeSections(root, approvals);
+
+    const anchorPath = join(root, "receipts", "agent-execution-integrity.json");
+    const receipt = await verifyReceipt(join(root, "receipts", "representative-review.json"));
+    expect(receipt.valid).toBe(true);
+    expect(receipt.receipt.inputReceiptHashes).toEqual(expect.arrayContaining([await sha256File(designReceiptPath), await sha256File(anchorPath)]));
+    expect(receipt.receipt.inputs).toContainEqual({ name: "agent-execution-integrity", path: anchorPath, sha256: await sha256File(anchorPath) });
+  });
+
   it("quarantines non-successful persisted runs and invalidates only persisted findings whose input changed", async () => {
     const root = await createRoot(temporaryDirectories);
     const changed = { ...finding("Korean Prose Reviewer", "section-1"), inputHash: hash("changed") };
@@ -236,16 +256,17 @@ describe("section-centered authoring", () => {
 
   it("fails closed when the persisted execution ledger is malformed or tampered", async () => {
     const root = await createRoot(temporaryDirectories);
+    const integrityAdapter = createTestAgentExecutionIntegrityAdapter();
     await recordAgentRun(root, {
       stage: "tampered",
       run: { runId: "run-1", status: "SUCCEEDED", inputHash: hash("tampered"), reviewerIdentity: "agent-1" },
-    });
+    }, { integrityAdapter });
     await writeFile(join(root, "content", "agent-execution-state.json"), JSON.stringify({
       schemaVersion: "agent-execution-state/v1",
       stages: { tampered: { runs: [{ runId: "run-1", status: "FORGED" }], findings: [], rebuttals: [], automaticRevisions: [] } },
     }), "utf8");
 
-    await expect(adjudicate({ root, stage: "tampered" })).rejects.toMatchObject({ code: "PP_AGENT_EXECUTION_STATE_INVALID" });
+    await expect(adjudicate({ root, stage: "tampered", integrityAdapter })).rejects.toMatchObject({ code: "PP_AGENT_EXECUTION_INTEGRITY_FAILED" });
 
     await writeFile(join(root, "content", "agent-execution-state.json"), JSON.stringify({
       schemaVersion: "agent-execution-state/v1",
@@ -259,7 +280,25 @@ describe("section-centered authoring", () => {
       },
     }), "utf8");
 
-    await expect(adjudicate({ root, stage: "tampered" })).rejects.toMatchObject({ code: "PP_AGENT_EXECUTION_STATE_INVALID" });
+    await integrityAdapter.write(root, join(root, "content", "agent-execution-state.json"));
+    await expect(adjudicate({ root, stage: "tampered", integrityAdapter })).rejects.toMatchObject({ code: "PP_AGENT_EXECUTION_STATE_INVALID" });
+  });
+
+  it("fails closed when schema-valid tampering changes a quarantined run to succeeded", async () => {
+    const root = await createRoot(temporaryDirectories);
+    const integrityAdapter = createTestAgentExecutionIntegrityAdapter();
+    const quarantined = { ...finding("RFP/Compliance Reviewer", "section-integrity", "issuer", "blocker"), runId: "quarantined" };
+    await recordAgentRun(root, {
+      stage: "integrity",
+      run: { runId: quarantined.runId, status: "QUARANTINED", inputHash: quarantined.inputHash, reviewerIdentity: "agent-q" },
+    }, { integrityAdapter });
+    await recordReviewerFinding(root, { stage: "integrity", finding: quarantined }, { integrityAdapter });
+    const ledgerPath = join(root, "content", "agent-execution-state.json");
+    const ledger = JSON.parse(await readFile(ledgerPath, "utf8")) as { stages: Record<string, { runs: Array<{ status: string }> }> };
+    ledger.stages.integrity!.runs[0]!.status = "SUCCEEDED";
+    await writeFile(ledgerPath, `${JSON.stringify(ledger, null, 2)}\n`, "utf8");
+
+    await expect(adjudicate({ root, stage: "integrity", integrityAdapter })).rejects.toMatchObject({ code: "PP_AGENT_EXECUTION_INTEGRITY_FAILED" });
   });
 });
 

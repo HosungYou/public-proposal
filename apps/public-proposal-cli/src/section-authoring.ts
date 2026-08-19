@@ -1,13 +1,16 @@
 import { createHash, randomUUID } from "node:crypto";
-import { mkdir, open, readFile, rename, rm } from "node:fs/promises";
+import { access, mkdir, open, readFile, rename, rm } from "node:fs/promises";
 import { basename, dirname, join, resolve } from "node:path";
 import { z } from "zod";
+import { sha256File, verifyReceipt, writeReceipt } from "@longtable/kpp-core";
 import { ReviewerFindingV1Schema, type LivingProposalBriefV1, type SectionPlanItemV1, type SectionPlanV1 } from "@longtable/kpp-schemas";
 
 const SECTION_PLAN_FILE_NAME = "section-plan.json";
 const REPRESENTATIVE_APPROVAL_FILE_NAME = "representative-approval.json";
 const FULL_AUTHORING_FILE_NAME = "full-authoring-request.json";
 const AGENT_EXECUTION_FILE_NAME = "agent-execution-state.json";
+const AGENT_EXECUTION_RECEIPT_FILE_NAME = "agent-execution-integrity.json";
+const AGENT_EXECUTION_TEST_ANCHOR_FILE_NAME = "agent-execution-test-anchor.json";
 const AGENT_EXECUTION_LOCK_DIRECTORY = ".agent-execution-state.lock";
 const AGENT_EXECUTION_LOCK_ATTEMPTS = 400;
 const AGENT_EXECUTION_LOCK_DELAY_MS = 5;
@@ -108,6 +111,16 @@ export interface AdjudicationInput {
   readonly root: string;
   readonly stage: string;
   readonly changedInputHashes?: readonly string[];
+  readonly integrityAdapter?: AgentExecutionIntegrityAdapter;
+}
+
+export interface AgentExecutionIntegrityAdapter {
+  write(root: string, ledgerPath: string): Promise<void>;
+  verify(root: string, ledgerPath: string): Promise<void>;
+}
+
+export interface AgentExecutionOptions {
+  readonly integrityAdapter?: AgentExecutionIntegrityAdapter;
 }
 
 export interface AdjudicationResult {
@@ -206,10 +219,11 @@ export function mergeApprovedPatch(source: string, patch: PatchProposal, options
 export async function recordAgentRun(
   rootInput: string,
   input: { readonly stage: string; readonly run: AgentRun },
+  options: AgentExecutionOptions = {},
 ): Promise<AgentRun> {
   const root = resolve(rootInput);
   assertValidAgentRun(input.run);
-  return mutateAgentExecutionState(root, (state) => {
+  return mutateAgentExecutionState(root, options.integrityAdapter ?? KppReceiptExecutionIntegrityAdapter, (state) => {
     const stage = mutableStage(state, input.stage);
     if (stage.runs.some(({ runId }) => runId === input.run.runId)) {
       throw new SectionAuthoringError("PP_AGENT_RUN_DUPLICATE", "Agent run ID는 stage 안에서 고유해야 합니다.", { runId: input.run.runId });
@@ -228,13 +242,14 @@ export async function recordAgentRun(
 export async function recordReviewerFinding(
   rootInput: string,
   input: { readonly stage: string; readonly finding: ReviewerFinding },
+  options: AgentExecutionOptions = {},
 ): Promise<ReviewerFinding> {
   const root = resolve(rootInput);
   const parsed = ReviewerFindingV1Schema.safeParse(input.finding);
   if (!parsed.success) {
     throw new SectionAuthoringError("PP_REVIEWER_FINDING_INVALID", "Reviewer finding 형식이 올바르지 않습니다.", { actual: parsed.error.issues });
   }
-  return mutateAgentExecutionState(root, (state) => {
+  return mutateAgentExecutionState(root, options.integrityAdapter ?? KppReceiptExecutionIntegrityAdapter, (state) => {
     const stage = mutableStage(state, input.stage);
     if (stage.findings.some(({ findingId }) => findingId === input.finding.findingId)) {
       throw new SectionAuthoringError("PP_REVIEWER_FINDING_DUPLICATE", "Reviewer finding ID는 stage 안에서 고유해야 합니다.", { findingId: input.finding.findingId });
@@ -249,9 +264,10 @@ export async function recordReviewerFinding(
 export async function recordFindingRebuttal(
   rootInput: string,
   input: { readonly stage: string; readonly findingId: string; readonly rebuttalId: string },
+  options: AgentExecutionOptions = {},
 ): Promise<void> {
   const root = resolve(rootInput);
-  await mutateAgentExecutionState(root, (state) => {
+  await mutateAgentExecutionState(root, options.integrityAdapter ?? KppReceiptExecutionIntegrityAdapter, (state) => {
     const stage = mutableStage(state, input.stage);
     if (!stage.findings.some(({ findingId }) => findingId === input.findingId)) {
       throw new SectionAuthoringError("PP_AGENT_REBUTTAL_FINDING_UNKNOWN", "Rebuttal은 저장된 reviewer finding에만 연결할 수 있습니다.", { findingId: input.findingId });
@@ -269,9 +285,10 @@ export async function recordFindingRebuttal(
 export async function recordAutomaticSectionRevision(
   rootInput: string,
   input: { readonly stage: string; readonly sectionId: string; readonly revisionId: string },
+  options: AgentExecutionOptions = {},
 ): Promise<void> {
   const root = resolve(rootInput);
-  await mutateAgentExecutionState(root, (state) => {
+  await mutateAgentExecutionState(root, options.integrityAdapter ?? KppReceiptExecutionIntegrityAdapter, (state) => {
     const stage = mutableStage(state, input.stage);
     if (stage.automaticRevisions.some(({ revisionId }) => revisionId === input.revisionId)) {
       throw new SectionAuthoringError("PP_SECTION_AUTO_REVISION_DUPLICATE", "Automatic revision ID는 stage 안에서 고유해야 합니다.", { revisionId: input.revisionId });
@@ -286,7 +303,7 @@ export async function recordAutomaticSectionRevision(
 export async function adjudicate(input: AdjudicationInput): Promise<AdjudicationResult> {
   assertNoCallerSuppliedAdjudicationRecords(input);
   const root = resolve(input.root);
-  const state = await readLockedAgentExecutionState(root);
+  const state = await readLockedAgentExecutionState(root, input.integrityAdapter ?? KppReceiptExecutionIntegrityAdapter);
   const stage = state.stages[input.stage];
   if (stage === undefined) {
     throw new SectionAuthoringError("PP_AGENT_ADJUDICATION_STAGE_UNKNOWN", "Adjudication할 persisted stage를 찾을 수 없습니다.", { stage: input.stage });
@@ -334,9 +351,11 @@ export async function adjudicate(input: AdjudicationInput): Promise<Adjudication
 export async function approveRepresentativeSections(
   rootInput: string,
   approvals: readonly RepresentativeApproval[],
+  options: AgentExecutionOptions = {},
 ): Promise<{ readonly approvalPath: string; readonly roles: readonly RepresentativeRole[] }> {
   const root = resolve(rootInput);
-  const executionState = await readAgentExecutionState(root);
+  const integrityAdapter = options.integrityAdapter ?? KppReceiptExecutionIntegrityAdapter;
+  const executionState = await readLockedAgentExecutionState(root, integrityAdapter);
   const expectedRoles: RepresentativeRole[] = ["problem", "method", "execution"];
   const byRole = new Map(approvals.map((approval) => [approval.representativeRole, approval]));
   if (byRole.size !== expectedRoles.length || !expectedRoles.every((role) => byRole.has(role))) {
@@ -355,10 +374,13 @@ export async function approveRepresentativeSections(
     schemaVersion: "representative-section-approval/v1",
     approvals: expectedRoles.map((role) => byRole.get(role)),
   });
+  if (integrityAdapter === KppReceiptExecutionIntegrityAdapter) {
+    await writeCanonicalRepresentativeReviewReceiptWhenAvailable(root, approvalPath);
+  }
   return { approvalPath, roles: expectedRoles };
 }
 
-export async function authorFullDocument(rootInput: string): Promise<FullAuthoringResult> {
+export async function authorFullDocument(rootInput: string, options: AgentExecutionOptions = {}): Promise<FullAuthoringResult> {
   const root = resolve(rootInput);
   const approvalPath = join(root, "content", REPRESENTATIVE_APPROVAL_FILE_NAME);
   let approvalInput: unknown;
@@ -368,7 +390,7 @@ export async function authorFullDocument(rootInput: string): Promise<FullAuthori
     throw new SectionAuthoringError("PP_REPRESENTATIVE_APPROVAL_REQUIRED", "전체 작성 전 대표 섹션 승인이 필요합니다.");
   }
   const approvals = extractApprovals(approvalInput);
-  await approveRepresentativeSections(root, approvals);
+  await approveRepresentativeSections(root, approvals, options);
   const requestPath = join(root, "content", FULL_AUTHORING_FILE_NAME);
   await writeJsonAtomically(requestPath, {
     schemaVersion: "full-section-authoring-request/v1",
@@ -518,19 +540,163 @@ async function writeAgentExecutionState(root: string, state: MutableAgentExecuti
   await writeJsonAtomically(join(root, "content", AGENT_EXECUTION_FILE_NAME), state);
 }
 
-async function readLockedAgentExecutionState(root: string): Promise<MutableAgentExecutionState> {
-  return withAgentExecutionStateLock(root, async () => readAgentExecutionState(root));
+const KppReceiptExecutionIntegrityAdapter: AgentExecutionIntegrityAdapter = {
+  async write(root, ledgerPath): Promise<void> {
+    const output = join(root, "receipts", AGENT_EXECUTION_RECEIPT_FILE_NAME);
+    await writeReceipt({
+      stage: "REPRESENTATIVE_REVIEW_REQUIRED",
+      files: [ledgerPath],
+      inputReceiptHashes: await currentProjectReceiptInputs(root),
+      output,
+      toolVersion: "public-proposal-agent-execution/v1",
+    });
+  },
+  async verify(root, ledgerPath): Promise<void> {
+    const receiptPath = join(root, "receipts", AGENT_EXECUTION_RECEIPT_FILE_NAME);
+    try {
+      const verification = await verifyReceipt(receiptPath);
+      const actualHash = await sha256File(ledgerPath);
+      const boundLedger = verification.receipt.files.find((file) => file.path === ledgerPath);
+      if (!verification.valid
+        || verification.receipt.stage !== "REPRESENTATIVE_REVIEW_REQUIRED"
+        || verification.receipt.result !== "PASS"
+        || boundLedger?.sha256 !== actualHash) {
+        throw new SectionAuthoringError("PP_AGENT_EXECUTION_INTEGRITY_FAILED", "Agent execution ledger receipt가 현재 ledger bytes와 일치하지 않습니다.", {
+          ledgerPath,
+          receiptPath,
+          expected: boundLedger?.sha256,
+          actual: actualHash,
+          mismatches: verification.mismatches,
+        });
+      }
+    } catch (error) {
+      if (error instanceof SectionAuthoringError) throw error;
+      throw new SectionAuthoringError("PP_AGENT_EXECUTION_INTEGRITY_FAILED", "Agent execution ledger receipt를 검증할 수 없습니다.", {
+        ledgerPath,
+        receiptPath,
+        actual: error instanceof Error ? error.message : error,
+      });
+    }
+  },
+};
+
+/** Explicit adapter for isolated temp-root tests; its anchor remains outside the mutable ledger. */
+export function createTestAgentExecutionIntegrityAdapter(): AgentExecutionIntegrityAdapter {
+  return {
+    async write(root, ledgerPath): Promise<void> {
+      await writeJsonAtomically(join(root, "content", AGENT_EXECUTION_TEST_ANCHOR_FILE_NAME), {
+        schemaVersion: "agent-execution-test-anchor/v1",
+        ledgerPath,
+        sha256: await sha256File(ledgerPath),
+      });
+    },
+    async verify(root, ledgerPath): Promise<void> {
+      const anchorPath = join(root, "content", AGENT_EXECUTION_TEST_ANCHOR_FILE_NAME);
+      try {
+        const raw = JSON.parse(await readFile(anchorPath, "utf8")) as { schemaVersion?: unknown; ledgerPath?: unknown; sha256?: unknown };
+        const actualHash = await sha256File(ledgerPath);
+        if (raw.schemaVersion !== "agent-execution-test-anchor/v1" || raw.ledgerPath !== ledgerPath || raw.sha256 !== actualHash) {
+          throw new SectionAuthoringError("PP_AGENT_EXECUTION_INTEGRITY_FAILED", "Test execution ledger anchor가 현재 ledger bytes와 일치하지 않습니다.", {
+            ledgerPath,
+            anchorPath,
+            expected: raw.sha256,
+            actual: actualHash,
+          });
+        }
+      } catch (error) {
+        if (error instanceof SectionAuthoringError) throw error;
+        throw new SectionAuthoringError("PP_AGENT_EXECUTION_INTEGRITY_FAILED", "Test execution ledger anchor를 검증할 수 없습니다.", {
+          ledgerPath,
+          anchorPath,
+          actual: error instanceof Error ? error.message : error,
+        });
+      }
+    },
+  };
+}
+
+async function readLockedAgentExecutionState(
+  root: string,
+  integrityAdapter: AgentExecutionIntegrityAdapter,
+): Promise<MutableAgentExecutionState> {
+  return withAgentExecutionStateLock(root, async () => {
+    const ledgerPath = agentExecutionStatePath(root);
+    await verifyExistingAgentExecutionLedger(root, ledgerPath, integrityAdapter);
+    return readAgentExecutionState(root);
+  });
 }
 
 async function mutateAgentExecutionState<T>(
   root: string,
+  integrityAdapter: AgentExecutionIntegrityAdapter,
   mutate: (state: MutableAgentExecutionState) => T,
 ): Promise<T> {
   return withAgentExecutionStateLock(root, async () => {
+    const ledgerPath = agentExecutionStatePath(root);
+    await verifyExistingAgentExecutionLedger(root, ledgerPath, integrityAdapter);
     const state = await readAgentExecutionState(root);
     const result = mutate(state);
     await writeAgentExecutionState(root, state);
+    await integrityAdapter.write(root, ledgerPath);
     return result;
+  });
+}
+
+async function verifyExistingAgentExecutionLedger(
+  root: string,
+  ledgerPath: string,
+  integrityAdapter: AgentExecutionIntegrityAdapter,
+): Promise<void> {
+  if (await pathExists(ledgerPath)) {
+    await integrityAdapter.verify(root, ledgerPath);
+  }
+}
+
+function agentExecutionStatePath(root: string): string {
+  return join(root, "content", AGENT_EXECUTION_FILE_NAME);
+}
+
+async function currentProjectReceiptInputs(root: string): Promise<string[]> {
+  const candidates = [
+    "design-lock.json",
+    "research-bundle-lock.json",
+    "brief-lock.json",
+    "evidence-lock.json",
+    "requirements-lock.json",
+    "source-lock.json",
+  ];
+  for (const filename of candidates) {
+    const receiptPath = join(root, "receipts", filename);
+    try {
+      const verification = await verifyReceipt(receiptPath);
+      if (verification.valid && verification.receipt.result === "PASS") return [await sha256File(receiptPath)];
+    } catch {
+      // The project may be an isolated authoring root with no KPP receipt chain yet.
+    }
+  }
+  return [];
+}
+
+async function writeCanonicalRepresentativeReviewReceiptWhenAvailable(root: string, approvalPath: string): Promise<void> {
+  const designLockPath = join(root, "receipts", "design-lock.json");
+  let designLockHash: string;
+  try {
+    const designLock = await verifyReceipt(designLockPath);
+    if (!designLock.valid || designLock.receipt.stage !== "DESIGN_LOCKED" || designLock.receipt.result !== "PASS") return;
+    designLockHash = await sha256File(designLockPath);
+  } catch {
+    return;
+  }
+  const ledgerPath = agentExecutionStatePath(root);
+  const anchorPath = join(root, "receipts", AGENT_EXECUTION_RECEIPT_FILE_NAME);
+  const anchorHash = await sha256File(anchorPath);
+  await writeReceipt({
+    stage: "REPRESENTATIVE_REVIEW_REQUIRED",
+    files: [approvalPath, ledgerPath],
+    inputs: [{ name: "agent-execution-integrity", path: anchorPath, sha256: anchorHash }],
+    inputReceiptHashes: [designLockHash, anchorHash],
+    output: join(root, "receipts", "representative-review.json"),
+    toolVersion: "public-proposal-agent-execution/v1",
   });
 }
 
@@ -619,6 +785,15 @@ function copyFinding(finding: ReviewerFinding): ReviewerFinding {
 
 function isFileMissing(error: unknown): boolean {
   return typeof error === "object" && error !== null && "code" in error && error.code === "ENOENT";
+}
+
+async function pathExists(path: string): Promise<boolean> {
+  try {
+    await access(path);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 function isAlreadyExists(error: unknown): boolean {
