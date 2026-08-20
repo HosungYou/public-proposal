@@ -189,6 +189,15 @@ async function validateLockedArchitecture(
   const identityMatches = architecture.data.projectId === project.projectId
     && architecture.data.documentMode === project.documentMode
     && architecture.data.modePolicyVersion === project.modePolicyVersion;
+  if (architecture.data.architectureStatus !== "complete") {
+    throw new KppError("KPP_BUILD_MANIFEST_UNBOUND", "staged 문서 아키텍처는 build 입력으로 사용할 수 없습니다.", {
+      rule: "architecture_staged",
+      path: pageArchitecturePath,
+      expected: "complete",
+      actual: architecture.data.architectureStatus,
+      stage: "CONTENT_APPROVED",
+    });
+  }
   const architectureResult = validatePageArchitecture(
     architecture.data,
     pagePlan.data,

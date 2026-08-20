@@ -192,6 +192,7 @@ function createSkeletons(root: string, project: ProjectV2Record): readonly {
         projectId: project.projectId,
         documentMode: project.documentMode,
         modePolicyVersion: project.modePolicyVersion,
+        architectureStatus: "staged",
         chapters: [],
         sections: [],
         pages: [],

@@ -116,6 +116,16 @@ describe("verified proposal release flow", () => {
     await expect(access(join(fixture.root, "receipts", "build.json"))).rejects.toBeDefined();
   });
 
+  it.each([1, 2, 3])("rejects a receipt-bound staged %i-page architecture before the worker", async (pageCount) => {
+    const fixture = await createStagedBuildProject(roots, pageCount);
+    await expect(buildProject(fixture.root, { requestPath: fixture.requestPath }))
+      .rejects.toMatchObject({
+        code: "KPP_BUILD_MANIFEST_UNBOUND",
+        details: { rule: "architecture_staged" },
+      });
+    await expect(access(join(fixture.root, "receipts", "build.json"))).rejects.toBeDefined();
+  });
+
   it("runs managed build, real render, file-backed PASS audit, human approval, and immutable release", async () => {
     const fixture = await createContentApprovedProject(roots, true);
     const built = await buildProject(fixture.root, { requestPath: fixture.requestPath });
@@ -408,11 +418,22 @@ async function createContentApprovedProject(
     family: "gantt",
     renderer: "svg-gantt",
   }));
-  const architecturePageRole = crossModeArchitecture ? "mutual_value" : "research_method";
-  const architectureSurfaceTemplateId = crossModeArchitecture ? "partnership_narrative" : "r08-research-method-v1";
+  const architecturePageRoles = crossModeArchitecture
+    ? ["mutual_value", "research_question", "evidence_plan", "limitations", "utilization_plan"]
+    : ["research_method", "research_question", "evidence_plan", "limitations", "utilization_plan"];
+  const architectureSurfaceTemplateIds = crossModeArchitecture
+    ? ["partnership_narrative", "research_narrative", "evidence_analysis", "limitations_register", "utilization_roadmap"]
+    : ["method_design", "research_narrative", "evidence_analysis", "limitations_register", "utilization_roadmap"];
   const pagePlan = {
     schemaVersion: "1.0.0",
-    pages: [{ pageId: "P-01", requirementId: "REQ-01", pageRole: architecturePageRole, surfaceTemplateId: architectureSurfaceTemplateId, claimIds: ["CLM-01"], figureSpecs: plannedFigures }],
+    pages: architecturePageRoles.map((pageRole, index) => ({
+      pageId: `P-${String(index + 1).padStart(2, "0")}`,
+      requirementId: `REQ-${String(index + 1).padStart(2, "0")}`,
+      pageRole,
+      surfaceTemplateId: architectureSurfaceTemplateIds[index]!,
+      claimIds: index === 0 ? ["CLM-01"] : [],
+      figureSpecs: index === 0 ? plannedFigures : [],
+    })),
   };
   const evidenceLedger = {
     schemaVersion: "1.0.0",
@@ -466,30 +487,40 @@ async function createContentApprovedProject(
   const structurePath = join(root, "content", "build-structure.json");
   const figureManifestPath = join(root, "figures", "build-figure-manifest.json");
   const figureManifest = { schemaVersion: "1.0.0", figures: embeddedFigures };
-  await writeFile(responsePath, `${JSON.stringify({ schemaVersion: "1.0.0", blocks: [{ pageId: "P-01", claimIds: ["CLM-01"], evidenceIds: ["EV-01"], status: "provisional", text: approvedText, evaluatorAnswer: "합성 평가자 답변", pendingBlankFieldIds: [] }] })}\n`);
+  const responseBlocks = pagePlan.pages.map((page, index) => ({
+    pageId: page.pageId,
+    claimIds: index === 0 ? ["CLM-01"] : [],
+    evidenceIds: index === 0 ? ["EV-01"] : [],
+    status: "provisional",
+    text: index === 0 ? approvedText : `연구 문서 역할 ${index + 1}의 승인된 합성 본문이다.`,
+    evaluatorAnswer: `합성 평가자 답변 ${index + 1}`,
+    pendingBlankFieldIds: [],
+  }));
+  await writeFile(responsePath, `${JSON.stringify({ schemaVersion: "1.0.0", blocks: responseBlocks })}\n`);
   const figureIds = figuresToBuild.map((figure) => figure.figureId);
   await writeFile(pageArchitecturePath, `${JSON.stringify({
     schemaVersion: "2.0.0",
     projectId: "release-build-fixture",
     documentMode: "research_service",
     modePolicyVersion: "1.0.0",
+    architectureStatus: "complete",
     chapters: [{ chapterId: "CH-001", order: 0 }],
-    sections: [{ sectionId: "SEC-001", chapterId: "CH-001", order: 0 }],
-    pages: [{
-      pageId: "P-01",
+    sections: pagePlan.pages.map((_, index) => ({ sectionId: `SEC-${String(index + 1).padStart(3, "0")}`, chapterId: "CH-001", order: index })),
+    pages: pagePlan.pages.map((page, index) => ({
+      pageId: page.pageId,
       chapterId: "CH-001",
-      sectionId: "SEC-001",
-      pageRole: architecturePageRole,
-      surfaceTemplateId: architectureSurfaceTemplateId,
-      titleScope: "chapter",
+      sectionId: `SEC-${String(index + 1).padStart(3, "0")}`,
+      pageRole: page.pageRole,
+      surfaceTemplateId: page.surfaceTemplateId,
+      titleScope: index === 0 ? "chapter" : "section",
       continuation: false,
-      dominantSurface: figureIds.length > 0 ? "mixed" : "narrative",
+      dominantSurface: index === 0 && figureIds.length > 0 ? "mixed" : "narrative",
       surfaceVisibility: "internal",
-      claimIds: ["CLM-01"],
-      proofIds: figureIds.length > 0 ? ["EV-01"] : [],
-      referenceIds: ["EV-01"],
-      figureIds,
-    }],
+      claimIds: index === 0 ? ["CLM-01"] : [],
+      proofIds: index === 0 && figureIds.length > 0 ? ["EV-01"] : [],
+      referenceIds: index === 0 ? ["EV-01"] : [],
+      figureIds: index === 0 ? figureIds : [],
+    })),
   }, null, 2)}\n`);
   await writeFile(referenceManifestPath, `${JSON.stringify({
     schemaVersion: "2.0.0",
@@ -511,7 +542,13 @@ async function createContentApprovedProject(
       availability: "available",
     }],
   }, null, 2)}\n`);
-  await writeFile(structurePath, `${JSON.stringify({ schemaVersion: "1.0.0", blocks: [{ pageId: "P-01", heading: "1. 연구 수행방법", tables, figureIds }] })}\n`);
+  const structureBlocks = pagePlan.pages.map((page, index) => ({
+    pageId: page.pageId,
+    heading: `${index + 1}. ${page.pageRole}`,
+    tables: index === 0 ? tables : [],
+    figureIds: index === 0 ? figureIds : [],
+  }));
+  await writeFile(structurePath, `${JSON.stringify({ schemaVersion: "1.0.0", blocks: structureBlocks })}\n`);
   await writeFile(figureManifestPath, `${JSON.stringify(figureManifest)}\n`);
   await advanceToContentApproved(
     root,
@@ -535,7 +572,17 @@ async function createContentApprovedProject(
     template: { assetId: "korean-public-proposal-a4-v1", path: TEMPLATE, sha256: await sha256File(TEMPLATE) },
     pagePlan,
     evidenceLedger,
-    contentBlocks: [{ pageId: "P-01", heading: "1. 연구 수행방법", paragraphs: [{ text: approvedText, claimIds: ["CLM-01"], evidenceIds: ["EV-01"] }], tables, figureIds }],
+    contentBlocks: pagePlan.pages.map((page, index) => ({
+      pageId: page.pageId,
+      heading: structureBlocks[index]!.heading,
+      paragraphs: [{
+        text: responseBlocks[index]!.text,
+        claimIds: index === 0 ? ["CLM-01"] : [],
+        evidenceIds: index === 0 ? ["EV-01"] : [],
+      }],
+      tables: index === 0 ? tables : [],
+      figureIds: index === 0 ? figureIds : [],
+    })),
     figureManifest,
     surfaceProfile: profile,
     output: { docxPath: join(root, "build", "proposal.docx"), manifestPath: join(root, "build", "build-manifest.json") },
@@ -544,6 +591,82 @@ async function createContentApprovedProject(
   await mkdir(join(root, "build"), { recursive: true });
   await writeFile(requestPath, `${JSON.stringify(request)}\n`);
   return { root, requestPath, auditFigures };
+}
+
+async function createStagedBuildProject(
+  roots: string[],
+  pageCount: number,
+): Promise<{ readonly root: string; readonly requestPath: string }> {
+  const root = await mkdtemp(join(tmpdir(), "kpp-release-staged-"));
+  roots.push(root);
+  await initializeProject(root, { projectId: "staged-build-fixture", documentMode: "public_procurement" });
+  const pages = Array.from({ length: pageCount }, (_, index) => ({
+    pageId: `P-${String(index + 1).padStart(2, "0")}`,
+    requirementId: `REQ-${String(index + 1).padStart(2, "0")}`,
+    pageRole: "requirement_response",
+    surfaceTemplateId: "process_control",
+    claimIds: [],
+    figureSpecs: [],
+  }));
+  const pagePlan = { schemaVersion: "1.0.0", pages };
+  const evidenceLedger = { schemaVersion: "1.0.0", claims: [], bindings: [] };
+  const profile = lockedProfile();
+  const pagePlanPath = join(root, "content", "page-plan.json");
+  const evidenceLedgerPath = join(root, "evidence", "evidence-ledger.json");
+  const architecturePath = join(root, "content", "page-architecture.json");
+  const referencesPath = join(root, "evidence", "reference-manifest.json");
+  const profilePath = join(root, "figures", "design-profile.json");
+  await writeFile(pagePlanPath, `${JSON.stringify(pagePlan)}\n`);
+  await writeFile(evidenceLedgerPath, `${JSON.stringify(evidenceLedger)}\n`);
+  await writeFile(profilePath, `${JSON.stringify(profile)}\n`);
+  await writeFile(architecturePath, `${JSON.stringify({
+    schemaVersion: "2.0.0",
+    projectId: "staged-build-fixture",
+    documentMode: "public_procurement",
+    modePolicyVersion: "1.0.0",
+    architectureStatus: "staged",
+    chapters: [{ chapterId: "CH-01", order: 0 }],
+    sections: pages.map((_, index) => ({ sectionId: `SEC-${index + 1}`, chapterId: "CH-01", order: index })),
+    pages: pages.map((page, index) => ({
+      pageId: page.pageId,
+      chapterId: "CH-01",
+      sectionId: `SEC-${index + 1}`,
+      pageRole: page.pageRole,
+      surfaceTemplateId: page.surfaceTemplateId,
+      titleScope: index === 0 ? "chapter" : "section",
+      continuation: false,
+      dominantSurface: "narrative",
+      surfaceVisibility: "internal",
+      claimIds: [],
+      proofIds: [],
+      referenceIds: [],
+      figureIds: [],
+    })),
+  }, null, 2)}\n`);
+  await writeFile(referencesPath, `${JSON.stringify({
+    schemaVersion: "2.0.0",
+    projectId: "staged-build-fixture",
+    documentMode: "public_procurement",
+    modePolicyVersion: "1.0.0",
+    references: [],
+  }, null, 2)}\n`);
+  await advanceToContentApproved(root, [], [profilePath], undefined, {
+    requirements: [pagePlanPath, architecturePath],
+    evidence: [evidenceLedgerPath, architecturePath, referencesPath],
+  });
+  const requestPath = join(root, "build", "build-request.json");
+  await writeFile(requestPath, `${JSON.stringify({
+    schemaVersion: "1.0.0",
+    projectId: "staged-build-fixture",
+    pagePlan,
+    evidenceLedger,
+    surfaceProfile: profile,
+    output: {
+      docxPath: join(root, "build", "proposal.docx"),
+      manifestPath: join(root, "build", "build-manifest.json"),
+    },
+  }, null, 2)}\n`);
+  return { root, requestPath };
 }
 
 async function rasterizeSvg(svgPath: string, outputDirectory: string): Promise<void> {

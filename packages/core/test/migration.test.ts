@@ -61,6 +61,7 @@ describe("project migration", () => {
     await expect(readFile(join(root, "evidence", "source.txt"))).resolves.toEqual(originalEvidence);
     await expect(readFile(report.receiptPath, "utf8")).resolves.toContain(report.destinationSha256);
     await expect(readFile(join(root, "content", "page-architecture.json"), "utf8")).resolves.toContain('"pages": []');
+    await expect(readFile(join(root, "content", "page-architecture.json"), "utf8")).resolves.toContain('"architectureStatus": "staged"');
     await expect(readFile(join(root, "evidence", "reference-manifest.json"), "utf8")).resolves.toContain('"references": []');
   });
 

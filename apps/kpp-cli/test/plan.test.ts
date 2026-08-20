@@ -31,6 +31,7 @@ describe("plan architecture and reference persistence", () => {
       projectId: "plan-v2-fixture",
       documentMode: "public_procurement",
       modePolicyVersion: "1.0.0",
+      architectureStatus: "staged",
       pages: [{ pageId: "PAGE-001", claimIds: ["CLAIM-001"], referenceIds: ["EVID-001"] }],
     });
     expect(references).toMatchObject({
@@ -72,15 +73,32 @@ describe("plan architecture and reference persistence", () => {
     await expect(readFile(join(fixture.root, "evidence", "reference-manifest.json"), "utf8"))
       .rejects.toMatchObject({ code: "ENOENT" });
   });
+
+  it.each([1, 2, 3])("receipt-binds staged status for an incomplete %i-page plan", async (pageCount) => {
+    const fixture = await createFixture(undefined, undefined, pageCount);
+    await planCommand(fixture.root, fixture.requirementsPath);
+    const architecturePath = join(fixture.root, "content", "page-architecture.json");
+    const architecture = JSON.parse(await readFile(architecturePath, "utf8")) as {
+      architectureStatus: string;
+      pages: unknown[];
+    };
+    expect(architecture.architectureStatus).toBe("staged");
+    expect(architecture.pages).toHaveLength(pageCount);
+    const evidenceReceipt = await verifyReceipt(join(fixture.root, "receipts", "evidence-lock.json"));
+    expect(evidenceReceipt.valid).toBe(true);
+    expect(evidenceReceipt.receipt.files.map(({ path }) => path)).toContain(architecturePath);
+  });
 });
 
 async function createFixture(
   storedHash?: string,
-  page: { readonly pageRole: string; readonly surfaceTemplateId: string } = {
+  page?: { readonly pageRole: string; readonly surfaceTemplateId: string },
+  pageCount = 1,
+): Promise<{ root: string; requirementsPath: string }> {
+  const selectedPage = page ?? {
     pageRole: "requirement_response",
     surfaceTemplateId: "evidence_analysis",
-  },
-): Promise<{ root: string; requirementsPath: string }> {
+  };
   const root = await mkdtemp(join(tmpdir(), "kpp-plan-v2-"));
   roots.push(root);
   await initializeProject(root, {
@@ -111,17 +129,19 @@ async function createFixture(
       claimIds: ["CLAIM-001"],
       targetRequirementId: "REQ-001",
       targetPageId: "PAGE-001",
-      targetPageRole: page.pageRole,
+      targetPageRole: selectedPage.pageRole,
     }],
-    requirements: [{
-      requirementId: "REQ-001",
-      title: "Requirement response",
+    requirements: Array.from({ length: pageCount }, (_, index) => ({
+      requirementId: `REQ-${String(index + 1).padStart(3, "0")}`,
+      title: `Requirement response ${index + 1}`,
       critical: false,
-      pageRole: page.pageRole,
-      surfaceTemplateId: page.surfaceTemplateId,
-      claims: [{ claimId: "CLAIM-001", critical: false, evidenceIds: ["EVID-001"] }],
+      pageRole: selectedPage.pageRole,
+      surfaceTemplateId: selectedPage.surfaceTemplateId,
+      claims: index === 0
+        ? [{ claimId: "CLAIM-001", critical: false, evidenceIds: ["EVID-001"] }]
+        : [],
       figureSpecs: [],
-    }],
+    })),
   }, null, 2)}\n`, "utf8");
   return { root, requirementsPath };
 }

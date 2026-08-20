@@ -88,6 +88,7 @@ describe("document architecture contracts", () => {
       projectId: "project-1",
       documentMode: "research_service",
       modePolicyVersion: "1.0.0",
+      architectureStatus: "staged",
       chapters: [{ chapterId: "CH-01", title: "연구 개요" }],
       sections: [{ sectionId: "SEC-01", chapterId: "CH-01", title: "배경" }],
       pages: [page],
@@ -118,6 +119,7 @@ describe("document architecture contracts", () => {
       projectId: "project-1",
       documentMode: "research_service",
       modePolicyVersion: "1.0.0",
+      architectureStatus: "staged",
       pages: [{
         ...page,
         pageId: "PAGE-002",

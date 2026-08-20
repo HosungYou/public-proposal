@@ -12,6 +12,7 @@ export const PageTitleScopeSchema = z.enum([
 ]);
 
 export const PageSurfaceVisibilitySchema = z.enum(["internal", "reader"]);
+export const ArchitectureStatusSchema = z.enum(["staged", "complete"]);
 
 const DominantSurfaceSchema = z.enum([
   "narrative",
@@ -93,6 +94,7 @@ export const PageArchitectureManifestSchema = z.object({
   projectId: IdentifierSchema,
   documentMode: DocumentModeSchema,
   modePolicyVersion: z.string().trim().min(1),
+  architectureStatus: ArchitectureStatusSchema,
   chapters: z.array(ChapterSchema).default([]),
   sections: z.array(SectionSchema).default([]),
   pages: z.array(PageArchitecturePageSchema).min(1),
@@ -117,6 +119,7 @@ export const PageArchitectureManifestSchema = z.object({
 });
 
 export type PageTitleScope = z.infer<typeof PageTitleScopeSchema>;
+export type ArchitectureStatus = z.infer<typeof ArchitectureStatusSchema>;
 export type PageSurfaceVisibility = z.infer<typeof PageSurfaceVisibilitySchema>;
 export type IssuerOverride = z.infer<typeof IssuerOverrideSchema>;
 export type PageArchitecturePage = z.infer<typeof PageArchitecturePageSchema>;

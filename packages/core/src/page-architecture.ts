@@ -82,15 +82,12 @@ export function validatePageArchitecture(
     validateIdentifiers(page, planned, findings);
   }
 
-  // Small requirement subsets remain valid for backwards-compatible staged
-  // planning. Once the architecture is large enough to carry the complete
-  // policy role set, every required role must be represented.
-  if (manifest.pages.length >= policy.requiredPageRoles.length) {
+  if (manifest.architectureStatus === "complete") {
     const missingRoles = policy.requiredPageRoles.filter((role) => !observedCanonicalRoles.has(role));
     if (missingRoles.length > 0) {
       findings.push(finding(
         "KPP_ARCH_REQUIRED_ROLE_MISSING",
-        "Complete-sized architectures must represent every required mode role.",
+        "Complete architectures must represent every required mode role.",
         "manifest/pageRoles",
         policy.requiredPageRoles,
         [...observedCanonicalRoles],

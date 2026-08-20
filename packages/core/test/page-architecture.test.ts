@@ -33,6 +33,7 @@ function architecture(): PageArchitectureManifest {
     projectId: "fixture-project",
     documentMode: "public_procurement",
     modePolicyVersion: "1.0.0",
+    architectureStatus: "complete",
     chapters: [{ chapterId: "CH-001", title: "Proposal", order: 0 }],
     sections: pagePlan.pages.map((page, index) => ({ sectionId: `SEC-${index + 1}`, chapterId: "CH-001", order: index })),
     pages: pagePlan.pages.map((page, index) => ({
@@ -115,7 +116,7 @@ describe("validatePageArchitecture", () => {
     });
   });
 
-  it("rejects missing required roles in a complete-sized architecture", () => {
+  it("rejects missing required roles in a complete architecture", () => {
     const manifest = architecture();
     const plan = structuredClone(pagePlan);
     manifest.pages[1] = { ...manifest.pages[1]!, pageRole: "approach_overview" };
@@ -127,6 +128,29 @@ describe("validatePageArchitecture", () => {
         evidence: expect.objectContaining({ locator: "manifest/pageRoles" }),
       })]),
     });
+  });
+
+  it("rejects a one-page manifest that claims complete without every required role", () => {
+    const manifest = architecture();
+    const plan = structuredClone(pagePlan);
+    manifest.pages = [manifest.pages[2]!];
+    manifest.sections = [manifest.sections[2]!];
+    plan.pages = [plan.pages[2]!];
+    expect(validatePageArchitecture(manifest, plan, getDocumentModePolicy("public_procurement"))).toMatchObject({
+      status: "FAIL",
+      findings: expect.arrayContaining([expect.objectContaining({ ruleId: "KPP_ARCH_REQUIRED_ROLE_MISSING" })]),
+    });
+  });
+
+  it("allows the same explicit one-page subset only when status is staged", () => {
+    const manifest = architecture();
+    const plan = structuredClone(pagePlan);
+    manifest.architectureStatus = "staged";
+    manifest.pages = [{ ...manifest.pages[2]!, continuityToPageId: undefined }];
+    manifest.sections = [manifest.sections[2]!];
+    plan.pages = [plan.pages[2]!];
+    expect(validatePageArchitecture(manifest, plan, getDocumentModePolicy("public_procurement")))
+      .toEqual({ status: "PASS", findings: [] });
   });
 
   it("rejects an untyped continuation title size at the schema boundary", () => {

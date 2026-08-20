@@ -5,11 +5,13 @@ export {
 } from "./document-mode.js";
 export {
   IssuerOverrideSchema,
+  ArchitectureStatusSchema,
   PageArchitectureManifestSchema,
   PageArchitecturePageSchema,
   PageSurfaceVisibilitySchema,
   PageTitleScopeSchema,
   type IssuerOverride,
+  type ArchitectureStatus,
   type PageArchitectureManifest,
   type PageArchitecturePage,
   type PageSurfaceVisibility,

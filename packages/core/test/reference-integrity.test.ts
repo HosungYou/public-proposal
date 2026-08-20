@@ -19,6 +19,7 @@ function fixture(): { manifest: ReferenceManifest; architecture: PageArchitectur
       projectId: "fixture-project",
       documentMode: "public_procurement",
       modePolicyVersion: "1.0.0",
+      architectureStatus: "staged",
       references: [{
         referenceId: "SRC-001",
         referenceClass: "official",

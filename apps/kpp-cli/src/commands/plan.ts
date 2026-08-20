@@ -118,7 +118,7 @@ export async function planCommand(
     });
   }
   const policy = getDocumentModePolicy(project.documentMode);
-  const pageArchitecture = createPageArchitecture(project, pagePlan, ledger);
+  const pageArchitecture = createPageArchitecture(project, pagePlan, ledger, policy);
   const referenceManifest = createReferenceManifest(project, pagePlan, ledger);
   const architectureValidation = validatePageArchitecture(pageArchitecture, pagePlan, policy);
   const referenceValidation = validateReferenceManifest(referenceManifest, pageArchitecture, ledger);
@@ -180,6 +180,7 @@ function createPageArchitecture(
   project: { readonly projectId: string; readonly documentMode: PageArchitectureManifest["documentMode"]; readonly modePolicyVersion: string },
   pagePlan: PagePlan,
   ledger: EvidenceLedger,
+  policy: ReturnType<typeof getDocumentModePolicy>,
 ): PageArchitectureManifest {
   const chapterId = "CHAPTER-001";
   const bindingsByPage = new Map<string, string[]>();
@@ -188,11 +189,17 @@ function createPageArchitecture(
     if (!pageBindings.includes(binding.evidenceId)) pageBindings.push(binding.evidenceId);
     bindingsByPage.set(binding.targetPageId, pageBindings);
   }
+  const canonicalRoles = new Set(pagePlan.pages.map((page) =>
+    policy.pageRoleAliases[page.pageRole] ?? page.pageRole));
+  const architectureStatus = policy.requiredPageRoles.every((role) => canonicalRoles.has(role))
+    ? "complete"
+    : "staged";
   return PageArchitectureManifestSchema.parse({
     schemaVersion: "2.0.0",
     projectId: project.projectId,
     documentMode: project.documentMode,
     modePolicyVersion: project.modePolicyVersion,
+    architectureStatus,
     chapters: [{ chapterId, order: 0 }],
     sections: pagePlan.pages.map((page, index) => ({
       sectionId: `SECTION-${String(index + 1).padStart(3, "0")}`,
