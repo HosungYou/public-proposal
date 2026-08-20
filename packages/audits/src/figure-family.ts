@@ -139,7 +139,7 @@ export async function auditFigureDocumentBindings(input: FigureDocumentBindingIn
     for (const { figureInput, spec, rendererManifest, sourceArtifacts } of auditedFigures) {
       artifacts.push(...sourceArtifacts);
       const record = recordById.get(spec.figureId);
-      const expectedRenderer = `svg-${spec.family}`;
+      const expectedRenderer = expectedEmbeddedRenderer(spec.family);
       if (record === undefined || rendererManifest.figure.id !== spec.figureId
         || rendererManifest.figure.family !== spec.family
         || !sameOrderedStrings(rendererManifest.bindings.evidenceIds, spec.evidenceIds)
@@ -182,6 +182,13 @@ export async function auditFigureDocumentBindings(input: FigureDocumentBindingIn
     }));
   }
   return makeSlice(findings, artifacts);
+}
+
+/** Keep DOCX build records aligned with the persisted semantic-figure schema. */
+export function expectedEmbeddedRenderer(family: FigureSpec["family"]): string {
+  if (family === "raci") return "word-native-raci-table";
+  if (family === "framework") return "svg-academic-framework";
+  return "svg-gantt";
 }
 
 async function rasterizedSvgSha256(svgPath: string, soffice: string): Promise<string> {

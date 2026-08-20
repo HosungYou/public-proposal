@@ -165,6 +165,8 @@ def test_build_applies_body_and_table_contract(tmp_path: Path) -> None:
     reopened = Document(result.docx)
     assert reopened.paragraphs[0].text == "1. 연구 수행방법"
     assert len(reopened.tables) == 1
+    assert reopened.sections[0].header.paragraphs[0].text == "연구용역 제안서 | 형식·구조 검증본"
+    assert reopened.sections[0].footer.paragraphs[0].text.startswith("1. 연구 수행방법 |")
 
 
 def test_manifest_binds_template_inputs_pages_and_output_hashes(tmp_path: Path) -> None:

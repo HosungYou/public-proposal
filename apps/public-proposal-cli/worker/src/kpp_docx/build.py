@@ -574,7 +574,13 @@ def build_document(request: BuildRequest) -> BuildResult:
 
     typography = _typography_contract(request.surface_profile.typography)
     style_ids = install_governed_styles(document, typography)
+    furniture = _document_furniture(request)
     for section in document.sections:
+        if section.header.paragraphs and section.header.paragraphs[0].runs:
+            section.header.paragraphs[0].runs[0].text = furniture["header"]
+        if section.footer.paragraphs and section.footer.paragraphs[0].runs:
+            # Replace only the label run so the PAGE field remains intact.
+            section.footer.paragraphs[0].runs[0].text = furniture["footer"]
         for paragraph in section.header.paragraphs:
             format_navigation_paragraph(paragraph, typography)
         for paragraph in section.footer.paragraphs:
@@ -781,6 +787,33 @@ def _architecture_title_point_size(page: PageArchitectureItem) -> float:
     if page.title_point_size is not None:
         return page.title_point_size
     return 20.5 if page.title_scope in ("cover", "chapter") else 12
+
+
+def _document_furniture(request: BuildRequest) -> dict[str, str]:
+    mode = request.page_architecture.document_mode if request.page_architecture is not None else None
+    if mode is None:
+        first_role = request.page_plan.pages[0].page_role
+        if first_role in {"research_method", "research_question", "evidence_plan", "limitations", "utilization_plan"}:
+            mode = "research_service"
+        elif first_role in {"mutual_value", "party_roles", "operating_model", "collaboration_options", "next_decision"}:
+            mode = "private_partnership"
+        elif first_role in {"decision_request", "alternatives", "tradeoffs", "risk_register", "owner_approval"}:
+            mode = "internal_decision"
+        elif first_role in {"source_inventory", "content_ledger", "mutation_report", "layout_accessibility", "acceptance_record"}:
+            mode = "document_restyle"
+        else:
+            mode = "public_procurement"
+    mode_label = {
+        "public_procurement": "공공조달 제안서",
+        "research_service": "연구용역 제안서",
+        "private_partnership": "민간협력 제안서",
+        "internal_decision": "내부 의사결정 문서",
+        "document_restyle": "문서 재구성 검증본",
+    }[mode]
+    return {
+        "header": f"{mode_label} | 형식·구조 검증본",
+        "footer": f"{request.content_blocks[0].heading} | ",
+    }
 
 
 def _issuer_override_authority_id(override: IssuerOverride) -> str:
