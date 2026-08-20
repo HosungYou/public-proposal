@@ -1,3 +1,5 @@
+import { blocked, makeSlice, sha256Text, type AuditFinding, type AuditSlice } from "./source.js";
+
 /**
  * Normalizes a Korean proposal sentence for exact-content repetition checks.
  * This deliberately does not apply semantic similarity: a deterministic
@@ -47,6 +49,74 @@ export function findRepeatedSentences(
       fingerprint,
       occurrences: occurrences.sort(compareOccurrence),
     }));
+}
+
+export interface SurfaceRepetitionException {
+  readonly ruleId: "issuer_mandatory_form" | "accessibility_repeated_instruction";
+  readonly sourceId: string;
+  readonly rationale: string;
+}
+
+export interface SurfaceTopologyObservation {
+  readonly pageLocator: string;
+  readonly topologySignature: string;
+  readonly permittedException?: SurfaceRepetitionException;
+}
+
+/**
+ * Blocks consecutive page skeletons by semantic topology, not pixels. A
+ * repeated mandatory form is permissible only when every page in its run has
+ * the same explicit, source-bound exception class.
+ */
+export function auditSurfaceRepetition(observations: readonly SurfaceTopologyObservation[]): AuditSlice {
+  const findings: AuditFinding[] = [];
+  for (const observation of observations) {
+    if (!/^page:\d{4}$/u.test(observation.pageLocator)
+      || !/^[a-f0-9]{64}$/u.test(observation.topologySignature)) {
+      findings.push(blocked("KPP_RENDER_SURFACE_TOPOLOGY_INVALID", "rendered surface topology observation 형식이 올바르지 않습니다.", { actual: observation }));
+    }
+  }
+  let start = 0;
+  while (start < observations.length) {
+    const first = observations[start]!;
+    let end = start + 1;
+    while (end < observations.length && observations[end]!.topologySignature === first.topologySignature) end += 1;
+    const run = observations.slice(start, end);
+    if (run.length > 1 && !run.every((observation) => hasPermittedException(observation.permittedException))) {
+      findings.push(blocked("KPP_RENDER_SURFACE_TOPOLOGY_REPETITION", "연속 페이지가 같은 reader-facing surface topology를 반복합니다.", {
+        actual: { pages: run.map(({ pageLocator }) => pageLocator), topologySignature: first.topologySignature },
+      }));
+    }
+    start = end;
+  }
+  return makeSlice(findings, []);
+}
+
+/**
+ * The derived signature excludes pixel and text-region hashes. It records
+ * only observable surface family, heading hierarchy, and block geometry.
+ */
+export function surfaceTopologySignature(input: {
+  readonly surfaceFamily: string;
+  readonly titleBlocks: readonly { readonly region: string; readonly pointSize: number }[];
+  readonly geometry: { readonly textBlockCount: number; readonly tableCount: number; readonly figureCount: number };
+  readonly continuationFromPrevious: boolean;
+  readonly continuationToNext: boolean;
+}): string {
+  return sha256Text(JSON.stringify({
+    surfaceFamily: input.surfaceFamily,
+    titleBlocks: input.titleBlocks.map(({ region, pointSize }) => ({ region, pointSize })),
+    geometry: input.geometry,
+    continuationFromPrevious: input.continuationFromPrevious,
+    continuationToNext: input.continuationToNext,
+  }));
+}
+
+function hasPermittedException(value: SurfaceRepetitionException | undefined): boolean {
+  return value !== undefined
+    && (value.ruleId === "issuer_mandatory_form" || value.ruleId === "accessibility_repeated_instruction")
+    && value.sourceId.trim().length > 0
+    && value.rationale.trim().length > 0;
 }
 
 function splitSentences(value: string): readonly string[] {

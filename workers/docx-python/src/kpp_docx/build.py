@@ -73,6 +73,16 @@ class PlannedFigureSpec(StrictModel):
         "process_flow",
     ] = Field(alias="dataShape")
     decision_task: str = Field(alias="decisionTask", min_length=1)
+    semantic_value_intent: Literal[
+        "data_evidence",
+        "causal_mechanism",
+        "decision_tradeoff",
+        "operational_control",
+        "decorative",
+    ] = Field(alias="semanticValueIntent")
+    decision_effect: str = Field(alias="decisionEffect")
+    non_duplicate_of: list[str] = Field(alias="nonDuplicateOf")
+    encoded_variables: list[str] = Field(alias="encodedVariables")
     claim_ids: list[str] = Field(alias="claimIds", min_length=1)
     evidence_ids: list[str] = Field(alias="evidenceIds", min_length=1)
     family: Literal[

@@ -5,6 +5,10 @@
   "evidenceIds": ["EV-R08-METHOD"],
   "claimIds": ["CL-R08-METHOD"],
   "inputKind": "semantic",
+  "semanticValueIntent": "operational_control",
+  "decisionEffect": "검증 일정의 담당자와 승인 관문을 확정한다.",
+  "nonDuplicateOf": ["BLK-R08-SCHEDULE-NARRATIVE"],
+  "encodedVariables": ["owner", "timing", "acceptance"],
   "family": "gantt",
   "data": {
     "kind": "time_axis",

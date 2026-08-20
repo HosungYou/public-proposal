@@ -7,6 +7,7 @@ import {
   renderFigure,
   renderFigureArtifact,
   renderFigureHash,
+  describeFigureSemanticValue,
   verifyFigureArtifact,
   type FigureSpec,
 } from "../src/index.js";
@@ -21,6 +22,10 @@ const raci: FigureSpec = {
   claimIds: ["CL-RACI-001"],
   inputKind: "semantic",
   tokenProfileHash: R08_TOKEN_PROFILE_SHA256,
+  semanticValueIntent: "operational_control",
+  decisionEffect: "과업별 책임과 검토 상태를 확정한다.",
+  nonDuplicateOf: ["BLK-RACI-NARRATIVE"],
+  encodedVariables: ["owner", "timing", "acceptance", "responsibility"],
   data: {
     kind: "responsibility_matrix",
     actors: ["발주기관", "연구책임자", "분석팀"],
@@ -47,6 +52,10 @@ const framework: FigureSpec = {
   claimIds: ["CL-FRAMEWORK-001"],
   inputKind: "semantic",
   tokenProfileHash: R08_TOKEN_PROFILE_SHA256,
+  semanticValueIntent: "causal_mechanism",
+  decisionEffect: "근거에서 실행안까지의 인과 경로를 판단한다.",
+  nonDuplicateOf: ["BLK-FRAMEWORK-NARRATIVE"],
+  encodedVariables: ["state", "owner", "acceptance", "relationship"],
   data: {
     kind: "research_framework",
     readingOrder: ["input", "method", "output"],
@@ -84,6 +93,23 @@ const framework: FigureSpec = {
 };
 
 describe("deterministic proposal figure renderers", () => {
+  it("binds semantic value declarations and a deterministic topology signature without weakening SVG accessibility", async () => {
+    const figure: FigureSpec = {
+      ...gantt,
+      semanticValueIntent: "operational_control",
+      decisionEffect: "일정의 담당자와 승인 관문을 확정한다.",
+      nonDuplicateOf: ["BLK-SCHEDULE-NARRATIVE"],
+      encodedVariables: ["owner", "timing", "acceptance"],
+    };
+    const semantic = describeFigureSemanticValue(figure);
+    const artifact = await renderFigureArtifact(figure);
+
+    expect(semantic.topologySignature).toMatch(/^[a-f0-9]{64}$/);
+    expect(semantic.orderedLabels).toContain("현황 진단");
+    expect(artifact.svg).toContain('data-kpp-topology-signature="');
+    expect(artifact.svg).toContain('aria-labelledby="');
+  });
+
   it("renders a Gantt with an axis, rows, bars, and milestones", async () => {
     const svg = await renderFigure(gantt);
 

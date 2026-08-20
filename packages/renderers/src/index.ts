@@ -6,7 +6,10 @@ import {
   R08_TOKEN_PROFILE,
   R08_TOKEN_PROFILE_SHA256,
   assertFigureBase,
+  describeFigureSemanticValue,
+  figureTopologySignature,
   stableCanonicalJson,
+  type FigureSemanticValueRecord,
   type FigureSpec,
 } from "./types.js";
 
@@ -33,6 +36,13 @@ export interface FigureManifest {
   readonly bindings: {
     readonly evidenceIds: readonly string[];
     readonly claimIds: readonly string[];
+  };
+  readonly semanticValue: {
+    readonly intent: FigureSpec["semanticValueIntent"];
+    readonly decisionEffect: string;
+    readonly nonDuplicateOf: readonly string[];
+    readonly encodedVariables: readonly string[];
+    readonly topologySignature: string;
   };
   readonly output: {
     readonly format: "svg";
@@ -87,6 +97,13 @@ export async function renderFigureArtifact(figure: FigureSpec): Promise<FigureAr
       evidenceIds: [...figure.evidenceIds],
       claimIds: [...figure.claimIds],
     },
+    semanticValue: {
+      intent: figure.semanticValueIntent,
+      decisionEffect: figure.decisionEffect,
+      nonDuplicateOf: [...figure.nonDuplicateOf],
+      encodedVariables: [...figure.encodedVariables],
+      topologySignature: figureTopologySignature(figure),
+    },
     output: { format: "svg", sha256: sha256(svg) },
   };
   return { svg, manifest };
@@ -120,6 +137,13 @@ export function verifyFigureArtifact(artifact: FigureArtifact, figure: FigureSpe
   if (!sameOrderedStrings(artifact.manifest.bindings.evidenceIds, figure.evidenceIds)
     || !sameOrderedStrings(artifact.manifest.bindings.claimIds, figure.claimIds)) {
     throw new Error("Figure manifest evidence or claim binding mismatch");
+  }
+  if (artifact.manifest.semanticValue.intent !== figure.semanticValueIntent
+    || artifact.manifest.semanticValue.decisionEffect !== figure.decisionEffect
+    || !sameOrderedStrings(artifact.manifest.semanticValue.nonDuplicateOf, figure.nonDuplicateOf)
+    || !sameOrderedStrings(artifact.manifest.semanticValue.encodedVariables, figure.encodedVariables)
+    || artifact.manifest.semanticValue.topologySignature !== figureTopologySignature(figure)) {
+    throw new Error("Figure semantic value or topology binding mismatch");
   }
   if (artifact.manifest.output.format !== "svg"
     || artifact.manifest.output.sha256 !== sha256(artifact.svg)) {

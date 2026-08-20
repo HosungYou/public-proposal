@@ -433,6 +433,10 @@ async function createContentApprovedProject(
     claimIds: ["CLM-01"],
     inputKind: "semantic",
     tokenProfileHash: R08_TOKEN_PROFILE_SHA256,
+    semanticValueIntent: "operational_control",
+    decisionEffect: "연구 일정의 담당자와 승인 관문을 확정한다.",
+    nonDuplicateOf: ["BLK-SCHEDULE-NARRATIVE"],
+    encodedVariables: ["owner", "timing", "acceptance"],
     data: {
       kind: "time_axis",
       periods: ["D1", "D50", "D100"],
@@ -457,6 +461,10 @@ async function createContentApprovedProject(
     intent: "schedule",
     dataShape: "time_axis",
     decisionTask: index === 0 ? "연구 단계와 검토 관문을 확인한다." : "검증 게이트와 인수 기준을 확인한다.",
+    semanticValueIntent: "operational_control",
+    decisionEffect: index === 0 ? "연구 단계의 담당자와 검토 관문을 확정한다." : "검증 게이트의 담당자와 인수 기준을 확정한다.",
+    nonDuplicateOf: [index === 0 ? "BLK-SCHEDULE-NARRATIVE" : "BLK-GATE-NARRATIVE"],
+    encodedVariables: ["owner", "timing", "acceptance"],
     claimIds: ["CLM-01"],
     evidenceIds: ["EV-01"],
     family: "gantt",
@@ -527,6 +535,12 @@ async function createContentApprovedProject(
   }
   const approvedText = "공식 근거와 현장 검증을 연결하여 연구 결과의 활용 가능성을 높인다.";
   const tables = [{ tableId: "TBL-01", caption: "표 1. 연구 단계별 산출물", headers: ["단계", "산출물"], rows: [["착수", "연구설계서"]], columnWidthsDxa: [2400, 6000] }];
+  const pageTables = pagePlan.pages.map((_, index) => {
+    if (index === 0) return tables;
+    if (index === 1) return [{ tableId: "TBL-02", caption: "표 2. 연구 질문별 검토 기준", headers: ["질문", "검토 기준"], rows: [["연구 질문", "근거 적합성"]], columnWidthsDxa: [2400, 6000] }];
+    if (index === 3) return [{ tableId: "TBL-04", caption: "표 3. 한계별 대응 기준", headers: ["한계", "대응 기준"], rows: [["자료 범위", "보완 검토"]], columnWidthsDxa: [2400, 6000] }];
+    return [];
+  });
   const responsePath = join(root, "content", "authoring-response.json");
   const structurePath = join(root, "content", "build-structure.json");
   const figureManifestPath = join(root, "figures", "build-figure-manifest.json");
@@ -565,8 +579,8 @@ async function createContentApprovedProject(
       ...(continuationTitlePoint !== undefined && index === 0 ? {
         continuityToPageId: pagePlan.pages[1]!.pageId,
       } : {}),
-      dominantSurface: index === 0 && figureIds.length > 0 ? "mixed" : "narrative",
-      surfaceVisibility: "internal",
+      dominantSurface: index === 0 && figureIds.length > 0 ? "mixed" : index === 1 || index === 3 ? "table" : "narrative",
+      surfaceVisibility: "reader",
       claimIds: index === 0 ? ["CLM-01"] : [],
       proofIds: index === 0 && figureIds.length > 0 ? ["EV-01"] : [],
       referenceIds: index === 0 ? ["EV-01"] : [],
@@ -596,7 +610,7 @@ async function createContentApprovedProject(
   const structureBlocks = pagePlan.pages.map((page, index) => ({
     pageId: page.pageId,
     heading: `${index + 1}. ${page.pageRole}`,
-    tables: index === 0 ? tables : [],
+    tables: pageTables[index]!,
     figureIds: index === 0 ? figureIds : [],
   }));
   await writeFile(structurePath, `${JSON.stringify({ schemaVersion: "1.0.0", blocks: structureBlocks })}\n`);
@@ -631,7 +645,7 @@ async function createContentApprovedProject(
         claimIds: index === 0 ? ["CLM-01"] : [],
         evidenceIds: index === 0 ? ["EV-01"] : [],
       }],
-      tables: index === 0 ? tables : [],
+      tables: pageTables[index]!,
       figureIds: index === 0 ? figureIds : [],
     })),
     figureManifest,

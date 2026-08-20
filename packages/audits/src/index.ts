@@ -9,9 +9,18 @@ export {
 export {
   findRepeatedSentences,
   sentenceFingerprint,
+  auditSurfaceRepetition,
+  surfaceTopologySignature,
   type RepeatedSentence,
   type RepetitionOccurrence,
+  type SurfaceRepetitionException,
+  type SurfaceTopologyObservation,
 } from "./repetition.js";
+export {
+  auditFigureSemanticValue,
+  type FigureSemanticValueRecord,
+  type NeighboringContentBlock,
+} from "./figure-value.js";
 export {
   approveContent,
   type ContentApprovalInput,
@@ -58,12 +67,15 @@ export {
 
 import { resolve } from "node:path";
 import { getDocumentModePolicy } from "@longtable/kpp-core";
+import { describeFigureSemanticValue, type FigureSpec } from "@longtable/kpp-renderers";
 import { PageArchitectureManifestSchema, ReferenceManifestSchema } from "@longtable/kpp-schemas";
 import { auditDocxArtifacts, readRenderObservations, type DocxAuditInput } from "./content.js";
+import { auditFigureSemanticValue, type NeighboringContentBlock } from "./figure-value.js";
 import { auditRenderedPageArchitecture } from "./page-architecture.js";
 import { auditFigureArtifacts, auditFigureDocumentBindings, type FigureAuditInput } from "./figure-family.js";
 import { auditReleaseReadiness, type ReleaseArtifactBindings } from "./release.js";
 import { blocked, combineSlices, inspectArtifact, makeSlice, readJsonObject, writeStableJson, type AuditArtifact, type AuditFinding, type AuditStatus } from "./source.js";
+import { auditSurfaceRepetition, surfaceTopologySignature } from "./repetition.js";
 import { auditRenderArtifacts } from "./surface-lineage.js";
 
 export interface ProposalAuditInput {
@@ -74,6 +86,8 @@ export interface ProposalAuditInput {
   readonly referenceManifestPath?: string;
   readonly trustedPdftotextPath?: string;
   readonly figures: readonly FigureAuditInput[];
+  /** Hash-bound figure specs carry block IDs; supplied content enables direct restatement checks. */
+  readonly neighboringBlocks?: readonly NeighboringContentBlock[];
   readonly outputPath: string;
 }
 
@@ -91,6 +105,8 @@ export async function auditProposal(input: ProposalAuditInput): Promise<Proposal
     auditDocxArtifacts(input.docx),
     auditRenderArtifacts(input.renderManifestPath, { trustedPdftotextPath: input.trustedPdftotextPath }),
     auditFigureArtifacts(input.figures),
+    auditBoundFigureSemanticValue(input),
+    auditBoundSurfaceRepetition(input),
     auditReleaseReadiness(resolve(input.root), receiptBindings),
     auditCrossSurfaceLineage(input.docx.docxPath, input.renderManifestPath),
     auditBoundRenderedPageArchitecture(input),
@@ -110,6 +126,61 @@ export async function auditProposal(input: ProposalAuditInput): Promise<Proposal
   };
   await writeStableJson(input.outputPath, report);
   return report;
+}
+
+async function auditBoundFigureSemanticValue(input: ProposalAuditInput) {
+  const artifacts: AuditArtifact[] = [];
+  try {
+    const figures = await Promise.all(input.figures.map(async (figureInput) => {
+      const [specArtifact, manifestArtifact, spec] = await Promise.all([
+        inspectArtifact(figureInput.specPath),
+        inspectArtifact(figureInput.manifestPath),
+        readJsonObject(figureInput.specPath),
+      ]);
+      artifacts.push(specArtifact, manifestArtifact);
+      return describeFigureSemanticValue(spec as unknown as FigureSpec);
+    }));
+    const slice = auditFigureSemanticValue(figures, input.neighboringBlocks ?? []);
+    return makeSlice(slice.findings, [...slice.artifacts, ...artifacts]);
+  } catch (error) {
+    return makeSlice([blocked("KPP_FIGURE_VALUE_UNBOUND", "hash-bound semantic figure spec를 value audit에 결속할 수 없습니다.", {
+      actual: error instanceof Error ? error.message : error,
+    })], artifacts);
+  }
+}
+
+async function auditBoundSurfaceRepetition(input: ProposalAuditInput) {
+  if (input.pageArchitecturePath === undefined) {
+    return makeSlice([blocked("KPP_RENDER_SURFACE_TOPOLOGY_UNBOUND", "rendered surface repetition audit에 잠긴 page architecture가 없습니다.")], []);
+  }
+  try {
+    const [architectureArtifact, geometryArtifact, architecture] = await Promise.all([
+      inspectArtifact(input.pageArchitecturePath),
+      inspectArtifact(input.docx.geometryReportPath),
+      readJsonObject(input.pageArchitecturePath),
+    ]);
+    const parsed = PageArchitectureManifestSchema.parse(architecture);
+    const observations = await readRenderObservations(input.docx.geometryReportPath, {
+      projectId: parsed.projectId,
+      documentMode: parsed.documentMode,
+      modePolicyVersion: parsed.modePolicyVersion,
+    });
+    const slice = auditSurfaceRepetition(observations.pages.map((page) => ({
+      pageLocator: page.pageLocator,
+      topologySignature: surfaceTopologySignature({
+        surfaceFamily: page.surfaceFamily,
+        titleBlocks: page.titleBlocks,
+        geometry: page.geometry,
+        continuationFromPrevious: page.continuationMarkers.fromPrevious,
+        continuationToNext: page.continuationMarkers.toNext,
+      }),
+    })));
+    return makeSlice(slice.findings, [...slice.artifacts, architectureArtifact, geometryArtifact]);
+  } catch (error) {
+    return makeSlice([blocked("KPP_RENDER_SURFACE_TOPOLOGY_UNBOUND", "측정된 rendered surface observation을 repetition audit에 결속할 수 없습니다.", {
+      actual: error instanceof Error ? error.message : error,
+    })], []);
+  }
 }
 
 async function auditBoundRenderedPageArchitecture(input: ProposalAuditInput) {

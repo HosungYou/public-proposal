@@ -109,6 +109,11 @@ export async function runProposalClassFixture({ proposalClass, researchLock, aca
   const fixtureRoot = await mkdtemp(join(tmpdir(), `public-proposal-${proposalClass}-`));
   const fixture = join(fixtureRoot, "fixture");
   const projectRoot = join(fixtureRoot, "project");
+  const documentMode = REQUIRED_RESEARCH_CLASSES.includes(proposalClass)
+    ? "research_service"
+    : proposalClass === "document_restyle"
+      ? "document_restyle"
+      : "public_procurement";
   const isolated = await prepareIsolation(fixtureRoot, join(fixtureRoot, "install"));
   const commands = [];
   await cp(FIXTURE_SOURCE, fixture, { recursive: true, force: false });
@@ -124,7 +129,7 @@ export async function runProposalClassFixture({ proposalClass, researchLock, aca
     return proposalFixtureResult(fixtureRoot, parseEnvelope(longtableDoctor.stdout, longtableDoctor.stderr), null, isolated, commands);
   }
   const init = await runKpp(
-    ["init", projectRoot, "--project-id", projectId, "--proposal-class", proposalClass, "--json"],
+    ["init", projectRoot, "--project-id", projectId, "--proposal-class", proposalClass, "--document-mode", documentMode, "--json"],
     isolated,
   );
   commands.push(init);
@@ -158,15 +163,21 @@ export async function runProposalClassFixture({ proposalClass, researchLock, aca
   await materializeTemplate(join(fixture, "requirement-decisions-template.json"), decisionsPath, {
     __METHOD_EVIDENCE_PATH__: evidencePath,
   });
-  if (academicEvidence) {
+  if (documentMode === "public_procurement" || academicEvidence) {
     const decisions = await readJson(decisionsPath);
     const requirement = decisions.requirements?.requirements?.[0];
     const evidenceBinding = decisions.requirements?.evidenceBindings?.[0];
     if (requirement === undefined || evidenceBinding === undefined) {
       throw new Error("Academic evidence fixture is missing its locked requirement binding.");
     }
-    requirement.pageRole = "academic_evidence";
-    evidenceBinding.targetPageRole = "academic_evidence";
+    if (documentMode === "public_procurement") {
+      requirement.pageRole = "requirement_response";
+      evidenceBinding.targetPageRole = "requirement_response";
+    }
+    if (academicEvidence) {
+      requirement.pageRole = "academic_evidence";
+      evidenceBinding.targetPageRole = "academic_evidence";
+    }
     await writeFile(decisionsPath, `${JSON.stringify(decisions, null, 2)}\n`, "utf8");
   }
   await requireKpp([

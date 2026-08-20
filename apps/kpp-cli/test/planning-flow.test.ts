@@ -106,6 +106,10 @@ describe("KPP planning flow", () => {
               intent: "flow",
               dataShape: "process_flow",
               decisionTask: "수행 절차를 검토한다.",
+              semanticValueIntent: "causal_mechanism",
+              decisionEffect: "수행 절차의 단계 간 인과관계를 판단한다.",
+              nonDuplicateOf: ["BLK-PROCESS-NARRATIVE"],
+              encodedVariables: ["input", "process", "output"],
               claimIds: ["CLAIM-002"],
               evidenceIds: ["EVID-002"],
               family: "flow",
@@ -119,6 +123,10 @@ describe("KPP planning flow", () => {
               intent: "schedule",
               dataShape: "time_axis",
               decisionTask: "수행 일정을 검토한다.",
+              semanticValueIntent: "operational_control",
+              decisionEffect: "수행 일정의 담당자와 검증 관문을 확정한다.",
+              nonDuplicateOf: ["BLK-SCHEDULE-NARRATIVE"],
+              encodedVariables: ["owner", "timing", "acceptance"],
               claimIds: ["CLAIM-002"],
               evidenceIds: ["EVID-002"],
               family: "gantt",
@@ -424,6 +432,10 @@ interface ConfirmedRequirementsFixture {
       intent: string;
       dataShape: string;
       decisionTask: string;
+      semanticValueIntent: string;
+      decisionEffect: string;
+      nonDuplicateOf: string[];
+      encodedVariables: string[];
       claimIds: string[];
       evidenceIds: string[];
       family: string;
@@ -479,6 +491,10 @@ async function createFixture(temporaryDirectories: string[]): Promise<{
             intent: "flow",
             dataShape: "process_flow",
             decisionTask: "수행 절차를 검토한다.",
+            semanticValueIntent: "causal_mechanism",
+            decisionEffect: "수행 절차의 단계 간 인과관계를 판단한다.",
+            nonDuplicateOf: ["BLK-PROCESS-NARRATIVE"],
+            encodedVariables: ["input", "process", "output"],
             claimIds: ["CLAIM-002"],
             evidenceIds: ["EVID-002"],
             family: "flow",
@@ -490,6 +506,10 @@ async function createFixture(temporaryDirectories: string[]): Promise<{
             intent: "schedule",
             dataShape: "time_axis",
             decisionTask: "수행 일정을 검토한다.",
+            semanticValueIntent: "operational_control",
+            decisionEffect: "수행 일정의 담당자와 검증 관문을 확정한다.",
+            nonDuplicateOf: ["BLK-SCHEDULE-NARRATIVE"],
+            encodedVariables: ["owner", "timing", "acceptance"],
             claimIds: ["CLAIM-002"],
             evidenceIds: ["EVID-002"],
             family: "gantt",

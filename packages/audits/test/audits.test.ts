@@ -604,6 +604,10 @@ async function figureFixture(): Promise<{
     claimIds: ["CL-1"],
     inputKind: "semantic",
     tokenProfileHash: R08_TOKEN_PROFILE_SHA256,
+    semanticValueIntent: "operational_control",
+    decisionEffect: "수행 일정의 담당자와 승인 관문을 확정한다.",
+    nonDuplicateOf: ["BLK-SCHEDULE-NARRATIVE"],
+    encodedVariables: ["owner", "timing", "acceptance"],
     family: "gantt",
     data: {
       kind: "time_axis",

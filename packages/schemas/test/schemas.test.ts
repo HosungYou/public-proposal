@@ -2,6 +2,8 @@ import { describe, expect, it } from "vitest";
 import {
   EvidenceBindingSchema,
   EvidenceItemSchema,
+  FigureSemanticValueIntentSchema,
+  SemanticFigureSpecSchema,
   ProposalClassSchema,
   ProjectSchema,
   ProjectStateSchema,
@@ -46,6 +48,44 @@ describe("canonical persisted schemas", () => {
         evidenceIds: [],
       }),
     ).toThrow();
+  });
+
+  it("requires an explicit, non-decorative figure value declaration and preserves decorative non-evidentiary boundaries", () => {
+    expect(FigureSemanticValueIntentSchema.options).toEqual([
+      "data_evidence",
+      "causal_mechanism",
+      "decision_tradeoff",
+      "operational_control",
+      "decorative",
+    ]);
+    const figure = {
+      figureId: "FIG-001",
+      requirementId: "REQ-001",
+      pageId: "PAGE-001",
+      title: "비용 비교",
+      intent: "comparison",
+      dataShape: "comparison_series",
+      decisionTask: "대안별 비용을 검토한다.",
+      semanticValueIntent: "data_evidence",
+      decisionEffect: "비용 대비 도입 우선순위를 결정한다.",
+      nonDuplicateOf: ["BLK-COMPARISON-NARRATIVE"],
+      encodedVariables: ["cost", "priority"],
+      claimIds: ["CLAIM-001"],
+      evidenceIds: ["EV-001"],
+      family: "comparison_chart",
+      renderer: "svg-comparison-chart",
+    } as const;
+    expect(SemanticFigureSpecSchema.parse(figure).semanticValueIntent).toBe("data_evidence");
+    expect(() => SemanticFigureSpecSchema.parse({ ...figure, semanticValueIntent: "decorative" })).toThrow();
+    expect(SemanticFigureSpecSchema.parse({
+      ...figure,
+      semanticValueIntent: "decorative",
+      decisionEffect: "",
+      nonDuplicateOf: [],
+      encodedVariables: [],
+      claimIds: [],
+      evidenceIds: [],
+    }).claimIds).toEqual([]);
   });
 
   it("permits empty evidence ids only for unresolved claim states", () => {

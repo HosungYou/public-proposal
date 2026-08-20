@@ -14,6 +14,19 @@ export const FigureIntentSchema = z.enum([
   "flow",
 ]);
 
+/**
+ * The single reader-facing value a non-decorative figure is allowed to add.
+ * A family (Gantt, RACI, framework, …) describes rendering structure; this
+ * intent describes the decision value of the rendered surface.
+ */
+export const FigureSemanticValueIntentSchema = z.enum([
+  "data_evidence",
+  "causal_mechanism",
+  "decision_tradeoff",
+  "operational_control",
+  "decorative",
+]);
+
 export const FigureDataShapeSchema = z.enum([
   "time_axis",
   "responsibility_matrix",
@@ -49,6 +62,13 @@ export const DeterministicFigureRendererSchema = z.enum([
   "svg-flow",
 ]);
 
+const FigureSemanticValueDeclarationSchema = z.object({
+  semanticValueIntent: FigureSemanticValueIntentSchema,
+  decisionEffect: z.string().trim(),
+  nonDuplicateOf: z.array(IdentifierSchema),
+  encodedVariables: z.array(IdentifierSchema),
+});
+
 export const SemanticFigureRequestSchema = z.object({
   figureId: IdentifierSchema,
   requirementId: IdentifierSchema,
@@ -57,11 +77,11 @@ export const SemanticFigureRequestSchema = z.object({
   intent: FigureIntentSchema,
   dataShape: FigureDataShapeSchema,
   decisionTask: IdentifierSchema,
-  claimIds: z.array(IdentifierSchema).min(1),
+  claimIds: z.array(IdentifierSchema),
   evidenceIds: z.array(IdentifierSchema),
   hasTimeAxis: z.boolean().optional().default(false),
   requestedFamily: RequestedFigureFamilySchema.optional(),
-});
+}).extend(FigureSemanticValueDeclarationSchema.shape).superRefine(validateSemanticFigureRequestValue);
 
 const SemanticFigureSpecFieldsSchema = z.object({
   figureId: IdentifierSchema,
@@ -71,19 +91,25 @@ const SemanticFigureSpecFieldsSchema = z.object({
   intent: FigureIntentSchema,
   dataShape: FigureDataShapeSchema,
   decisionTask: IdentifierSchema,
-  claimIds: z.array(IdentifierSchema).min(1),
-  evidenceIds: z.array(IdentifierSchema).min(1),
+  claimIds: z.array(IdentifierSchema),
+  evidenceIds: z.array(IdentifierSchema),
   family: SemanticFigureFamilySchema,
   renderer: DeterministicFigureRendererSchema,
-});
+}).extend(FigureSemanticValueDeclarationSchema.shape);
 
 export const SemanticFigureSpecSchema = SemanticFigureSpecFieldsSchema.superRefine(
-  validateSemanticFigureMapping,
+  (figure, context) => {
+    validateSemanticFigureMapping(figure, context);
+    validateSemanticFigureValue(figure, context);
+  },
 );
 
 export const RequirementFigureSpecSchema = SemanticFigureSpecFieldsSchema
   .omit({ requirementId: true, pageId: true })
-  .superRefine(validateSemanticFigureMapping);
+  .superRefine((figure, context) => {
+    validateSemanticFigureMapping(figure, context);
+    validateSemanticFigureValue(figure, context);
+  });
 
 export const VisualRightsStatusSchema = z.enum([
   "issuer_provided",
@@ -160,6 +186,7 @@ export const TopologyStudyRequestSchema = z.object({
 export type DeterministicFigureRenderer = z.infer<typeof DeterministicFigureRendererSchema>;
 export type FigureDataShape = z.infer<typeof FigureDataShapeSchema>;
 export type FigureIntent = z.infer<typeof FigureIntentSchema>;
+export type FigureSemanticValueIntent = z.infer<typeof FigureSemanticValueIntentSchema>;
 export type LockedResearchLogic = z.infer<typeof LockedResearchLogicSchema>;
 export type RequestedFigureFamily = z.infer<typeof RequestedFigureFamilySchema>;
 export type RequirementFigureSpec = z.infer<typeof RequirementFigureSpecSchema>;
@@ -197,6 +224,69 @@ function validateSemanticFigureMapping(
       message: "semantic figure family and deterministic renderer must agree",
       path: ["renderer"],
     });
+  }
+}
+
+function validateSemanticFigureValue(
+  figure: {
+    readonly semanticValueIntent: z.infer<typeof FigureSemanticValueIntentSchema>;
+    readonly decisionEffect: string;
+    readonly nonDuplicateOf: readonly string[];
+    readonly encodedVariables: readonly string[];
+    readonly claimIds: readonly string[];
+    readonly evidenceIds: readonly string[];
+  },
+  context: z.RefinementCtx,
+): void {
+  const decorative = figure.semanticValueIntent === "decorative";
+  if (decorative) {
+    if (figure.decisionEffect.length > 0) {
+      context.addIssue({ code: "custom", message: "decorative figures must not declare a decision effect", path: ["decisionEffect"] });
+    }
+    for (const field of ["nonDuplicateOf", "encodedVariables", "claimIds", "evidenceIds"] as const) {
+      if (figure[field].length > 0) {
+        context.addIssue({ code: "custom", message: "decorative figures must not carry evidentiary bindings", path: [field] });
+      }
+    }
+    return;
+  }
+  if (figure.decisionEffect.length === 0) {
+    context.addIssue({ code: "custom", message: "non-decorative figures must declare the decision effect", path: ["decisionEffect"] });
+  }
+  for (const field of ["nonDuplicateOf", "encodedVariables", "claimIds", "evidenceIds"] as const) {
+    if (figure[field].length === 0) {
+      context.addIssue({ code: "custom", message: "non-decorative figures require explicit semantic value bindings", path: [field] });
+    }
+  }
+}
+
+/**
+ * The planner emits the stable KPP_EVIDENCE_FIGURE_UNBOUND diagnostic for a
+ * missing evidence set, so request parsing intentionally leaves that one
+ * check to the planner. Persisted semantic figure specs remain strict.
+ */
+function validateSemanticFigureRequestValue(
+  figure: {
+    readonly semanticValueIntent: z.infer<typeof FigureSemanticValueIntentSchema>;
+    readonly decisionEffect: string;
+    readonly nonDuplicateOf: readonly string[];
+    readonly encodedVariables: readonly string[];
+    readonly claimIds: readonly string[];
+    readonly evidenceIds: readonly string[];
+  },
+  context: z.RefinementCtx,
+): void {
+  if (figure.semanticValueIntent === "decorative") {
+    validateSemanticFigureValue(figure, context);
+    return;
+  }
+  if (figure.decisionEffect.length === 0) {
+    context.addIssue({ code: "custom", message: "non-decorative figures must declare the decision effect", path: ["decisionEffect"] });
+  }
+  for (const field of ["nonDuplicateOf", "encodedVariables", "claimIds"] as const) {
+    if (figure[field].length === 0) {
+      context.addIssue({ code: "custom", message: "non-decorative figures require explicit semantic value bindings", path: [field] });
+    }
   }
 }
 

@@ -9,6 +9,10 @@ export const ganttFixture: GanttFigureSpec = {
   claimIds: ["CL-SCHEDULE-001"],
   inputKind: "semantic",
   tokenProfileHash: R08_TOKEN_PROFILE_SHA256,
+  semanticValueIntent: "operational_control",
+  decisionEffect: "과업의 담당자와 승인 관문을 확정한다.",
+  nonDuplicateOf: ["BLK-SCHEDULE-NARRATIVE"],
+  encodedVariables: ["owner", "timing", "acceptance"],
   data: {
     kind: "time_axis",
     periods: ["1개월", "2개월", "3개월", "4개월"],
