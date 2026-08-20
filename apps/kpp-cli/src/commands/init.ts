@@ -4,6 +4,7 @@ import {
   initializeProject,
   KppError,
   projectPath,
+  type DocumentMode,
   type ProposalClass,
 } from "@longtable/kpp-core";
 import { success, type CliEnvelope } from "../output.js";
@@ -12,6 +13,7 @@ export interface InitOptions {
   readonly issuerPack?: string;
   readonly projectId?: string;
   readonly proposalClass?: ProposalClass;
+  readonly documentMode?: DocumentMode;
 }
 
 export async function initializeCommand(rootInput: string, options: InitOptions): Promise<CliEnvelope> {
@@ -41,6 +43,7 @@ export async function initializeCommand(rootInput: string, options: InitOptions)
     projectId,
     issuerPack: options.issuerPack,
     proposalClass: options.proposalClass,
+    documentMode: options.documentMode,
   });
   return success("프로젝트를 초기화했습니다.", project);
 }

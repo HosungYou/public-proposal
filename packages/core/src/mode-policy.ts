@@ -1,0 +1,180 @@
+import { type DocumentMode } from "@longtable/kpp-schemas";
+
+export const MODE_POLICY_VERSION = "1.0.0";
+
+export interface DocumentModePolicy {
+  readonly documentMode: DocumentMode;
+  readonly modePolicyVersion: typeof MODE_POLICY_VERSION;
+  readonly requiredPageRoles: readonly string[];
+  readonly allowedSurfaceFamilies: readonly string[];
+  readonly requiredAuditSlices: readonly string[];
+  readonly artifactAllowlist: readonly string[];
+}
+
+const DOCUMENT_MODE_POLICIES: Record<DocumentMode, DocumentModePolicy> = {
+  public_procurement: {
+    documentMode: "public_procurement",
+    modePolicyVersion: MODE_POLICY_VERSION,
+    requiredPageRoles: [
+      "executive_summary",
+      "procurement_evaluation_crosswalk",
+      "requirement_response",
+      "delivery_control",
+    ],
+    allowedSurfaceFamilies: [
+      "narrative_continuation",
+      "evidence_analysis",
+      "process_control",
+      "comparison_decision",
+      "schedule_ownership",
+      "mandatory_form",
+    ],
+    requiredAuditSlices: [
+      "page_architecture",
+      "reference_integrity",
+      "render_repetition",
+      "figure_value",
+      "korean_prose_review",
+      "procurement_evaluation_crosswalk",
+    ],
+    artifactAllowlist: [
+      "rfp_requirement_matrix",
+      "evaluation_crosswalk",
+      "delivery_control_plan",
+      "evidence_ledger",
+      "audit_receipt",
+    ],
+  },
+  research_service: {
+    documentMode: "research_service",
+    modePolicyVersion: MODE_POLICY_VERSION,
+    requiredPageRoles: [
+      "research_question",
+      "research_method",
+      "evidence_plan",
+      "limitations",
+      "utilization_plan",
+    ],
+    allowedSurfaceFamilies: [
+      "research_narrative",
+      "method_design",
+      "evidence_analysis",
+      "limitations_register",
+      "utilization_roadmap",
+    ],
+    requiredAuditSlices: [
+      "page_architecture",
+      "reference_integrity",
+      "research_method_traceability",
+      "figure_value",
+      "korean_prose_review",
+    ],
+    artifactAllowlist: [
+      "research_specification",
+      "method_protocol",
+      "source_ledger",
+      "citation_slot_matrix",
+      "audit_receipt",
+    ],
+  },
+  private_partnership: {
+    documentMode: "private_partnership",
+    modePolicyVersion: MODE_POLICY_VERSION,
+    requiredPageRoles: [
+      "mutual_value",
+      "party_roles",
+      "operating_model",
+      "collaboration_options",
+      "next_decision",
+    ],
+    allowedSurfaceFamilies: [
+      "partnership_narrative",
+      "role_handoff",
+      "operating_model",
+      "option_comparison",
+      "decision_record",
+    ],
+    requiredAuditSlices: [
+      "page_architecture",
+      "reference_integrity",
+      "operating_model_traceability",
+      "render_repetition",
+      "korean_prose_review",
+    ],
+    artifactAllowlist: [
+      "partnership_value_map",
+      "role_handoff_matrix",
+      "operating_model",
+      "decision_options",
+      "audit_receipt",
+    ],
+  },
+  internal_decision: {
+    documentMode: "internal_decision",
+    modePolicyVersion: MODE_POLICY_VERSION,
+    requiredPageRoles: [
+      "decision_request",
+      "alternatives",
+      "tradeoffs",
+      "risk_register",
+      "owner_approval",
+    ],
+    allowedSurfaceFamilies: [
+      "decision_brief",
+      "option_comparison",
+      "tradeoff_table",
+      "risk_register",
+      "approval_form",
+    ],
+    requiredAuditSlices: [
+      "page_architecture",
+      "decision_traceability",
+      "risk_owner_traceability",
+      "render_repetition",
+      "korean_prose_review",
+    ],
+    artifactAllowlist: [
+      "decision_memo",
+      "options_matrix",
+      "risk_register",
+      "approval_record",
+      "audit_receipt",
+    ],
+  },
+  document_restyle: {
+    documentMode: "document_restyle",
+    modePolicyVersion: MODE_POLICY_VERSION,
+    requiredPageRoles: [
+      "source_inventory",
+      "content_ledger",
+      "layout_accessibility",
+      "mutation_report",
+      "acceptance_record",
+    ],
+    allowedSurfaceFamilies: [
+      "source_output_comparison",
+      "content_ledger",
+      "layout_review",
+      "mutation_log",
+      "acceptance_form",
+    ],
+    requiredAuditSlices: [
+      "source_output_traceability",
+      "layout_accessibility",
+      "mutation_integrity",
+      "reference_integrity",
+      "korean_prose_review",
+    ],
+    artifactAllowlist: [
+      "source_inventory",
+      "content_ledger",
+      "layout_accessibility_report",
+      "mutation_report",
+      "acceptance_record",
+    ],
+  },
+};
+
+export function getDocumentModePolicy(mode: DocumentMode): DocumentModePolicy {
+  return DOCUMENT_MODE_POLICIES[mode];
+}

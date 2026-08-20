@@ -6,6 +6,7 @@ import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { success, type CliEnvelope } from "../output.js";
 import { EXPECTED_WORKER_PROTOCOL, ManagedWorkerError, WORKER_PROTOCOL_PROBE, resolveExplicitWorker, resolveManagedWorker } from "../managed-worker.js";
+import { readProject } from "@longtable/kpp-core";
 
 const execFileAsync = promisify(execFile);
 
@@ -96,7 +97,7 @@ export function getDoctorCandidates(
   };
 }
 
-export async function doctorCommand(): Promise<CliEnvelope> {
+export async function doctorCommand(root?: string): Promise<CliEnvelope> {
   const checks = await Promise.all([
     nodeCheck(),
     pythonCheck(),
@@ -104,6 +105,7 @@ export async function doctorCommand(): Promise<CliEnvelope> {
     notoFontsCheck(),
     temporaryStorageCheck(),
     workerProtocolCheck(),
+    migrationCheck(root),
   ]);
 
   return success("설치 진단을 완료했습니다.", {
@@ -111,6 +113,34 @@ export async function doctorCommand(): Promise<CliEnvelope> {
     arch: process.arch,
     checks,
   });
+}
+
+async function migrationCheck(root: string | undefined): Promise<DoctorCheck> {
+  if (root === undefined) {
+    return {
+      name: "project_migration",
+      status: "pass",
+      detected: null,
+      message: "프로젝트 경로가 없어 마이그레이션 진단을 건너뛰었습니다.",
+    };
+  }
+  const project = await readProject(root);
+  if (project.schemaVersion === "1.0.0") {
+    return {
+      name: "project_migration",
+      status: "warn",
+      code: "KPP_MIGRATION_REQUIRED",
+      detected: { fromSchemaVersion: project.schemaVersion, toSchemaVersion: "2.0.0" },
+      message: "이 프로젝트는 명시적 v2 마이그레이션이 필요합니다.",
+      action: `kpp migrate ${root} --to 2.0.0 --document-mode <document-mode> --apply`,
+    };
+  }
+  return {
+    name: "project_migration",
+    status: "pass",
+    detected: { schemaVersion: project.schemaVersion },
+    message: "프로젝트 스키마가 현재 버전입니다.",
+  };
 }
 
 async function nodeCheck(): Promise<DoctorCheck> {

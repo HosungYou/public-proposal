@@ -94,6 +94,76 @@ describe("kpp CLI", () => {
     await expect(readFile(join(root, "kpp.project.yaml"), "utf8")).resolves.toContain(
       "proposalClass: general_procurement",
     );
+    await expect(readFile(join(root, "kpp.project.yaml"), "utf8")).resolves.toContain(
+      "schemaVersion: 2.0.0",
+    );
+    await expect(readFile(join(root, "kpp.project.yaml"), "utf8")).resolves.toContain(
+      "documentMode: public_procurement",
+    );
+  });
+
+  it("accepts an explicit document mode during init", async () => {
+    const root = await mkdtemp(join(tmpdir(), "kpp-cli-"));
+    temporaryDirectories.push(root);
+
+    const initialized = await run([
+      "init",
+      root,
+      "--document-mode",
+      "private_partnership",
+      "--json",
+    ]);
+
+    expect(initialized).toMatchObject({ code: 0, stderr: "" });
+    expect(parseEnvelope(initialized.stdout)).toMatchObject({
+      data: {
+        schemaVersion: "2.0.0",
+        documentMode: "private_partnership",
+        modePolicyVersion: "1.0.0",
+        migrationHistory: [],
+      },
+    });
+  });
+
+  it("migrates only when --apply is supplied and doctor leaves v1 metadata untouched", async () => {
+    const root = await mkdtemp(join(tmpdir(), "kpp-cli-migrate-"));
+    temporaryDirectories.push(root);
+    const projectPath = join(root, "kpp.project.yaml");
+    const legacyProject = [
+      "schemaVersion: 1.0.0",
+      "projectId: legacy-project",
+      "proposalClass: general_procurement",
+      "state: INIT",
+      "issuerPack: null",
+      "approvalPolicy: single_owner",
+      "",
+    ].join("\n");
+    await writeFile(projectPath, legacyProject);
+
+    const diagnosis = await run(["doctor", root, "--json"]);
+    const dryRun = await run([
+      "migrate",
+      root,
+      "--document-mode",
+      "private_partnership",
+      "--json",
+    ]);
+
+    expect(diagnosis).toMatchObject({ code: 0, stderr: "" });
+    expect(dryRun).toMatchObject({ code: 0, stderr: "" });
+    await expect(readFile(projectPath, "utf8")).resolves.toBe(legacyProject);
+    await expect(readdir(root)).resolves.not.toContain(".kpp-migrations");
+
+    const applied = await run([
+      "migrate",
+      root,
+      "--document-mode",
+      "private_partnership",
+      "--apply",
+      "--json",
+    ]);
+    expect(applied).toMatchObject({ code: 0, stderr: "" });
+    await expect(readFile(projectPath, "utf8")).resolves.toContain("schemaVersion: 2.0.0");
   });
 
   it("persists an explicit proposal class during init", async () => {
@@ -182,10 +252,19 @@ describe("kpp CLI", () => {
   });
 
   it("does not pass worker protocol when only the version environment value is set", async () => {
-    const result = await runProcess(process.execPath, ["apps/kpp-cli/dist/main.js", "doctor", "--json"], {
-      KPP_WORKER_PATH: undefined,
-      KPP_WORKER_PROTOCOL_VERSION: "1.0.0",
-    });
+    const directory = await mkdtemp(join(tmpdir(), "kpp-cli-doctor-"));
+    temporaryDirectories.push(directory);
+    const result = await runProcess(
+      process.execPath,
+      [join(process.cwd(), "apps/kpp-cli/dist/main.js"), "doctor", "--json"],
+      {
+        KPP_WORKER_PATH: undefined,
+        KPP_WORKER_PROTOCOL_VERSION: "1.0.0",
+        PUBLIC_PROPOSAL_INSTALLATION_MANIFEST: undefined,
+        HOME: directory,
+      },
+      directory,
+    );
 
     expect(result).toMatchObject({ code: 0, stderr: "" });
     expect(checkNamed(parseEnvelope(result.stdout), "worker_protocol")).toMatchObject({
@@ -344,10 +423,11 @@ async function runProcess(
   command: string,
   args: readonly string[],
   overrides?: NodeJS.ProcessEnv,
+  workingDirectory: string = process.cwd(),
 ): Promise<CommandResult> {
   return new Promise((resolve) => {
     const child = spawn(command, args, {
-      cwd: process.cwd(),
+      cwd: workingDirectory,
       env: { ...process.env, ...overrides },
       stdio: ["ignore", "pipe", "pipe"],
     });

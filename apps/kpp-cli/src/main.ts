@@ -10,6 +10,7 @@ import { exportAuthoringCommand } from "./commands/export-authoring.js";
 import { ingestCommand } from "./commands/ingest.js";
 import { importAuthoringCommand } from "./commands/import-authoring.js";
 import { initializeCommand } from "./commands/init.js";
+import { migrateCommand } from "./commands/migrate.js";
 import { planCommand } from "./commands/plan.js";
 import { requirementsCommand } from "./commands/requirements.js";
 import { researchLockCommand } from "./commands/research-lock.js";
@@ -17,6 +18,7 @@ import { renderCommand } from "./commands/render.js";
 import { releaseCommand } from "./commands/release.js";
 import { statusCommand } from "./commands/status.js";
 import { failure, writeEnvelope } from "./output.js";
+import { DOCUMENT_MODES } from "@longtable/kpp-core";
 
 const PROPOSAL_CLASSES = [
   "academic_research",
@@ -47,10 +49,10 @@ export async function runCli(argv: readonly string[]): Promise<number> {
     });
 
   program
-    .command("doctor")
+    .command("doctor [root]")
     .option("--json", "JSON 형식으로 출력")
-    .action(async (options: JsonOption) => {
-      writeEnvelope(await doctorCommand(), options.json === true);
+    .action(async (root: string | undefined, options: JsonOption) => {
+      writeEnvelope(await doctorCommand(root), options.json === true);
     });
 
   program
@@ -58,6 +60,7 @@ export async function runCli(argv: readonly string[]): Promise<number> {
     .option("--project-id <projectId>", "프로젝트 식별자")
     .option("--issuer-pack <issuerPack>", "기관 팩 식별자")
     .addOption(new Option("--proposal-class <proposalClass>", "제안서 분류").choices(PROPOSAL_CLASSES))
+    .addOption(new Option("--document-mode <documentMode>", "문서 모드").choices(DOCUMENT_MODES))
     .option("--json", "JSON 형식으로 출력")
     .action(async (
       root: string,
@@ -65,9 +68,23 @@ export async function runCli(argv: readonly string[]): Promise<number> {
         projectId?: string;
         issuerPack?: string;
         proposalClass?: (typeof PROPOSAL_CLASSES)[number];
+        documentMode?: (typeof DOCUMENT_MODES)[number];
       },
     ) => {
       writeEnvelope(await initializeCommand(root, options), options.json === true);
+  });
+
+  program
+    .command("migrate <root>")
+    .option("--to <schemaVersion>", "대상 스키마 버전", "2.0.0")
+    .addOption(new Option("--document-mode <documentMode>", "문서 모드").choices(DOCUMENT_MODES))
+    .option("--apply", "마이그레이션 쓰기 적용")
+    .option("--json", "JSON 형식으로 출력")
+    .action(async (
+      root: string,
+      options: JsonOption & { to?: string; documentMode?: (typeof DOCUMENT_MODES)[number]; apply?: boolean },
+    ) => {
+      writeEnvelope(await migrateCommand(root, options), options.json === true);
     });
 
   program
