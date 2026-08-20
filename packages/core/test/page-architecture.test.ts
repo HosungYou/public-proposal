@@ -7,7 +7,7 @@ const figure = {
   requirementId: "REQ-003",
   pageId: "PAGE-003",
   title: "Delivery controls",
-  intent: "control" as const,
+  intent: "flow" as const,
   dataShape: "process_flow" as const,
   decisionTask: "Confirm the control path.",
   claimIds: ["CLAIM-003"],
