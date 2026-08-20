@@ -23,6 +23,8 @@ export interface ProposalFixture {
   readonly pagePath: string;
   readonly extractorPath: string;
   readonly figure: { readonly specPath: string; readonly svgPath: string; readonly manifestPath: string };
+  /** Synthetic CONTENT_APPROVED artifact for nonDuplicateOf prose checks. */
+  readonly authoringResponsePath: string;
 }
 
 export async function materializeR08Reference(): Promise<ProposalFixture> {
@@ -161,8 +163,14 @@ async function materialize(relativeFixture: string, prefix: string): Promise<Pro
   };
   await writeJson(buildManifestPath, buildManifest);
   const render = await renderDocx(copied, docxPath);
-  await makeRenderedProject(root, [buildManifestPath, docxPath], [render.renderManifestPath, render.pdfPath, render.pagePath]);
-  return { root, docxPath, buildManifestPath, geometryReportPath, pageArchitecturePath, ...render, figure };
+  const authoringResponsePath = join(root, "project", "content", "authoring-response.json");
+  await makeRenderedProject(
+    root,
+    [buildManifestPath, docxPath],
+    [render.renderManifestPath, render.pdfPath, render.pagePath],
+    authoringResponsePath,
+  );
+  return { root, docxPath, buildManifestPath, geometryReportPath, pageArchitecturePath, ...render, figure, authoringResponsePath };
 }
 
 async function buildDocx(copied: string, docxPath: string): Promise<void> {
@@ -269,9 +277,26 @@ async function renderDocx(copied: string, docxPath: string): Promise<Pick<Propos
   return { renderManifestPath, pdfPath, pagePath, extractorPath };
 }
 
-async function makeRenderedProject(root: string, built: readonly string[], rendered: readonly string[]): Promise<void> {
+async function makeRenderedProject(
+  root: string,
+  built: readonly string[],
+  rendered: readonly string[],
+  authoringResponsePath: string,
+): Promise<void> {
   const project = join(root, "project");
   await initializeProject(project, { projectId: "sanitized-r08-regression" });
+  await writeJson(authoringResponsePath, {
+    schemaVersion: "1.0.0",
+    blocks: [{
+      pageId: "BLK-R08-SCHEDULE-NARRATIVE",
+      claimIds: ["CL-R08-METHOD"],
+      evidenceIds: ["EV-R08-METHOD"],
+      status: "provisional",
+      text: "일정의 세부 근거와 검토 순서는 본문에서 함께 확인한다.",
+      evaluatorAnswer: "일정 관문을 확인한다.",
+      pendingBlankFieldIds: [],
+    }],
+  });
   const stages = [
     ["SOURCE_LOCKED", "source-lock.json"], ["REQUIREMENTS_LOCKED", "requirements-lock.json"], ["EVIDENCE_LOCKED", "evidence-lock.json"],
     ["DESIGN_LOCKED", "design-lock.json"], ["CONTENT_APPROVED", "content-approval.json"], ["BUILT", "build.json"], ["RENDERED", "render.json"],
@@ -282,7 +307,18 @@ async function makeRenderedProject(root: string, built: readonly string[], rende
     await mkdir(dirname(marker), { recursive: true });
     await writeFile(marker, stage, "utf8");
     const receipt = join(project, "receipts", filename);
-    await writeReceipt({ stage, files: stage === "BUILT" ? built : stage === "RENDERED" ? rendered : [marker], inputReceiptHashes: predecessor === undefined ? [] : [predecessor], output: receipt });
+    await writeReceipt({
+      stage,
+      files: stage === "BUILT"
+        ? built
+        : stage === "RENDERED"
+          ? rendered
+          : stage === "CONTENT_APPROVED"
+            ? [marker, authoringResponsePath]
+            : [marker],
+      inputReceiptHashes: predecessor === undefined ? [] : [predecessor],
+      output: receipt,
+    });
     await advanceProject(project, stage);
     predecessor = await sha256File(receipt);
   }

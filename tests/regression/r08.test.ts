@@ -2,6 +2,7 @@ import { afterEach, expect, test } from "vitest";
 import { auditProposal } from "@longtable/kpp-audits";
 import { cleanupFixtures, materializeR08Reference, mutateTableMargin, projectPath, readEmbeddedDocxMedia, rebindDocxHash, rebindFigureOutputHash, runGeometry } from "./fixture-harness.js";
 import { readFile, stat, writeFile } from "node:fs/promises";
+import { verifyReceipt } from "@longtable/kpp-core";
 import { join } from "node:path";
 
 afterEach(cleanupFixtures);
@@ -10,6 +11,7 @@ async function audit(fixture: Awaited<ReturnType<typeof materializeR08Reference>
   const result = await auditProposal({
     root: await projectPath(fixture), docx: { docxPath: fixture.docxPath, buildManifestPath: fixture.buildManifestPath, geometryReportPath: fixture.geometryReportPath },
     pageArchitecturePath: fixture.pageArchitecturePath,
+    authoringResponsePath: fixture.authoringResponsePath,
     renderManifestPath: fixture.renderManifestPath, trustedPdftotextPath: fixture.extractorPath, figures: [fixture.figure], outputPath: `${fixture.root}/audit/${suffix}.json`,
   });
   return result;
@@ -17,6 +19,10 @@ async function audit(fixture: Awaited<ReturnType<typeof materializeR08Reference>
 
 test("synthetic reference renders its fixture-backed visual surface", async () => {
   const fixture = await materializeR08Reference();
+  const contentReceipt = await verifyReceipt(join(await projectPath(fixture), "receipts", "content-approval.json"));
+  expect(contentReceipt.valid).toBe(true);
+  expect(contentReceipt.receipt.files.map(({ path }) => path))
+    .toContain(fixture.authoringResponsePath);
   expect((await audit(fixture, "pass")).status).toBe("PASS");
 
   const visualReference = await readFile(join(fixture.root, "fixture", "ooxml", "word", "media", "visual-reference.png"));
