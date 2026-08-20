@@ -22,6 +22,19 @@ const DominantSurfaceSchema = z.enum([
   "form",
 ]);
 
+export const SurfaceRepetitionExceptionRuleSchema = z.enum([
+  "issuer_mandatory_form",
+  "accessibility_repeated_instruction",
+]);
+
+/** A verified issuer/source authority for a reader-facing repeated surface. */
+export const SurfaceRepetitionExceptionSchema = z.object({
+  ruleId: SurfaceRepetitionExceptionRuleSchema,
+  sourceId: IdentifierSchema,
+  sourceSha256: z.string().regex(/^[a-f0-9]{64}$/),
+  rationale: IdentifierSchema,
+}).strict();
+
 /** A source/issuer rule that justifies an exception to the title hierarchy. */
 export const IssuerOverrideSchema = z.object({
   documentMode: DocumentModeSchema,
@@ -66,12 +79,21 @@ export const PageArchitecturePageSchema = z.object({
   continuityFromPageId: IdentifierSchema.optional(),
   continuityToPageId: IdentifierSchema.optional(),
   issuerOverride: IssuerOverrideSchema.optional(),
+  surfaceRepetitionException: SurfaceRepetitionExceptionSchema.optional(),
 }).passthrough().superRefine((page, context) => {
   if (page.continuation && page.titleScope === "chapter" && page.issuerOverride === undefined) {
     context.addIssue({
       code: "custom",
       message: "continuation pages cannot use chapter title scope without an issuer override",
       path: ["issuerOverride"],
+    });
+  }
+  if (page.surfaceRepetitionException !== undefined
+    && !page.referenceIds.includes(page.surfaceRepetitionException.sourceId)) {
+    context.addIssue({
+      code: "custom",
+      message: "surface repetition exception sourceId must be declared by the page",
+      path: ["surfaceRepetitionException", "sourceId"],
     });
   }
 });
@@ -121,6 +143,7 @@ export const PageArchitectureManifestSchema = z.object({
 export type PageTitleScope = z.infer<typeof PageTitleScopeSchema>;
 export type ArchitectureStatus = z.infer<typeof ArchitectureStatusSchema>;
 export type PageSurfaceVisibility = z.infer<typeof PageSurfaceVisibilitySchema>;
+export type SurfaceRepetitionException = z.infer<typeof SurfaceRepetitionExceptionSchema>;
 export type IssuerOverride = z.infer<typeof IssuerOverrideSchema>;
 export type PageArchitecturePage = z.infer<typeof PageArchitecturePageSchema>;
 export type PageArchitectureManifest = z.infer<typeof PageArchitectureManifestSchema>;

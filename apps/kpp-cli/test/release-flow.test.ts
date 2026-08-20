@@ -201,6 +201,22 @@ describe("verified proposal release flow", () => {
     ]));
   }, 60_000);
 
+  it("blocks the CLI audit when receipt-bound authoring prose restates a figure decision effect", async () => {
+    const fixture = await createContentApprovedProject(roots, true, false, 1, false, undefined, true);
+    const built = await buildProject(fixture.root, { requestPath: fixture.requestPath });
+    const rendered = await renderProject(fixture.root, { docxPath: built.docxPath });
+
+    const audited = await auditProject(fixture.root, {
+      docxPath: built.docxPath,
+      buildManifestPath: built.manifestPath,
+      renderManifestPath: rendered.manifestPath,
+      figures: fixture.auditFigures,
+    });
+
+    expect(audited).toMatchObject({ state: "RENDERED", report: { status: "BLOCKED" } });
+    expect(audited.report.findings.map(({ code }) => code)).toContain("KPP_FIGURE_VALUE_PROSE_RESTATEMENT");
+  }, 60_000);
+
   it("blocks a semantic SVG paired with unrelated locked raster bytes before approval", async () => {
     const fixture = await createContentApprovedProject(roots, true, true);
     const built = await buildProject(fixture.root, { requestPath: fixture.requestPath });
@@ -416,6 +432,7 @@ async function createContentApprovedProject(
   figureCount = 1,
   crossModeArchitecture = false,
   continuationTitlePoint?: number,
+  restatesFigureDecisionEffect = false,
 ): Promise<{
   readonly root: string;
   readonly requestPath: string;
@@ -435,7 +452,7 @@ async function createContentApprovedProject(
     tokenProfileHash: R08_TOKEN_PROFILE_SHA256,
     semanticValueIntent: "operational_control",
     decisionEffect: "연구 일정의 담당자와 승인 관문을 확정한다.",
-    nonDuplicateOf: ["BLK-SCHEDULE-NARRATIVE"],
+    nonDuplicateOf: ["P-01"],
     encodedVariables: ["owner", "timing", "acceptance"],
     data: {
       kind: "time_axis",
@@ -463,7 +480,7 @@ async function createContentApprovedProject(
     decisionTask: index === 0 ? "연구 단계와 검토 관문을 확인한다." : "검증 게이트와 인수 기준을 확인한다.",
     semanticValueIntent: "operational_control",
     decisionEffect: index === 0 ? "연구 단계의 담당자와 검토 관문을 확정한다." : "검증 게이트의 담당자와 인수 기준을 확정한다.",
-    nonDuplicateOf: [index === 0 ? "BLK-SCHEDULE-NARRATIVE" : "BLK-GATE-NARRATIVE"],
+    nonDuplicateOf: [index === 0 ? "P-01" : "P-02"],
     encodedVariables: ["owner", "timing", "acceptance"],
     claimIds: ["CLM-01"],
     evidenceIds: ["EV-01"],
@@ -550,7 +567,9 @@ async function createContentApprovedProject(
     claimIds: index === 0 ? ["CLM-01"] : [],
     evidenceIds: index === 0 ? ["EV-01"] : [],
     status: "provisional",
-    text: index === 0 ? approvedText : `연구 문서 역할 ${index + 1}의 승인된 합성 본문이다.`,
+    text: index === 0
+      ? (restatesFigureDecisionEffect ? semanticFigures[0]!.decisionEffect : approvedText)
+      : `연구 문서 역할 ${index + 1}의 승인된 합성 본문이다.`,
     evaluatorAnswer: `합성 평가자 답변 ${index + 1}`,
     pendingBlankFieldIds: [],
   }));

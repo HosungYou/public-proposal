@@ -657,6 +657,54 @@ def test_build_embeds_only_hash_bound_figure_on_its_planned_page(tmp_path: Path)
     ]
 
 
+def test_build_request_accepts_decorative_figure_with_zero_evidentiary_bindings(
+    tmp_path: Path,
+) -> None:
+    figure = tmp_path / "decorative.png"
+    figure.write_bytes(
+        b64decode(
+            "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8A"
+            "AQUBAScY42YAAAAASUVORK5CYII="
+        )
+    )
+    payload = sample_request(tmp_path).model_dump(by_alias=True)
+    payload["figureManifest"]["figures"] = [{
+        "figureId": "FIG-DECORATIVE-01",
+        "requirementId": "REQ-01",
+        "pageId": "P-01",
+        "claimIds": [],
+        "renderer": "svg-flow",
+        "path": str(figure),
+        "sha256": _sha256(figure),
+        "format": "png",
+        "caption": "그림 1. 장식용 구분 표지",
+        "evidenceIds": [],
+        "widthDxa": 3600,
+    }]
+    payload["contentBlocks"][0]["figureIds"] = ["FIG-DECORATIVE-01"]
+    payload["pagePlan"]["pages"][0]["figureSpecs"] = [{
+        "figureId": "FIG-DECORATIVE-01",
+        "requirementId": "REQ-01",
+        "pageId": "P-01",
+        "title": "장식용 구분 표지",
+        "intent": "flow",
+        "dataShape": "process_flow",
+        "decisionTask": "장 구분을 보조한다.",
+        "semanticValueIntent": "decorative",
+        "decisionEffect": "",
+        "nonDuplicateOf": [],
+        "encodedVariables": [],
+        "claimIds": [],
+        "evidenceIds": [],
+        "family": "flow",
+        "renderer": "svg-flow",
+    }]
+
+    result = build_document(BuildRequest.model_validate(payload))
+
+    assert result.docx.exists()
+
+
 def test_build_request_rejects_unknown_schema_version(tmp_path: Path) -> None:
     payload = sample_request(tmp_path).model_dump(by_alias=True)
     payload["schemaVersion"] = "2.0.0"

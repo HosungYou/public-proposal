@@ -83,8 +83,8 @@ class PlannedFigureSpec(StrictModel):
     decision_effect: str = Field(alias="decisionEffect")
     non_duplicate_of: list[str] = Field(alias="nonDuplicateOf")
     encoded_variables: list[str] = Field(alias="encodedVariables")
-    claim_ids: list[str] = Field(alias="claimIds", min_length=1)
-    evidence_ids: list[str] = Field(alias="evidenceIds", min_length=1)
+    claim_ids: list[str] = Field(alias="claimIds")
+    evidence_ids: list[str] = Field(alias="evidenceIds")
     family: Literal[
         "gantt",
         "raci",
@@ -103,6 +103,17 @@ class PlannedFigureSpec(StrictModel):
         "svg-academic-framework",
         "svg-flow",
     ]
+
+    @model_validator(mode="after")
+    def validate_semantic_value_bindings(self) -> "PlannedFigureSpec":
+        if self.semantic_value_intent == "decorative":
+            if any((self.decision_effect, self.non_duplicate_of, self.encoded_variables, self.claim_ids, self.evidence_ids)):
+                raise ValueError("decorative figures must not carry evidentiary bindings")
+            return self
+        if (not self.decision_effect.strip() or not self.non_duplicate_of or not self.encoded_variables
+                or not self.claim_ids or not self.evidence_ids):
+            raise ValueError("non-decorative figures require semantic value and evidentiary bindings")
+        return self
 
 
 class IssuerOverride(StrictModel):
@@ -125,11 +136,18 @@ class IssuerOverride(StrictModel):
         return self
 
 
+class SurfaceRepetitionException(StrictModel):
+    rule_id: Literal["issuer_mandatory_form", "accessibility_repeated_instruction"] = Field(alias="ruleId")
+    source_id: str = Field(alias="sourceId", min_length=1)
+    source_sha256: str = Field(alias="sourceSha256", pattern=SHA256_PATTERN)
+    rationale: str = Field(min_length=1)
+
+
 class FigureSpec(StrictModel):
     figure_id: str = Field(alias="figureId", min_length=1)
     requirement_id: str = Field(alias="requirementId", min_length=1)
     page_id: str = Field(alias="pageId", min_length=1)
-    claim_ids: list[str] = Field(alias="claimIds", min_length=1)
+    claim_ids: list[str] = Field(alias="claimIds")
     renderer: str = Field(min_length=1)
     path: str = Field(min_length=1)
     sha256: str = Field(pattern=SHA256_PATTERN)
@@ -177,6 +195,7 @@ class PageArchitectureItem(StrictModel):
     continuity_from_page_id: str | None = Field(alias="continuityFromPageId", min_length=1, default=None)
     continuity_to_page_id: str | None = Field(alias="continuityToPageId", min_length=1, default=None)
     issuer_override: IssuerOverride | None = Field(alias="issuerOverride", default=None)
+    surface_repetition_exception: SurfaceRepetitionException | None = Field(alias="surfaceRepetitionException", default=None)
 
 
 class PageArchitecture(StrictModel):

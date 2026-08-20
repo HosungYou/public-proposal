@@ -54,6 +54,8 @@ export function findRepeatedSentences(
 export interface SurfaceRepetitionException {
   readonly ruleId: "issuer_mandatory_form" | "accessibility_repeated_instruction";
   readonly sourceId: string;
+  /** SHA-256 of the verified source record carried by the page architecture. */
+  readonly sourceSha256: string;
   readonly rationale: string;
 }
 
@@ -82,7 +84,7 @@ export function auditSurfaceRepetition(observations: readonly SurfaceTopologyObs
     let end = start + 1;
     while (end < observations.length && observations[end]!.topologySignature === first.topologySignature) end += 1;
     const run = observations.slice(start, end);
-    if (run.length > 1 && !run.every((observation) => hasPermittedException(observation.permittedException))) {
+    if (run.length > 1 && !hasSinglePermittedException(run)) {
       findings.push(blocked("KPP_RENDER_SURFACE_TOPOLOGY_REPETITION", "연속 페이지가 같은 reader-facing surface topology를 반복합니다.", {
         actual: { pages: run.map(({ pageLocator }) => pageLocator), topologySignature: first.topologySignature },
       }));
@@ -116,7 +118,19 @@ function hasPermittedException(value: SurfaceRepetitionException | undefined): b
   return value !== undefined
     && (value.ruleId === "issuer_mandatory_form" || value.ruleId === "accessibility_repeated_instruction")
     && value.sourceId.trim().length > 0
+    && /^[a-f0-9]{64}$/u.test(value.sourceSha256)
     && value.rationale.trim().length > 0;
+}
+
+function hasSinglePermittedException(run: readonly SurfaceTopologyObservation[]): boolean {
+  const first = run[0]?.permittedException;
+  return first !== undefined
+    && hasPermittedException(first)
+    && run.every(({ permittedException }) => permittedException !== undefined
+      && hasPermittedException(permittedException)
+      && permittedException.ruleId === first.ruleId
+      && permittedException.sourceId === first.sourceId
+      && permittedException.sourceSha256 === first.sourceSha256);
 }
 
 function splitSentences(value: string): readonly string[] {

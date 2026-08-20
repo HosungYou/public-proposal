@@ -1,6 +1,6 @@
 import {
   R08_RENDERER_TOKENS,
-  assertNonEmptyIds,
+  assertFigureEvidenceIds,
   assertText,
   escapeXml,
   joinEvidenceIds,
@@ -69,7 +69,7 @@ function validateRaci(figure: RaciFigureSpec): void {
     assertText(activity.owner, "activity.owner");
     assertText(activity.state, "activity.state");
     assertText(activity.acceptance, "activity.acceptance");
-    assertNonEmptyIds(activity.evidenceIds, "activity.evidenceIds");
+    assertFigureEvidenceIds(figure, activity.evidenceIds, "activity.evidenceIds");
     if (activity.assignments.length !== figure.data.actors.length) {
       throw new Error("Each RACI row must have one assignment per actor");
     }

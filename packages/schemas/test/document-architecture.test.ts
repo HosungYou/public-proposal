@@ -82,6 +82,29 @@ describe("document architecture contracts", () => {
     })).toThrow();
   });
 
+  it("requires a source-hashed persisted authority for a surface repetition exception", () => {
+    expect(() => PageArchitecturePageSchema.parse({
+      ...page,
+      surfaceRepetitionException: {
+        ruleId: "issuer_mandatory_form",
+        sourceId: "REF-001",
+        rationale: "발주기관 필수 양식의 반복 표지다.",
+      },
+    })).toThrow(/sourceSha256/i);
+
+    expect(PageArchitecturePageSchema.parse({
+      ...page,
+      surfaceRepetitionException: {
+        ruleId: "issuer_mandatory_form",
+        sourceId: "REF-001",
+        sourceSha256: "a".repeat(64),
+        rationale: "발주기관 필수 양식의 반복 표지다.",
+      },
+    })).toMatchObject({
+      surfaceRepetitionException: { sourceId: "REF-001", sourceSha256: "a".repeat(64) },
+    });
+  });
+
   it("accepts a minimal architecture and reference manifest", () => {
     const architecture = PageArchitectureManifestSchema.parse({
       schemaVersion: "2.0.0",

@@ -10,11 +10,14 @@ export {
   PageArchitecturePageSchema,
   PageSurfaceVisibilitySchema,
   PageTitleScopeSchema,
+  SurfaceRepetitionExceptionRuleSchema,
+  SurfaceRepetitionExceptionSchema,
   type IssuerOverride,
   type ArchitectureStatus,
   type PageArchitectureManifest,
   type PageArchitecturePage,
   type PageSurfaceVisibility,
+  type SurfaceRepetitionException,
   type PageTitleScope,
 } from "./page-architecture.js";
 export {

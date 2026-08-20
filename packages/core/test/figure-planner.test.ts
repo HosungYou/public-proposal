@@ -65,6 +65,22 @@ describe("semantic figure planner", () => {
     }), "KPP_EVIDENCE_FIGURE_UNBOUND");
   });
 
+  it("represents a decorative figure with zero evidentiary bindings", () => {
+    expect(planFigure({
+      ...baseRequest(),
+      semanticValueIntent: "decorative",
+      decisionEffect: "",
+      nonDuplicateOf: [],
+      encodedVariables: [],
+      claimIds: [],
+      evidenceIds: [],
+    })).toMatchObject({
+      semanticValueIntent: "decorative",
+      claimIds: [],
+      evidenceIds: [],
+    });
+  });
+
   it("validates actual inspected Korean reference pages and emits only a provisional topology study", async () => {
     const source = await createVisualSourceFixture(temporaryDirectories);
     const packet = await validateVisualSourcePacket(source.packet);

@@ -68,14 +68,14 @@ export {
 import { resolve } from "node:path";
 import { getDocumentModePolicy } from "@longtable/kpp-core";
 import { describeFigureSemanticValue, type FigureSpec } from "@longtable/kpp-renderers";
-import { PageArchitectureManifestSchema, ReferenceManifestSchema } from "@longtable/kpp-schemas";
+import { AuthoringResponseSchema, PageArchitectureManifestSchema, ReferenceManifestSchema } from "@longtable/kpp-schemas";
 import { auditDocxArtifacts, readRenderObservations, type DocxAuditInput } from "./content.js";
 import { auditFigureSemanticValue, type NeighboringContentBlock } from "./figure-value.js";
 import { auditRenderedPageArchitecture } from "./page-architecture.js";
 import { auditFigureArtifacts, auditFigureDocumentBindings, type FigureAuditInput } from "./figure-family.js";
 import { auditReleaseReadiness, type ReleaseArtifactBindings } from "./release.js";
 import { blocked, combineSlices, inspectArtifact, makeSlice, readJsonObject, writeStableJson, type AuditArtifact, type AuditFinding, type AuditStatus } from "./source.js";
-import { auditSurfaceRepetition, surfaceTopologySignature } from "./repetition.js";
+import { auditSurfaceRepetition, surfaceTopologySignature, type SurfaceRepetitionException } from "./repetition.js";
 import { auditRenderArtifacts } from "./surface-lineage.js";
 
 export interface ProposalAuditInput {
@@ -86,7 +86,9 @@ export interface ProposalAuditInput {
   readonly referenceManifestPath?: string;
   readonly trustedPdftotextPath?: string;
   readonly figures: readonly FigureAuditInput[];
-  /** Hash-bound figure specs carry block IDs; supplied content enables direct restatement checks. */
+  /** Receipt-bound authoring response used to materialize declared nonDuplicateOf blocks. */
+  readonly authoringResponsePath?: string;
+  /** Compatibility-only direct caller input; production CLI must use authoringResponsePath. */
   readonly neighboringBlocks?: readonly NeighboringContentBlock[];
   readonly outputPath: string;
 }
@@ -140,7 +142,16 @@ async function auditBoundFigureSemanticValue(input: ProposalAuditInput) {
       artifacts.push(specArtifact, manifestArtifact);
       return describeFigureSemanticValue(spec as unknown as FigureSpec);
     }));
-    const slice = auditFigureSemanticValue(figures, input.neighboringBlocks ?? []);
+    if (figures.length === 0) return makeSlice([], artifacts);
+    const blocks = input.authoringResponsePath === undefined
+      ? input.neighboringBlocks
+      : await readAuthoringBlocks(input.authoringResponsePath, artifacts);
+    if (blocks === undefined) {
+      return makeSlice([blocked("KPP_FIGURE_VALUE_CONTENT_UNBOUND", "semantic figure의 nonDuplicateOf 검사를 위한 receipt-bound authoring response가 없습니다.", {
+        expected: "authoringResponsePath",
+      })], artifacts);
+    }
+    const slice = auditFigureSemanticValue(figures, blocks);
     return makeSlice(slice.findings, [...slice.artifacts, ...artifacts]);
   } catch (error) {
     return makeSlice([blocked("KPP_FIGURE_VALUE_UNBOUND", "hash-bound semantic figure spec를 value audit에 결속할 수 없습니다.", {
@@ -165,7 +176,8 @@ async function auditBoundSurfaceRepetition(input: ProposalAuditInput) {
       documentMode: parsed.documentMode,
       modePolicyVersion: parsed.modePolicyVersion,
     });
-    const slice = auditSurfaceRepetition(observations.pages.map((page) => ({
+    const authority = await resolveSurfaceRepetitionAuthority(parsed, input.referenceManifestPath);
+    const slice = auditSurfaceRepetition(observations.pages.map((page, index) => ({
       pageLocator: page.pageLocator,
       topologySignature: surfaceTopologySignature({
         surfaceFamily: page.surfaceFamily,
@@ -174,13 +186,79 @@ async function auditBoundSurfaceRepetition(input: ProposalAuditInput) {
         continuationFromPrevious: page.continuationMarkers.fromPrevious,
         continuationToNext: page.continuationMarkers.toNext,
       }),
+      permittedException: parsed.pages[index] === undefined
+        ? undefined
+        : authority.exceptions.get(parsed.pages[index].pageId),
     })));
-    return makeSlice(slice.findings, [...slice.artifacts, architectureArtifact, geometryArtifact]);
+    return makeSlice([...authority.findings, ...slice.findings], [...slice.artifacts, architectureArtifact, geometryArtifact, ...authority.artifacts]);
   } catch (error) {
     return makeSlice([blocked("KPP_RENDER_SURFACE_TOPOLOGY_UNBOUND", "측정된 rendered surface observation을 repetition audit에 결속할 수 없습니다.", {
       actual: error instanceof Error ? error.message : error,
     })], []);
   }
+}
+
+async function readAuthoringBlocks(
+  path: string,
+  artifacts: AuditArtifact[],
+): Promise<readonly NeighboringContentBlock[]> {
+  const [artifact, raw] = await Promise.all([inspectArtifact(path), readJsonObject(path)]);
+  artifacts.push(artifact);
+  const response = AuthoringResponseSchema.parse(raw);
+  return response.blocks.map((block) => ({ blockId: block.pageId, text: block.text }));
+}
+
+export async function resolveSurfaceRepetitionAuthority(
+  architecture: ReturnType<typeof PageArchitectureManifestSchema.parse>,
+  referenceManifestPath: string | undefined,
+): Promise<{
+  readonly exceptions: ReadonlyMap<string, SurfaceRepetitionException>;
+  readonly findings: readonly AuditFinding[];
+  readonly artifacts: readonly AuditArtifact[];
+}> {
+  const exceptions = new Map<string, SurfaceRepetitionException>();
+  const findings: AuditFinding[] = [];
+  const artifacts: AuditArtifact[] = [];
+  const declared = architecture.pages.filter((page) => page.surfaceRepetitionException !== undefined);
+  if (declared.length === 0) return { exceptions, findings, artifacts };
+  if (referenceManifestPath === undefined) {
+    for (const page of declared) {
+      findings.push(blocked("KPP_RENDER_SURFACE_TOPOLOGY_EXCEPTION_UNBOUND", "surface repetition exception에 결속된 reference manifest가 없습니다.", {
+        actual: page.pageId,
+      }));
+    }
+    return { exceptions, findings, artifacts };
+  }
+  const [referenceArtifact, raw] = await Promise.all([
+    inspectArtifact(referenceManifestPath),
+    readJsonObject(referenceManifestPath),
+  ]);
+  artifacts.push(referenceArtifact);
+  const references = ReferenceManifestSchema.parse(raw);
+  const policy = getDocumentModePolicy(architecture.documentMode);
+  for (const page of declared) {
+    const exception = page.surfaceRepetitionException!;
+    const reference = references.references.find(({ referenceId }) => referenceId === exception.sourceId);
+    const sourcePath = reference?.sourcePath ?? reference?.path;
+    const sourceArtifact = sourcePath === undefined ? undefined : await inspectArtifact(sourcePath).catch(() => undefined);
+    if (sourceArtifact !== undefined) artifacts.push(sourceArtifact);
+    const permitted = reference !== undefined
+      && page.referenceIds.includes(exception.sourceId)
+      && reference.referenceClass === "issuer_rule"
+      && policy.issuerOverridePolicy.allowedReferenceClasses.includes(reference.referenceClass)
+      && reference.verificationStatus === "verified"
+      && reference.availability === "available"
+      && reference.sourceSha256 === exception.sourceSha256
+      && sourceArtifact?.sha256 === exception.sourceSha256;
+    if (!permitted) {
+      findings.push(blocked("KPP_RENDER_SURFACE_TOPOLOGY_EXCEPTION_UNBOUND", "surface repetition exception은 verified issuer_rule source와 동일한 SHA-256에 결속되어야 합니다.", {
+        actual: { pageId: page.pageId, sourceId: exception.sourceId },
+      }));
+      continue;
+    }
+    exceptions.set(page.pageId, exception);
+  }
+  return { exceptions, findings, artifacts };
 }
 
 async function auditBoundRenderedPageArchitecture(input: ProposalAuditInput) {

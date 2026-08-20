@@ -1,6 +1,6 @@
 import {
   R08_RENDERER_TOKENS,
-  assertNonEmptyIds,
+  assertFigureEvidenceIds,
   assertText,
   escapeXml,
   figureScopedIds,
@@ -92,7 +92,7 @@ function validateFramework(figure: FrameworkFigureSpec): readonly FrameworkNode[
     assertText(node.owner, "node.owner");
     assertText(node.state, "node.state");
     assertText(node.acceptance, "node.acceptance");
-    assertNonEmptyIds(node.evidenceIds, "node.evidenceIds");
+    assertFigureEvidenceIds(figure, node.evidenceIds, "node.evidenceIds");
     if (byId.has(node.id)) {
       throw new Error("Framework node IDs must be unique");
     }

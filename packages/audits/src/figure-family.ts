@@ -68,7 +68,8 @@ export async function auditFigureArtifacts(inputs: readonly FigureAuditInput[]):
           { path: input.svgPath, expected: roles },
         ));
       }
-      if (manifest.bindings.evidenceIds.length === 0 || manifest.bindings.claimIds.length === 0) {
+      if (spec.semanticValueIntent !== "decorative"
+        && (manifest.bindings.evidenceIds.length === 0 || manifest.bindings.claimIds.length === 0)) {
         findings.push(blocked("KPP_DESIGN_SURFACE_LINEAGE", "figure evidence/claim binding이 비어 있습니다.", { path: input.manifestPath }));
       }
     } catch (error) {

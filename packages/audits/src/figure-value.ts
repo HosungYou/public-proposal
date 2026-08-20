@@ -40,7 +40,11 @@ export function auditFigureSemanticValue(
     }
     for (const blockId of figure.nonDuplicateOf) {
       const block = blocksById.get(blockId);
-      if (block !== undefined && restatesBlock(figure, block)) {
+      if (block === undefined) {
+        findings.push(blocked("KPP_FIGURE_VALUE_NON_DUPLICATE_UNRESOLVED", "도식의 nonDuplicateOf 대상 authoring block을 확인할 수 없습니다.", {
+          actual: { figureId: figure.figureId, blockId },
+        }));
+      } else if (restatesBlock(figure, block)) {
         findings.push(blocked("KPP_FIGURE_VALUE_PROSE_RESTATEMENT", "도식이 인접한 prose/table block을 그대로 반복합니다.", {
           actual: { figureId: figure.figureId, blockId },
         }));

@@ -6,6 +6,7 @@ import { afterEach, describe, expect, test } from "vitest";
 import {
   auditDocxArtifacts,
   auditFigureArtifacts,
+  auditFigureSemanticValue,
   auditProposal,
   auditReleaseReadiness,
   auditRenderArtifacts,
@@ -19,6 +20,7 @@ import {
 } from "@longtable/kpp-core";
 import {
   R08_TOKEN_PROFILE_SHA256,
+  describeFigureSemanticValue,
   renderFigureArtifact,
   type GanttFigureSpec,
 } from "@longtable/kpp-renderers";
@@ -248,6 +250,33 @@ describe("artifact-backed proposal audits", () => {
     expect(blocked.findings.map((finding) => finding.code)).toContain("KPP_DESIGN_GANTT_STRUCTURE");
   });
 
+  test("allows a rendered decorative figure with zero bindings to reach the zero-credit value gate", async () => {
+    const root = await makeRoot("kpp-decorative-render-");
+    const specPath = join(root, "decorative.spec.json");
+    const svgPath = join(root, "decorative.svg");
+    const manifestPath = join(root, "decorative.render.json");
+    const decorative: GanttFigureSpec = {
+      figureId: "FIG-DECORATIVE-RENDERED", family: "gantt", title: "장식용 구분 표지", caption: "그림 1. 장식용 구분 표지",
+      evidenceIds: [], claimIds: [], inputKind: "semantic", tokenProfileHash: R08_TOKEN_PROFILE_SHA256,
+      semanticValueIntent: "decorative", decisionEffect: "", nonDuplicateOf: [], encodedVariables: [],
+      data: {
+        kind: "time_axis", periods: ["D1", "D2"],
+        workPackages: [{ id: "WP-01", label: "구분", owner: "운영팀", start: 0, end: 1, evidenceIds: [] }],
+        milestones: [{ id: "M-01", label: "구분", period: 1, owner: "운영팀", evidenceIds: [], acceptance: "장 구분" }],
+      },
+    };
+    const rendered = await renderFigureArtifact(decorative);
+    await Promise.all([
+      writeFile(specPath, `${JSON.stringify(decorative)}\n`, "utf8"),
+      writeFile(svgPath, rendered.svg, "utf8"),
+      writeFile(manifestPath, `${JSON.stringify(rendered.manifest)}\n`, "utf8"),
+    ]);
+
+    expect((await auditFigureArtifacts([{ specPath, svgPath, manifestPath }])).status).toBe("PASS");
+    expect(auditFigureSemanticValue([describeFigureSemanticValue(decorative)], []).findings.map(({ code }) => code))
+      .toContain("KPP_FIGURE_VALUE_DECORATIVE");
+  });
+
   test("blocks a stale predecessor receipt even when every receipt says PASS", async () => {
     const root = await renderedProjectFixture();
     const receipt = join(root, "receipts", "render.json");
@@ -267,7 +296,15 @@ describe("artifact-backed proposal audits", () => {
     const render = await renderFixture(docx.docxPath);
     const architectureRoot = await makeRoot("kpp-stable-architecture-");
     const architecturePath = join(architectureRoot, "page-architecture.json");
+    const authoringResponsePath = join(architectureRoot, "authoring-response.json");
     await writeFile(architecturePath, `${JSON.stringify(singlePageArchitecture(false), null, 2)}\n`);
+    await writeFile(authoringResponsePath, `${JSON.stringify({
+      schemaVersion: "1.0.0",
+      blocks: [{
+        pageId: "BLK-SCHEDULE-NARRATIVE", claimIds: ["CL-1"], evidenceIds: ["EV-1"], status: "provisional",
+        text: "일정의 근거는 별도 표에서 검토한다.", evaluatorAnswer: "일정 관문을 확인한다.", pendingBlankFieldIds: [],
+      }],
+    }, null, 2)}\n`);
     const boundManifest = JSON.parse(await readFile(docx.buildManifestPath, "utf8")) as Record<string, unknown>;
     boundManifest.inputs = {
       ...((boundManifest.inputs as Record<string, unknown> | undefined) ?? {}),
@@ -287,6 +324,7 @@ describe("artifact-backed proposal audits", () => {
       renderManifestPath: render.manifestPath,
       trustedPdftotextPath: render.extractorPath,
       figures: [figure],
+      authoringResponsePath,
       outputPath,
     });
     const firstBytes = await readFile(outputPath, "utf8");
@@ -297,6 +335,7 @@ describe("artifact-backed proposal audits", () => {
       renderManifestPath: render.manifestPath,
       trustedPdftotextPath: render.extractorPath,
       figures: [figure],
+      authoringResponsePath,
       outputPath,
     });
 

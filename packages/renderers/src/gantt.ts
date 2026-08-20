@@ -1,6 +1,6 @@
 import {
   R08_RENDERER_TOKENS,
-  assertNonEmptyIds,
+  assertFigureEvidenceIds,
   assertText,
   escapeXml,
   joinEvidenceIds,
@@ -78,7 +78,7 @@ function validateGantt(figure: GanttFigureSpec): void {
     assertText(workPackage.id, "workPackage.id");
     assertText(workPackage.label, "workPackage.label");
     assertText(workPackage.owner, "workPackage.owner");
-    assertNonEmptyIds(workPackage.evidenceIds, "workPackage.evidenceIds");
+    assertFigureEvidenceIds(figure, workPackage.evidenceIds, "workPackage.evidenceIds");
     if (!Number.isInteger(workPackage.start) || !Number.isInteger(workPackage.end)
       || workPackage.start < 0 || workPackage.end < workPackage.start
       || workPackage.end >= figure.data.periods.length) {
@@ -91,7 +91,7 @@ function validateGantt(figure: GanttFigureSpec): void {
     assertText(milestone.label, "milestone.label");
     assertText(milestone.owner, "milestone.owner");
     assertText(milestone.acceptance, "milestone.acceptance");
-    assertNonEmptyIds(milestone.evidenceIds, "milestone.evidenceIds");
+    assertFigureEvidenceIds(figure, milestone.evidenceIds, "milestone.evidenceIds");
     if (!Number.isInteger(milestone.period) || milestone.period < 0 || milestone.period >= figure.data.periods.length) {
       throw new Error("Gantt milestone must address the declared time axis");
     }

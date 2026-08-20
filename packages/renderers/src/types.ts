@@ -212,6 +212,22 @@ export function assertNonEmptyIds(value: unknown, field: string): asserts value 
   }
 }
 
+/** Decorative figures may carry structural labels without claiming evidence. */
+export function assertFigureEvidenceIds(
+  figure: FigureSpec,
+  value: unknown,
+  field: string,
+): asserts value is readonly string[] {
+  if (figure.semanticValueIntent !== "decorative") {
+    assertNonEmptyIds(value, field);
+    return;
+  }
+  if (!Array.isArray(value)) {
+    throw new Error(`${field} must be an evidence ID array`);
+  }
+  for (const id of value) assertText(id, field);
+}
+
 function assertFigureSemanticValueDeclaration(figure: FigureSpec): void {
   if (!FIGURE_SEMANTIC_VALUE_INTENTS.includes(figure.semanticValueIntent)) {
     throw new Error("semanticValueIntent is not a supported figure semantic-value intent");

@@ -75,4 +75,11 @@ describe("semantic figure-value audit", () => {
     expect(result.status).toBe("BLOCKED");
     expect(result.findings.map(({ code }) => code)).toContain("KPP_FIGURE_VALUE_PROSE_RESTATEMENT");
   });
+
+  test("blocks a figure whose declared neighboring authoring block cannot be resolved", () => {
+    const result = auditFigureSemanticValue([comparison], []);
+
+    expect(result.status).toBe("BLOCKED");
+    expect(result.findings.map(({ code }) => code)).toContain("KPP_FIGURE_VALUE_NON_DUPLICATE_UNRESOLVED");
+  });
 });

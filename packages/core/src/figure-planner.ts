@@ -45,7 +45,7 @@ const RENDERER_BY_FAMILY: Readonly<Record<SemanticFigureFamily, DeterministicFig
  */
 export function planFigure(input: unknown): SemanticFigureSpec {
   const request = parseRequest(input);
-  if (request.evidenceIds.length === 0) {
+  if (request.semanticValueIntent !== "decorative" && request.evidenceIds.length === 0) {
     throw new KppError(
       "KPP_EVIDENCE_FIGURE_UNBOUND",
       "근거 ID가 없는 도식은 계획할 수 없습니다.",
