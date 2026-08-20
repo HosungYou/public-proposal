@@ -16,26 +16,11 @@ const ReferenceTargetKindSchema = z.enum([
   "quotation",
 ]);
 
-/** A target may be written with either the canonical kind/id pair or targetType/targetId aliases. */
+/** Stable, unambiguous target representation used by every reference record. */
 export const ReferenceTargetSchema = z.object({
-  kind: ReferenceTargetKindSchema.optional(),
-  id: IdentifierSchema.optional(),
-  targetType: ReferenceTargetKindSchema.optional(),
-  targetId: IdentifierSchema.optional(),
-}).passthrough().superRefine((target, context) => {
-  const hasCanonical = target.kind !== undefined || target.id !== undefined;
-  const hasAliases = target.targetType !== undefined || target.targetId !== undefined;
-  if (!hasCanonical && !hasAliases) {
-    context.addIssue({ code: "custom", message: "reference target requires a target kind and id" });
-    return;
-  }
-  if (hasCanonical && (target.kind === undefined || target.id === undefined)) {
-    context.addIssue({ code: "custom", message: "reference target kind and id must be non-empty" });
-  }
-  if (hasAliases && (target.targetType === undefined || target.targetId === undefined)) {
-    context.addIssue({ code: "custom", message: "reference target targetType and targetId must be non-empty" });
-  }
-});
+  kind: ReferenceTargetKindSchema,
+  id: IdentifierSchema,
+}).strict();
 
 const VerificationStatusSchema = z.enum([
   "verified",
@@ -88,7 +73,19 @@ export const ReferenceManifestSchema = z.object({
   documentMode: DocumentModeSchema,
   modePolicyVersion: z.string().trim().min(1),
   references: z.array(ReferenceRecordSchema),
-}).passthrough();
+}).passthrough().superRefine((manifest, context) => {
+  const seen = new Set<string>();
+  manifest.references.forEach((reference, index) => {
+    if (seen.has(reference.referenceId)) {
+      context.addIssue({
+        code: "custom",
+        message: `referenceId must be unique: ${reference.referenceId}`,
+        path: ["references", index, "referenceId"],
+      });
+    }
+    seen.add(reference.referenceId);
+  });
+});
 
 export type ReferenceClass = z.infer<typeof ReferenceClassSchema>;
 export type ReferenceTarget = z.infer<typeof ReferenceTargetSchema>;

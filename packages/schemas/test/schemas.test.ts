@@ -169,10 +169,10 @@ describe("canonical persisted schemas", () => {
       files: [
         {
           path: "sources/rfp.pdf",
-          sha256: "a".repeat(64),
+          sha256: "A".repeat(64),
         },
       ],
-      inputReceiptHashes: [],
+      inputReceiptHashes: ["B".repeat(64)],
       result: "PASS",
     });
 

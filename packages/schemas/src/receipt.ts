@@ -2,7 +2,7 @@ import { z } from "zod";
 import { ProjectStateSchema } from "./project.js";
 import { DocumentModeSchema } from "./document-mode.js";
 
-const Sha256Schema = z.string().regex(/^[a-f0-9]{64}$/);
+const Sha256Schema = z.string().regex(/^[a-f0-9]{64}$/i);
 
 export const ReceiptFileSchema = z.object({
   path: z.string().min(1),

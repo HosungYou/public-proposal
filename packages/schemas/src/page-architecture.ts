@@ -22,23 +22,28 @@ const DominantSurfaceSchema = z.enum([
 ]);
 
 /** A source/issuer rule that justifies an exception to the title hierarchy. */
-export const IssuerOverrideSchema = z.union([
-  IdentifierSchema,
-  z.object({
-    ruleId: IdentifierSchema.optional(),
-    sourceRuleId: IdentifierSchema.optional(),
-    reason: IdentifierSchema.optional(),
-    rationale: IdentifierSchema.optional(),
-    approvedBy: IdentifierSchema.optional(),
-  }).passthrough().superRefine((value, context) => {
-    if (!value.ruleId && !value.sourceRuleId && !value.reason && !value.rationale) {
-      context.addIssue({
-        code: "custom",
-        message: "issuer override must identify a source rule or reason",
-      });
-    }
-  }),
-]);
+export const IssuerOverrideSchema = z.object({
+  documentMode: DocumentModeSchema,
+  modePolicyVersion: IdentifierSchema,
+  ruleId: IdentifierSchema.optional(),
+  sourceId: IdentifierSchema.optional(),
+  reason: IdentifierSchema,
+}).strict().superRefine((value, context) => {
+  if (value.ruleId === undefined && value.sourceId === undefined) {
+    context.addIssue({
+      code: "custom",
+      message: "issuer override must identify a ruleId or sourceId",
+      path: ["ruleId"],
+    });
+  }
+  if (value.ruleId !== undefined && value.sourceId !== undefined) {
+    context.addIssue({
+      code: "custom",
+      message: "issuer override must identify either ruleId or sourceId, not both",
+      path: ["ruleId"],
+    });
+  }
+});
 
 export const PageArchitecturePageSchema = z.object({
   pageId: IdentifierSchema,
@@ -90,7 +95,25 @@ export const PageArchitectureManifestSchema = z.object({
   chapters: z.array(ChapterSchema).default([]),
   sections: z.array(SectionSchema).default([]),
   pages: z.array(PageArchitecturePageSchema).min(1),
-}).passthrough();
+}).passthrough().superRefine((manifest, context) => {
+  manifest.pages.forEach((page, index) => {
+    if (page.issuerOverride === undefined) return;
+    if (page.issuerOverride.documentMode !== manifest.documentMode) {
+      context.addIssue({
+        code: "custom",
+        message: "issuer override documentMode must match the architecture manifest",
+        path: ["pages", index, "issuerOverride", "documentMode"],
+      });
+    }
+    if (page.issuerOverride.modePolicyVersion !== manifest.modePolicyVersion) {
+      context.addIssue({
+        code: "custom",
+        message: "issuer override modePolicyVersion must match the architecture manifest",
+        path: ["pages", index, "issuerOverride", "modePolicyVersion"],
+      });
+    }
+  });
+});
 
 export type PageTitleScope = z.infer<typeof PageTitleScopeSchema>;
 export type PageSurfaceVisibility = z.infer<typeof PageSurfaceVisibilitySchema>;
