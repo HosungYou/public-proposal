@@ -11,6 +11,9 @@ from pathlib import Path
 
 import pytest
 from docx import Document
+from docx.enum.table import WD_CELL_VERTICAL_ALIGNMENT
+from docx.enum.text import WD_ALIGN_PARAGRAPH
+from docx.oxml.ns import qn
 from pydantic import ValidationError
 
 import kpp_docx.build as build_module
@@ -167,6 +170,39 @@ def test_build_applies_body_and_table_contract(tmp_path: Path) -> None:
     assert len(reopened.tables) == 1
     assert reopened.sections[0].header.paragraphs[0].text == "연구용역 제안서 | 형식·구조 검증본"
     assert reopened.sections[0].footer.paragraphs[0].text.startswith("1. 연구 수행방법 |")
+
+
+def test_native_table_applies_governed_header_and_body_cell_grammar(tmp_path: Path) -> None:
+    result = build_document(sample_request(tmp_path))
+    table = Document(result.docx).tables[0]
+
+    margins = table._tbl.tblPr.find(qn("w:tblCellMar"))
+    assert margins is not None
+    assert {
+        side: margins.find(qn(f"w:{side}")).get(qn("w:w"))
+        for side in ("top", "start", "bottom", "end")
+    } == {"top": "80", "start": "100", "bottom": "80", "end": "100"}
+
+    header_row = table.rows[0]
+    assert header_row._tr.get_or_add_trPr().find(qn("w:tblHeader")) is not None
+    for cell in header_row.cells:
+        shading = cell._tc.get_or_add_tcPr().find(qn("w:shd"))
+        assert shading is not None
+        assert shading.get(qn("w:fill")) == "E8EEF5"
+        assert cell.paragraphs[0].alignment == WD_ALIGN_PARAGRAPH.CENTER
+        assert cell.vertical_alignment == WD_CELL_VERTICAL_ALIGNMENT.CENTER
+
+    for row in table.rows[1:]:
+        for cell in row.cells:
+            shading = cell._tc.get_or_add_tcPr().find(qn("w:shd"))
+            assert shading is not None
+            assert shading.get(qn("w:fill")) == "FFFFFF"
+            assert cell.paragraphs[0].alignment == WD_ALIGN_PARAGRAPH.LEFT
+            assert cell.vertical_alignment == WD_CELL_VERTICAL_ALIGNMENT.CENTER
+            spacing = cell.paragraphs[0]._p.get_or_add_pPr().find(qn("w:spacing"))
+            assert spacing is not None
+            assert spacing.get(qn("w:line")) == "365"
+            assert spacing.get(qn("w:lineRule")) == "auto"
 
 
 def test_manifest_binds_template_inputs_pages_and_output_hashes(tmp_path: Path) -> None:

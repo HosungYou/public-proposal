@@ -1,4 +1,5 @@
 import {
+  R08_BODY_ROW_FILL,
   R08_RENDERER_TOKENS,
   assertFigureEvidenceIds,
   assertText,
@@ -39,7 +40,7 @@ export function renderGantt(figure: GanttFigureSpec): string {
     const barX = chartX + workPackage.start * periodWidth + 5;
     const barWidth = (workPackage.end - workPackage.start + 1) * periodWidth - 10;
     lines.push(`  <g data-kpp-role="work-package-row" data-work-package-id="${escapeXml(workPackage.id)}" data-owner="${escapeXml(workPackage.owner)}" data-evidence-ids="${joinEvidenceIds(workPackage.evidenceIds)}">`);
-    lines.push(`    <rect x="24" y="${y}" width="672" height="${rowHeight}" fill="${index % 2 === 0 ? R08_RENDERER_TOKENS.paper : R08_RENDERER_TOKENS.surface}" stroke="${R08_RENDERER_TOKENS.hairline}"/>`);
+    lines.push(`    <rect x="24" y="${y}" width="672" height="${rowHeight}" fill="${R08_BODY_ROW_FILL}" stroke="${R08_RENDERER_TOKENS.hairline}"/>`);
     lines.push(`    <text class="strong" x="32" y="${y + 20}">${escapeXml(workPackage.id)} · ${escapeXml(workPackage.label)}</text>`);
     lines.push(`    <text class="meta" x="32" y="${y + 38}">책임 ${escapeXml(workPackage.owner)} · 근거 ${escapeXml(workPackage.evidenceIds.join(", "))}</text>`);
     lines.push(`    <rect data-kpp-role="duration-bar" x="${format(barX)}" y="${y + 15}" width="${format(barWidth)}" height="22" fill="${R08_RENDERER_TOKENS.navy}"/>`);

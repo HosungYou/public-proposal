@@ -1,4 +1,5 @@
 import {
+  R08_BODY_ROW_FILL,
   R08_RENDERER_TOKENS,
   assertFigureEvidenceIds,
   assertText,
@@ -35,7 +36,7 @@ export function renderRaci(figure: RaciFigureSpec): string {
   figure.data.activities.forEach((activity, rowIndex) => {
     const y = headerY + headerHeight + rowIndex * rowHeight;
     lines.push(`  <g data-kpp-role="raci-row" data-activity-id="${escapeXml(activity.id)}" data-owner="${escapeXml(activity.owner)}" data-state="${escapeXml(activity.state)}" data-acceptance="${escapeXml(activity.acceptance)}" data-evidence-ids="${joinEvidenceIds(activity.evidenceIds)}">`);
-    lines.push(`    <rect x="${tableX}" y="${y}" width="${tableWidth}" height="${rowHeight}" fill="${rowIndex % 2 === 0 ? R08_RENDERER_TOKENS.paper : R08_RENDERER_TOKENS.surface}" stroke="${R08_RENDERER_TOKENS.hairline}"/>`);
+    lines.push(`    <rect x="${tableX}" y="${y}" width="${tableWidth}" height="${rowHeight}" fill="${R08_BODY_ROW_FILL}" stroke="${R08_RENDERER_TOKENS.hairline}"/>`);
     lines.push(`    <text class="strong" x="32" y="${y + 20}">${escapeXml(activity.id)} · ${escapeXml(activity.label)}</text>`);
     lines.push(`    <text class="meta" x="32" y="${y + 39}">책임 ${escapeXml(activity.owner)} · 상태 ${escapeXml(activity.state)}</text>`);
     lines.push(`    <text class="meta" x="32" y="${y + 58}">수용 ${escapeXml(activity.acceptance)} · 근거 ${escapeXml(activity.evidenceIds.join(", "))}</text>`);

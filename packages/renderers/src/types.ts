@@ -13,6 +13,9 @@ export const R08_RENDERER_TOKENS = {
   minimumLabelPt: 8,
 } as const;
 
+// White body rows prevent zebra shading without migrating the hashed R08 profile.
+export const R08_BODY_ROW_FILL = "#FFFFFF" as const;
+
 export const R08_TOKEN_PROFILE = "R08-approved-project-profile" as const;
 export const R08_TOKEN_PROFILE_SHA256 = createHash("sha256")
   .update(stableCanonicalJson(R08_RENDERER_TOKENS))
@@ -301,7 +304,6 @@ export function svgOpen(figure: FigureSpec, width: number, height: number): stri
     `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}" role="img" aria-labelledby="${ids.title} ${ids.caption}" data-kpp-family="${figure.family}" data-kpp-semantic-value-intent="${figure.semanticValueIntent}" data-kpp-topology-signature="${topologySignature}" data-token-profile="${R08_TOKEN_PROFILE}" data-token-hash="${R08_TOKEN_PROFILE_SHA256}">`,
     `  <title id="${ids.title}">${escapeXml(figure.title)}</title>`,
     `  <desc id="${ids.caption}">${escapeXml(figure.caption)}</desc>`,
-    `  <rect width="${width}" height="${height}" fill="${R08_RENDERER_TOKENS.paper}"/>`,
     `  <style>text{font-family:"Noto Sans CJK KR","Noto Sans KR","맑은 고딕",sans-serif;font-size:${R08_RENDERER_TOKENS.minimumLabelPt}pt;fill:${R08_RENDERER_TOKENS.ink}}.title{font-size:12pt;font-weight:700;fill:${R08_RENDERER_TOKENS.navy}}.meta{font-size:8pt;fill:${R08_RENDERER_TOKENS.muted}}.strong{font-weight:700}</style>`,
     `  <text class="title" x="24" y="30">${escapeXml(figure.title)}</text>`,
   ];

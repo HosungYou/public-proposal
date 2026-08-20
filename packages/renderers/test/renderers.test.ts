@@ -362,6 +362,37 @@ describe("deterministic proposal figure renderers", () => {
     expect(svg).toContain('data-token-profile="R08-approved-project-profile"');
   });
 
+  it.each([
+    ["gantt", gantt],
+    ["raci", raci],
+    ["framework", framework],
+  ] as const)("renders the %s SVG on a transparent outer canvas", async (_family, figure) => {
+    const svg = await renderFigure(figure);
+
+    expect(svg).not.toMatch(/<rect\s+width="720"\s+height="\d+"\s+fill=/);
+  });
+
+  it("uses white body rows without zebra striping in Gantt and RACI figures", async () => {
+    const ganttSvg = await renderFigure(gantt);
+    const raciSvg = await renderFigure({
+      ...raci,
+      data: {
+        ...raci.data,
+        activities: [
+          ...raci.data.activities,
+          { ...raci.data.activities[0], id: "ACT2", label: "실행 설계" },
+        ],
+      },
+    } as FigureSpec);
+
+    const ganttRowFills = [...ganttSvg.matchAll(/data-kpp-role="work-package-row"[\s\S]*?<rect[^>]+fill="([^"]+)"/g)]
+      .map((match) => match[1]);
+    const raciRowFills = [...raciSvg.matchAll(/data-kpp-role="raci-row"[\s\S]*?<rect[^>]+fill="([^"]+)"/g)]
+      .map((match) => match[1]);
+    expect(ganttRowFills).toEqual(["#FFFFFF", "#FFFFFF"]);
+    expect(raciRowFills).toEqual(["#FFFFFF", "#FFFFFF"]);
+  });
+
   it("escapes untrusted text while retaining a readable SVG title and caption", async () => {
     const svg = await renderFigure({
       ...gantt,
