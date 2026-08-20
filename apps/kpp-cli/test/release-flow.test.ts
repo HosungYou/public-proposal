@@ -45,6 +45,15 @@ describe("verified proposal release flow", () => {
     const fixture = await createContentApprovedProject(roots);
     const built = await buildProject(fixture.root, { requestPath: fixture.requestPath });
     expect(built.state).toBe("BUILT");
+    const buildManifest = JSON.parse(await readFile(built.manifestPath, "utf8")) as {
+      inputs: { pageArchitectureSha256: string; referenceManifestSha256: string };
+    };
+    expect(buildManifest.inputs.pageArchitectureSha256).toBe(
+      await sha256File(join(fixture.root, "content", "page-architecture.json")),
+    );
+    expect(buildManifest.inputs.referenceManifestSha256).toBe(
+      await sha256File(join(fixture.root, "evidence", "reference-manifest.json")),
+    );
     expect((await stat(built.docxPath)).size).toBeGreaterThan(1_000);
     const rendered = await renderProject(fixture.root, { docxPath: built.docxPath });
     const blocked = await auditProject(fixture.root, {
@@ -66,6 +75,39 @@ describe("verified proposal release flow", () => {
     })).rejects.toMatchObject({ code: "KPP_RELEASE_STATE" });
     await expect(access(releaseOutput)).rejects.toBeDefined();
   }, 60_000);
+
+  it("binds architecture and reference hashes into the canonical build manifest", async () => {
+    const fixture = await createContentApprovedProject(roots);
+    const built = await buildProject(fixture.root, { requestPath: fixture.requestPath });
+    const manifest = JSON.parse(await readFile(built.manifestPath, "utf8")) as {
+      inputs: { pageArchitectureSha256: string; referenceManifestSha256: string };
+    };
+    expect(manifest.inputs).toMatchObject({
+      pageArchitectureSha256: await sha256File(join(fixture.root, "content", "page-architecture.json")),
+      referenceManifestSha256: await sha256File(join(fixture.root, "evidence", "reference-manifest.json")),
+    });
+  }, 60_000);
+
+  it("rejects a missing reference manifest before starting the build worker", async () => {
+    const fixture = await createContentApprovedProject(roots);
+    await rm(join(fixture.root, "evidence", "reference-manifest.json"));
+    await expect(buildProject(fixture.root, { requestPath: fixture.requestPath }))
+      .rejects.toMatchObject({ code: "KPP_INPUT_RECEIPT_INVALID" });
+    await expect(access(join(fixture.root, "receipts", "build.json"))).rejects.toBeDefined();
+  });
+
+  it("rejects a manifest changed after its evidence receipt", async () => {
+    const fixture = await createContentApprovedProject(roots);
+    const architecturePath = join(fixture.root, "content", "page-architecture.json");
+    const architecture = JSON.parse(await readFile(architecturePath, "utf8")) as {
+      pages: Array<{ claimIds: string[] }>;
+    };
+    architecture.pages[0]!.claimIds = ["CLM-404"];
+    await writeFile(architecturePath, `${JSON.stringify(architecture)}\n`);
+    await expect(buildProject(fixture.root, { requestPath: fixture.requestPath }))
+      .rejects.toMatchObject({ code: "KPP_INPUT_RECEIPT_INVALID" });
+    await expect(access(join(fixture.root, "receipts", "build.json"))).rejects.toBeDefined();
+  });
 
   it("runs managed build, real render, file-backed PASS audit, human approval, and immutable release", async () => {
     const fixture = await createContentApprovedProject(roots, true);
@@ -365,7 +407,7 @@ async function createContentApprovedProject(
   const evidenceLedger = {
     schemaVersion: "1.0.0",
     claims: [{ claimId: "CLM-01", status: "verified", evidenceIds: ["EV-01"] }],
-    bindings: [{ evidenceId: "EV-01", sourcePath: join(root, "evidence", "source.txt"), sourceSha256: "a".repeat(64), scope: "합성 검증 근거", claimIds: ["CLM-01"], targetRequirementId: "REQ-01", targetPageId: "P-01", targetPageRole: "research_method" }],
+    bindings: [{ evidenceId: "EV-01", sourcePath: join(root, "evidence", "source.txt"), sourceSha256: "b2c70bba7bf0ef43959341e03b923efd23fed1a0b3ed1895736736d88a5b39b0", scope: "합성 검증 근거", claimIds: ["CLM-01"], targetRequirementId: "REQ-01", targetPageId: "P-01", targetPageRole: "research_method" }],
   };
   const profile = lockedProfile();
   await mkdir(join(root, "content"), { recursive: true });
@@ -374,6 +416,8 @@ async function createContentApprovedProject(
   await writeFile(join(root, "content", "page-plan.json"), `${JSON.stringify(pagePlan)}\n`);
   await writeFile(join(root, "evidence", "evidence-ledger.json"), `${JSON.stringify(evidenceLedger)}\n`);
   await writeFile(join(root, "evidence", "source.txt"), "synthetic source\n");
+  const pageArchitecturePath = join(root, "content", "page-architecture.json");
+  const referenceManifestPath = join(root, "evidence", "reference-manifest.json");
   await writeFile(join(root, "figures", "design-profile.json"), `${JSON.stringify(profile)}\n`);
   const auditFigures: { specPath: string; svgPath: string; manifestPath: string }[] = [];
   const embeddedFigures: Record<string, unknown>[] = [];
@@ -414,6 +458,49 @@ async function createContentApprovedProject(
   const figureManifest = { schemaVersion: "1.0.0", figures: embeddedFigures };
   await writeFile(responsePath, `${JSON.stringify({ schemaVersion: "1.0.0", blocks: [{ pageId: "P-01", claimIds: ["CLM-01"], evidenceIds: ["EV-01"], status: "provisional", text: approvedText, evaluatorAnswer: "합성 평가자 답변", pendingBlankFieldIds: [] }] })}\n`);
   const figureIds = figuresToBuild.map((figure) => figure.figureId);
+  await writeFile(pageArchitecturePath, `${JSON.stringify({
+    schemaVersion: "2.0.0",
+    projectId: "release-build-fixture",
+    documentMode: "public_procurement",
+    modePolicyVersion: "1.0.0",
+    chapters: [{ chapterId: "CH-001", order: 0 }],
+    sections: [{ sectionId: "SEC-001", chapterId: "CH-001", order: 0 }],
+    pages: [{
+      pageId: "P-01",
+      chapterId: "CH-001",
+      sectionId: "SEC-001",
+      pageRole: "research_method",
+      surfaceTemplateId: "r08-research-method-v1",
+      titleScope: "chapter",
+      continuation: false,
+      dominantSurface: figureIds.length > 0 ? "mixed" : "narrative",
+      surfaceVisibility: "internal",
+      claimIds: ["CLM-01"],
+      proofIds: figureIds.length > 0 ? ["EV-01"] : [],
+      referenceIds: ["EV-01"],
+      figureIds,
+    }],
+  }, null, 2)}\n`);
+  await writeFile(referenceManifestPath, `${JSON.stringify({
+    schemaVersion: "2.0.0",
+    projectId: "release-build-fixture",
+    documentMode: "public_procurement",
+    modePolicyVersion: "1.0.0",
+    references: [{
+      referenceId: "EV-01",
+      referenceClass: "evidence",
+      sourcePath: join(root, "evidence", "source.txt"),
+      sourceSha256: "b2c70bba7bf0ef43959341e03b923efd23fed1a0b3ed1895736736d88a5b39b0",
+      locator: "합성 검증 근거",
+      targets: [
+        { kind: "claim", id: "CLM-01" },
+        { kind: "page", id: "P-01" },
+        ...figureIds.map((id) => ({ kind: "figure", id })),
+      ],
+      verificationStatus: "verified",
+      availability: "available",
+    }],
+  }, null, 2)}\n`);
   await writeFile(structurePath, `${JSON.stringify({ schemaVersion: "1.0.0", blocks: [{ pageId: "P-01", heading: "1. 연구 수행방법", tables, figureIds }] })}\n`);
   await writeFile(figureManifestPath, `${JSON.stringify(figureManifest)}\n`);
   await advanceToContentApproved(
@@ -426,6 +513,11 @@ async function createContentApprovedProject(
           ...auditFigures.flatMap((figure) => [figure.specPath, figure.svgPath, figure.manifestPath]),
         ]
       : [figureManifestPath],
+    undefined,
+    {
+      requirements: [join(root, "content", "page-plan.json"), pageArchitecturePath],
+      evidence: [join(root, "evidence", "evidence-ledger.json"), pageArchitecturePath, referenceManifestPath, join(root, "evidence", "source.txt")],
+    },
   );
   const request = {
     schemaVersion: "1.0.0",
@@ -504,6 +596,7 @@ async function advanceToContentApproved(
   contentApprovalFiles: string[] = [],
   designLockFiles: string[] = [],
   researchReceiptPath?: string,
+  lockedFiles: { readonly requirements: readonly string[]; readonly evidence: readonly string[] } | undefined = undefined,
 ): Promise<void> {
   for (const stage of ["SOURCE_LOCKED", "REQUIREMENTS_LOCKED", "EVIDENCE_LOCKED", "DESIGN_LOCKED", "CONTENT_APPROVED"] as const) {
     const artifact = join(root, "receipt-fixtures", `${stage}.txt`);
@@ -513,6 +606,10 @@ async function advanceToContentApproved(
       ? [artifact, ...contentApprovalFiles]
       : stage === "DESIGN_LOCKED"
         ? [artifact, ...designLockFiles]
+        : stage === "REQUIREMENTS_LOCKED" && lockedFiles !== undefined
+          ? [artifact, ...lockedFiles.requirements]
+          : stage === "EVIDENCE_LOCKED" && lockedFiles !== undefined
+            ? [artifact, ...lockedFiles.evidence]
         : [artifact], stage === "CONTENT_APPROVED" && researchReceiptPath !== undefined
       ? [await sha256File(researchReceiptPath)]
       : []);

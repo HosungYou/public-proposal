@@ -5,12 +5,22 @@ import {
   KppError,
   advanceProject,
   executeFile,
+  getDocumentModePolicy,
   sha256File,
+  validatePageArchitecture,
+  validateReferenceManifest,
   verifyReceipt,
   verifyProjectState,
   writeReceipt,
 } from "@longtable/kpp-core";
+import {
+  EvidenceLedgerSchema,
+  PageArchitectureManifestSchema,
+  PagePlanSchema,
+  ReferenceManifestSchema,
+} from "@longtable/kpp-schemas";
 import { success, type CliEnvelope } from "../output.js";
+import { writeJsonAtomically } from "./ingest.js";
 import { EXPECTED_WORKER_PROTOCOL, ManagedWorkerError, WORKER_PROTOCOL_PROBE, resolveExplicitWorker, resolveManagedWorker } from "../managed-worker.js";
 
 const BUILDER_VERSION = "0.1.0";
@@ -43,6 +53,11 @@ interface BuildRequestPaths {
   readonly manifestPath: string;
 }
 
+interface ArchitectureBindings {
+  readonly pageArchitectureSha256: string;
+  readonly referenceManifestSha256: string;
+}
+
 export async function buildCommand(
   rootInput: string,
   options: { readonly request?: string; readonly python?: string },
@@ -73,6 +88,7 @@ export async function buildProject(
   const requestPath = await regularFileWithin(root, options.requestPath, "KPP_BUILD_REQUEST_INVALID");
   const request = await readJsonObject(requestPath, "KPP_BUILD_REQUEST_INVALID");
   const outputs = await validateLockedBuildRequest(root, request);
+  const architectureBindings = await validateLockedArchitecture(root, project);
   await validateApprovedContent(root, request);
   await validateManagedTemplate(request);
   await validateApprovedStructure(root, request);
@@ -103,7 +119,8 @@ export async function buildProject(
     generationPath = await verifyCanonicalGeneration(root, worker, outputs);
     const canonicalDocx = join(generationPath, "document.docx");
     const canonicalManifest = join(generationPath, "manifest.json");
-    await verifyBuildManifest(canonicalManifest, canonicalDocx, project.projectId);
+    await bindArchitectureHashes(canonicalManifest, architectureBindings);
+    await verifyBuildManifest(canonicalManifest, canonicalDocx, project.projectId, architectureBindings);
     await writeReceipt({
       stage: "BUILT",
       files: [canonicalDocx, canonicalManifest],
@@ -131,6 +148,98 @@ export async function buildProject(
     }
     throw error;
   }
+}
+
+async function validateLockedArchitecture(
+  root: string,
+  project: Awaited<ReturnType<typeof verifyProjectState>>,
+): Promise<ArchitectureBindings> {
+  if (project.schemaVersion !== "2.0.0") {
+    throw new KppError("KPP_BUILD_MANIFEST_UNBOUND", "v2 문서 아키텍처가 잠기지 않았습니다.", {
+      expected: "2.0.0",
+      actual: project.schemaVersion,
+      stage: "CONTENT_APPROVED",
+    });
+  }
+  const pagePlanPath = join(root, "content", "page-plan.json");
+  const evidenceLedgerPath = join(root, "evidence", "evidence-ledger.json");
+  const pageArchitecturePath = join(root, "content", "page-architecture.json");
+  const referenceManifestPath = join(root, "evidence", "reference-manifest.json");
+  const [pagePlanRaw, evidenceRaw, architectureRaw, referenceRaw] = await Promise.all([
+    readJsonObject(pagePlanPath, "KPP_BUILD_MANIFEST_UNBOUND"),
+    readJsonObject(evidenceLedgerPath, "KPP_BUILD_MANIFEST_UNBOUND"),
+    readJsonObject(pageArchitecturePath, "KPP_BUILD_MANIFEST_UNBOUND"),
+    readJsonObject(referenceManifestPath, "KPP_BUILD_MANIFEST_UNBOUND"),
+  ]);
+  const pagePlan = PagePlanSchema.safeParse(pagePlanRaw);
+  const evidence = EvidenceLedgerSchema.safeParse(evidenceRaw);
+  const architecture = PageArchitectureManifestSchema.safeParse(architectureRaw);
+  const references = ReferenceManifestSchema.safeParse(referenceRaw);
+  if (!pagePlan.success || !evidence.success || !architecture.success || !references.success) {
+    throw new KppError("KPP_BUILD_MANIFEST_UNBOUND", "잠긴 문서 아키텍처 또는 참조 원장 형식이 올바르지 않습니다.", {
+      actual: {
+        pagePlan: pagePlan.success ? undefined : pagePlan.error.issues,
+        evidence: evidence.success ? undefined : evidence.error.issues,
+        architecture: architecture.success ? undefined : architecture.error.issues,
+        references: references.success ? undefined : references.error.issues,
+      },
+      stage: "CONTENT_APPROVED",
+    });
+  }
+  const identityMatches = architecture.data.projectId === project.projectId
+    && architecture.data.documentMode === project.documentMode
+    && architecture.data.modePolicyVersion === project.modePolicyVersion;
+  const architectureResult = validatePageArchitecture(
+    architecture.data,
+    pagePlan.data,
+    getDocumentModePolicy(project.documentMode),
+  );
+  const referenceResult = validateReferenceManifest(references.data, architecture.data, evidence.data);
+  if (!identityMatches || architectureResult.status !== "PASS" || referenceResult.status !== "PASS") {
+    throw new KppError("KPP_BUILD_MANIFEST_UNBOUND", "문서 아키텍처 또는 참조 원장이 잠긴 계획과 일치하지 않습니다.", {
+      actual: { identityMatches, findings: [...architectureResult.findings, ...referenceResult.findings] },
+      stage: "CONTENT_APPROVED",
+    });
+  }
+  await assertReceiptBound(pageArchitecturePath, ["requirements-lock.json", "evidence-lock.json"]);
+  await assertReceiptBound(referenceManifestPath, ["evidence-lock.json"]);
+  return {
+    pageArchitectureSha256: await sha256File(pageArchitecturePath),
+    referenceManifestSha256: await sha256File(referenceManifestPath),
+  };
+}
+
+async function assertReceiptBound(path: string, receiptNames: readonly string[]): Promise<void> {
+  const canonical = await realpath(path).catch(() => undefined);
+  const hash = canonical === undefined ? undefined : await sha256File(canonical);
+  for (const receiptName of receiptNames) {
+    const receipt = await verifyReceipt(join(dirname(dirname(path)), "receipts", receiptName));
+    if (!receipt.valid) continue;
+    for (const file of receipt.receipt.files) {
+      const receiptPath = await realpath(file.path).catch(() => undefined);
+      if (receiptPath === canonical && file.sha256 === hash) return;
+    }
+  }
+  throw new KppError("KPP_BUILD_MANIFEST_UNBOUND", "문서 아키텍처 또는 참조 원장이 단계 영수증에 결속되지 않았습니다.", {
+    path,
+    expected: receiptNames,
+    stage: "CONTENT_APPROVED",
+  });
+}
+
+async function bindArchitectureHashes(path: string, bindings: ArchitectureBindings): Promise<void> {
+  const manifest = await readJsonObject(path, "KPP_BUILD_MANIFEST_INVALID");
+  const inputs = objectAt(manifest, "inputs");
+  if (inputs === undefined) {
+    throw new KppError("KPP_BUILD_MANIFEST_INVALID", "build manifest 입력 해시 원장이 없습니다.", {
+      path,
+      stage: "CONTENT_APPROVED",
+    });
+  }
+  await writeJsonAtomically(path, {
+    ...manifest,
+    inputs: { ...inputs, ...bindings },
+  });
 }
 
 async function validateLockedBuildRequest(root: string, request: Record<string, unknown>): Promise<BuildRequestPaths> {
@@ -417,11 +526,19 @@ async function verifyCanonicalGeneration(
   return generationPath;
 }
 
-async function verifyBuildManifest(path: string, docxPath: string, projectId: string): Promise<void> {
+async function verifyBuildManifest(
+  path: string,
+  docxPath: string,
+  projectId: string,
+  bindings: ArchitectureBindings,
+): Promise<void> {
   const manifest = await readJsonObject(path, "KPP_BUILD_MANIFEST_INVALID");
   const artifact = objectAt(manifest, "artifacts", "docx");
+  const inputs = objectAt(manifest, "inputs");
   if (manifest.builderVersion !== BUILDER_VERSION || manifest.projectId !== projectId
-    || artifact?.path !== docxPath || artifact.sha256 !== await sha256File(docxPath)) {
+    || artifact?.path !== docxPath || artifact.sha256 !== await sha256File(docxPath)
+    || inputs?.pageArchitectureSha256 !== bindings.pageArchitectureSha256
+    || inputs.referenceManifestSha256 !== bindings.referenceManifestSha256) {
     throw new KppError("KPP_BUILD_MANIFEST_INVALID", "build manifest가 canonical DOCX bytes와 일치하지 않습니다.", {
       path,
       stage: "CONTENT_APPROVED",

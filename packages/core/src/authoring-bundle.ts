@@ -8,7 +8,9 @@ import {
   ConfirmedRequirementsSchema,
   EvidenceLedgerSchema,
   IssuerProfileSchema,
+  PageArchitectureManifestSchema,
   PagePlanSchema,
+  ReferenceManifestSchema,
   type ApprovedTerminology,
   type AuthoringEvidenceProvenance,
   type AuthoringRequest,
@@ -16,10 +18,16 @@ import {
   type ConfirmedRequirements,
   type EvidenceLedger,
   type IssuerProfile,
+  type PageArchitectureManifest,
   type PagePlan,
+  type ProjectRecord,
+  type ReferenceManifest,
 } from "@longtable/kpp-schemas";
 import { KppError } from "./errors.js";
 import { sha256File } from "./hash.js";
+import { getDocumentModePolicy } from "./mode-policy.js";
+import { validatePageArchitecture } from "./page-architecture.js";
+import { validateReferenceManifest } from "./reference-integrity.js";
 import { verifyProjectState } from "./state-machine.js";
 
 const SCHEMA_VERSION = "1.0.0";
@@ -65,9 +73,13 @@ interface AuthoringArtifacts {
   readonly requirementsPath: string;
   readonly evidenceLedgerPath: string;
   readonly pagePlanPath: string;
+  readonly pageArchitecturePath: string;
+  readonly referenceManifestPath: string;
   readonly requirements: ConfirmedRequirements;
   readonly evidenceLedger: EvidenceLedger;
   readonly pagePlan: PagePlan;
+  readonly pageArchitecture: PageArchitectureManifest;
+  readonly referenceManifest: ReferenceManifest;
 }
 
 interface LoadedAuthoringInput<T> {
@@ -84,6 +96,7 @@ export async function exportAuthoring(
   const root = resolve(rootInput);
   const project = await assertAuthoringProject(root);
   const artifacts = await loadAuthoringArtifacts(root);
+  validateArchitectureArtifacts(project, artifacts);
   const issuerProfile = await loadIssuerProfile(input.issuerProfile);
   const terminology = await loadTerminology(input.terminology);
   const request = await buildAuthoringRequest(project.projectId, artifacts, issuerProfile, terminology);
@@ -100,6 +113,7 @@ export async function importAuthoring(
   const project = await assertAuthoringProject(root);
   const requestPath = join(root, "content", REQUEST_FILE_NAME);
   const request = await readAuthoringRequest(requestPath);
+  validateArchitectureArtifacts(project, await loadAuthoringArtifacts(root));
   await verifyRequestAgainstLockedInputs(root, project.projectId, request);
   const response = parseAuthoringResponse(responseInput);
   await validateAuthoringResponse(response, request);
@@ -129,6 +143,7 @@ export async function verifyImportedAuthoringResponse(
   const requestPath = join(root, "content", REQUEST_FILE_NAME);
   const responsePath = join(root, "content", RESPONSE_FILE_NAME);
   const request = await readAuthoringRequest(requestPath);
+  validateArchitectureArtifacts(project, await loadAuthoringArtifacts(root));
   await verifyRequestAgainstLockedInputs(root, project.projectId, request);
   const response = parseAuthoringResponse(await readJson(responsePath, "KPP_INPUT_AUTHORING_RESPONSE_MISSING"));
   await validateAuthoringResponse(response, request);
@@ -155,15 +170,57 @@ async function loadAuthoringArtifacts(root: string): Promise<AuthoringArtifacts>
   const requirementsPath = join(root, "requirements", "requirements.json");
   const evidenceLedgerPath = join(root, "evidence", "evidence-ledger.json");
   const pagePlanPath = join(root, "content", "page-plan.json");
-  const [requirementsRaw, evidenceLedgerRaw, pagePlanRaw] = await Promise.all([
+  const pageArchitecturePath = join(root, "content", "page-architecture.json");
+  const referenceManifestPath = join(root, "evidence", "reference-manifest.json");
+  const [requirementsRaw, evidenceLedgerRaw, pagePlanRaw, pageArchitectureRaw, referenceManifestRaw] = await Promise.all([
     readJson(requirementsPath, "KPP_INPUT_AUTHORING_ARTIFACT"),
     readJson(evidenceLedgerPath, "KPP_INPUT_AUTHORING_ARTIFACT"),
     readJson(pagePlanPath, "KPP_INPUT_AUTHORING_ARTIFACT"),
+    readJson(pageArchitecturePath, "KPP_INPUT_AUTHORING_ARTIFACT"),
+    readJson(referenceManifestPath, "KPP_INPUT_AUTHORING_ARTIFACT"),
   ]);
   const requirements = parseArtifact(ConfirmedRequirementsSchema, requirementsRaw, requirementsPath);
   const evidenceLedger = parseArtifact(EvidenceLedgerSchema, evidenceLedgerRaw, evidenceLedgerPath);
   const pagePlan = parseArtifact(PagePlanSchema, pagePlanRaw, pagePlanPath);
-  return { requirementsPath, evidenceLedgerPath, pagePlanPath, requirements, evidenceLedger, pagePlan };
+  const pageArchitecture = parseArtifact(PageArchitectureManifestSchema, pageArchitectureRaw, pageArchitecturePath);
+  const referenceManifest = parseArtifact(ReferenceManifestSchema, referenceManifestRaw, referenceManifestPath);
+  return {
+    requirementsPath,
+    evidenceLedgerPath,
+    pagePlanPath,
+    pageArchitecturePath,
+    referenceManifestPath,
+    requirements,
+    evidenceLedger,
+    pagePlan,
+    pageArchitecture,
+    referenceManifest,
+  };
+}
+
+function validateArchitectureArtifacts(project: ProjectRecord, artifacts: AuthoringArtifacts): void {
+  if (project.schemaVersion !== "2.0.0") {
+    throw artifactError("project_migration_required", artifacts.pageArchitecturePath, project.schemaVersion);
+  }
+  const identityMatches = artifacts.pageArchitecture.projectId === project.projectId
+    && artifacts.pageArchitecture.documentMode === project.documentMode
+    && artifacts.pageArchitecture.modePolicyVersion === project.modePolicyVersion;
+  const architectureResult = validatePageArchitecture(
+    artifacts.pageArchitecture,
+    artifacts.pagePlan,
+    getDocumentModePolicy(project.documentMode),
+  );
+  const referenceResult = validateReferenceManifest(
+    artifacts.referenceManifest,
+    artifacts.pageArchitecture,
+    artifacts.evidenceLedger,
+  );
+  if (!identityMatches || architectureResult.status !== "PASS" || referenceResult.status !== "PASS") {
+    throw artifactError("architecture_reference_validation", artifacts.pageArchitecturePath, {
+      identityMatches,
+      findings: [...architectureResult.findings, ...referenceResult.findings],
+    });
+  }
 }
 
 async function loadIssuerProfile(input: AuthoringSourceInput | undefined): Promise<LoadedAuthoringInput<IssuerProfile>> {

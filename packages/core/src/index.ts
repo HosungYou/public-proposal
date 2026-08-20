@@ -32,6 +32,13 @@ export {
   type DocumentModePolicy,
 } from "./mode-policy.js";
 export {
+  validatePageArchitecture,
+  type ValidationEvidence,
+  type ValidationFinding,
+  type ValidationResult,
+} from "./page-architecture.js";
+export { validateReferenceManifest } from "./reference-integrity.js";
+export {
   migrateProject,
   type MigrateProjectOptions,
   type MigrationReport,

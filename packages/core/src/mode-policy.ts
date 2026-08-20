@@ -10,6 +10,7 @@ export interface DocumentModePolicy {
   readonly allowedSurfaceFamilies: readonly string[];
   readonly requiredAuditSlices: readonly string[];
   readonly artifactAllowlist: readonly string[];
+  readonly allowedReferenceClasses: readonly string[];
 }
 
 const DOCUMENT_MODE_POLICIES: Record<DocumentMode, DocumentModePolicy> = {
@@ -45,6 +46,7 @@ const DOCUMENT_MODE_POLICIES: Record<DocumentMode, DocumentModePolicy> = {
       "evidence_ledger",
       "audit_receipt",
     ],
+    allowedReferenceClasses: ["official", "evidence", "academic", "visual", "issuer_rule", "unavailable"],
   },
   research_service: {
     documentMode: "research_service",
@@ -77,6 +79,7 @@ const DOCUMENT_MODE_POLICIES: Record<DocumentMode, DocumentModePolicy> = {
       "citation_slot_matrix",
       "audit_receipt",
     ],
+    allowedReferenceClasses: ["official", "evidence", "academic", "dataset", "visual", "issuer_rule", "unavailable"],
   },
   private_partnership: {
     documentMode: "private_partnership",
@@ -109,6 +112,7 @@ const DOCUMENT_MODE_POLICIES: Record<DocumentMode, DocumentModePolicy> = {
       "decision_options",
       "audit_receipt",
     ],
+    allowedReferenceClasses: ["official", "evidence", "partner", "commercial", "visual", "issuer_rule", "unavailable"],
   },
   internal_decision: {
     documentMode: "internal_decision",
@@ -141,6 +145,7 @@ const DOCUMENT_MODE_POLICIES: Record<DocumentMode, DocumentModePolicy> = {
       "approval_record",
       "audit_receipt",
     ],
+    allowedReferenceClasses: ["official", "evidence", "internal", "decision", "visual", "issuer_rule", "unavailable"],
   },
   document_restyle: {
     documentMode: "document_restyle",
@@ -173,6 +178,7 @@ const DOCUMENT_MODE_POLICIES: Record<DocumentMode, DocumentModePolicy> = {
       "mutation_report",
       "acceptance_record",
     ],
+    allowedReferenceClasses: ["official", "evidence", "source_document", "visual", "issuer_rule", "unavailable"],
   },
 };
 
