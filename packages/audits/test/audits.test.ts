@@ -265,6 +265,15 @@ describe("artifact-backed proposal audits", () => {
     const figure = await figureFixture();
     const docx = await docxFixture(figure);
     const render = await renderFixture(docx.docxPath);
+    const architectureRoot = await makeRoot("kpp-stable-architecture-");
+    const architecturePath = join(architectureRoot, "page-architecture.json");
+    await writeFile(architecturePath, `${JSON.stringify(singlePageArchitecture(false), null, 2)}\n`);
+    const boundManifest = JSON.parse(await readFile(docx.buildManifestPath, "utf8")) as Record<string, unknown>;
+    boundManifest.inputs = {
+      ...((boundManifest.inputs as Record<string, unknown> | undefined) ?? {}),
+      pageArchitectureSha256: await sha256File(architecturePath),
+    };
+    await writeFile(docx.buildManifestPath, `${JSON.stringify(boundManifest, null, 2)}\n`);
     const root = await renderedProjectFixture({
       built: [docx.buildManifestPath, docx.docxPath],
       rendered: [render.manifestPath, render.pdfPath, render.pagePath],
@@ -274,6 +283,7 @@ describe("artifact-backed proposal audits", () => {
     const first = await auditProposal({
       root,
       docx,
+      pageArchitecturePath: architecturePath,
       renderManifestPath: render.manifestPath,
       trustedPdftotextPath: render.extractorPath,
       figures: [figure],
@@ -283,6 +293,7 @@ describe("artifact-backed proposal audits", () => {
     const second = await auditProposal({
       root,
       docx,
+      pageArchitecturePath: architecturePath,
       renderManifestPath: render.manifestPath,
       trustedPdftotextPath: render.extractorPath,
       figures: [figure],
@@ -312,7 +323,7 @@ describe("artifact-backed proposal audits", () => {
 
     expect(report.status).toBe("BLOCKED");
     expect(report.findings.map((finding) => finding.code)).toContain("KPP_RELEASE_RECEIPT_BINDING");
-  });
+  }, 60_000);
 
   test("blocks when the rendered PDF was produced from a different DOCX", async () => {
     const docx = await docxFixture();
@@ -332,12 +343,79 @@ describe("artifact-backed proposal audits", () => {
     expect(report.status).toBe("BLOCKED");
     expect(report.findings.map((finding) => finding.code)).toContain("KPP_DESIGN_SURFACE_LINEAGE");
   }, 60_000);
+
+  test("composes measured title hierarchy into the proposal audit blocker", async () => {
+    const docx = await docxFixture();
+    const render = await renderFixture(docx.docxPath);
+    const architectureRoot = await makeRoot("kpp-architecture-audit-");
+    const architecturePath = join(architectureRoot, "page-architecture.json");
+    await writeFile(architecturePath, `${JSON.stringify({
+      schemaVersion: "2.0.0",
+      projectId: "rendered-architecture-fixture",
+      documentMode: "private_partnership",
+      modePolicyVersion: "1.0.0",
+      architectureStatus: "staged",
+      chapters: [{ chapterId: "CH-01" }],
+      sections: [{ sectionId: "SEC-01", chapterId: "CH-01" }],
+      pages: [{
+        pageId: "P-01", chapterId: "CH-01", sectionId: "SEC-01",
+        pageRole: "operating_model", surfaceTemplateId: "operating_model",
+        titleScope: "section", titlePointSize: 16, continuation: true,
+        dominantSurface: "narrative", surfaceVisibility: "internal",
+        claimIds: [], proofIds: [], referenceIds: [], figureIds: [],
+        continuityFromPageId: "P-00",
+      }],
+    }, null, 2)}\n`);
+    const buildManifest = JSON.parse(await readFile(docx.buildManifestPath, "utf8")) as Record<string, unknown>;
+    buildManifest.inputs = {
+      ...((buildManifest.inputs as Record<string, unknown> | undefined) ?? {}),
+      pageArchitectureSha256: await sha256File(architecturePath),
+    };
+    await writeFile(docx.buildManifestPath, `${JSON.stringify(buildManifest, null, 2)}\n`);
+    const root = await renderedProjectFixture({
+      built: [docx.buildManifestPath, docx.docxPath],
+      rendered: [render.manifestPath, render.pdfPath, render.pagePath],
+    });
+
+    const report = await auditProposal({
+      root,
+      docx,
+      pageArchitecturePath: architecturePath,
+      renderManifestPath: render.manifestPath,
+      trustedPdftotextPath: render.extractorPath,
+      figures: [],
+      outputPath: join(root, "audit", "architecture-blocked.json"),
+    });
+
+    expect(report.findings.map((finding) => finding.code), JSON.stringify(report.findings)).toContain("KPP_PAGE_CONTINUATION_UNOBSERVED");
+    expect(report.artifacts.map((artifact) => artifact.path)).toContain(architecturePath);
+  }, 60_000);
 });
 
 async function makeRoot(prefix: string): Promise<string> {
   const root = await mkdtemp(join(tmpdir(), prefix));
   roots.push(root);
   return root;
+}
+
+function singlePageArchitecture(continuation: boolean): Record<string, unknown> {
+  return {
+    schemaVersion: "2.0.0",
+    projectId: "rendered-architecture-fixture",
+    documentMode: "private_partnership",
+    modePolicyVersion: "1.0.0",
+    architectureStatus: "staged",
+    chapters: [{ chapterId: "CH-01" }],
+    sections: [{ sectionId: "SEC-01", chapterId: "CH-01" }],
+    pages: [{
+      pageId: "P-01", chapterId: "CH-01", sectionId: "SEC-01",
+      pageRole: "operating_model", surfaceTemplateId: "operating_model",
+      titleScope: "section", titlePointSize: 12, continuation,
+      dominantSurface: "narrative", surfaceVisibility: "internal",
+      claimIds: [], proofIds: [], referenceIds: [], figureIds: [],
+      ...(continuation ? { continuityFromPageId: "P-00" } : {}),
+    }],
+  };
 }
 
 async function docxFixture(figure?: {

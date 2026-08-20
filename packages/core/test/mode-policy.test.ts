@@ -16,6 +16,7 @@ describe("document mode policies", () => {
       expect(policy.allowedSurfaceFamilies.length).toBeGreaterThan(0);
       expect(policy.requiredAuditSlices.length).toBeGreaterThan(0);
       expect(policy.artifactAllowlist.length).toBeGreaterThan(0);
+      expect(policy.issuerOverridePolicy.allowedReferenceClasses).toEqual(["issuer_rule"]);
     }
   });
 

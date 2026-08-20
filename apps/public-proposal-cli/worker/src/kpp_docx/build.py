@@ -294,6 +294,9 @@ class BuildRequest(StrictModel):
     template: TemplateRef
     page_plan: PagePlan = Field(alias="pagePlan")
     page_architecture: PageArchitecture | None = Field(alias="pageArchitecture", default=None)
+    issuer_override_authority_ids: list[str] = Field(
+        alias="issuerOverrideAuthorityIds", default_factory=list
+    )
     evidence_ledger: EvidenceLedger = Field(alias="evidenceLedger")
     content_blocks: list[ContentBlock] = Field(alias="contentBlocks", min_length=1)
     figure_manifest: FigureManifest = Field(alias="figureManifest")
@@ -330,6 +333,8 @@ class BuildRequest(StrictModel):
                     override is not None
                     and override.document_mode == architecture.document_mode
                     and override.mode_policy_version == architecture.mode_policy_version
+                    and _issuer_override_authority_id(override)
+                    in self.issuer_override_authority_ids
                 )
                 if override is not None and not override_bound:
                     raise KppBuildError(
@@ -747,6 +752,12 @@ def _architecture_title_point_size(page: PageArchitectureItem) -> float:
     if page.title_point_size is not None:
         return page.title_point_size
     return 20.5 if page.title_scope in ("cover", "chapter") else 12
+
+
+def _issuer_override_authority_id(override: IssuerOverride) -> str:
+    if override.source_id is not None:
+        return f"source:{override.source_id}"
+    return f"rule:{override.rule_id}"
 
 
 def _table_contract(profile: TableProfile) -> TableContract:

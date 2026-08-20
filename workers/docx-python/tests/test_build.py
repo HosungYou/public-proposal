@@ -284,7 +284,6 @@ def test_rejects_large_explicit_continuation_heading_without_override(
         continuation=True,
         title_point_size=20.5,
     )
-
     with pytest.raises(
         ValidationError, match="KPP_PAGE_TITLE_CONTINUATION_LARGE"
     ):
@@ -305,12 +304,32 @@ def test_allows_large_explicit_continuation_heading_with_bound_override(
                 "reason": "파트너 지정 양식의 연속 면 제목 규칙",
         }
     )
+    payload["issuerOverrideAuthorityIds"] = ["source:SRC-ISSUER-01"]
 
     request = BuildRequest.model_validate(payload)
     result = build_document(request)
     document_xml = _xml(result.docx, "word/document.xml")
 
     assert 'w:sz w:val="41"' in document_xml
+
+
+def test_rejects_identity_bound_override_without_permitted_issuer_authority(
+    tmp_path: Path,
+) -> None:
+    payload = sample_request(tmp_path).model_dump(by_alias=True)
+    payload["pageArchitecture"] = _page_architecture(
+        continuation=True,
+        title_point_size=20.5,
+        issuer_override={
+            "documentMode": "private_partnership",
+            "modePolicyVersion": "1.0.0",
+            "sourceId": "SRC-ISSUER-01",
+            "reason": "권한 검증이 필요한 예외",
+        },
+    )
+
+    with pytest.raises(ValidationError, match="KPP_PAGE_ISSUER_OVERRIDE_UNBOUND"):
+        BuildRequest.model_validate(payload)
 
 
 def _page_architecture(

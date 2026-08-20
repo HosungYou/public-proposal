@@ -14,6 +14,10 @@ export interface DocumentModePolicy {
   readonly requiredAuditSlices: readonly string[];
   readonly artifactAllowlist: readonly string[];
   readonly allowedReferenceClasses: readonly string[];
+  readonly issuerOverridePolicy: {
+    readonly allowedReferenceClasses: readonly string[];
+    readonly allowedRuleIds: readonly string[];
+  };
 }
 
 const DOCUMENT_MODE_POLICIES: Record<DocumentMode, DocumentModePolicy> = {
@@ -69,6 +73,7 @@ const DOCUMENT_MODE_POLICIES: Record<DocumentMode, DocumentModePolicy> = {
       "audit_receipt",
     ],
     allowedReferenceClasses: ["official", "evidence", "academic", "visual", "issuer_rule", "unavailable"],
+    issuerOverridePolicy: { allowedReferenceClasses: ["issuer_rule"], allowedRuleIds: [] },
   },
   research_service: {
     documentMode: "research_service",
@@ -114,6 +119,7 @@ const DOCUMENT_MODE_POLICIES: Record<DocumentMode, DocumentModePolicy> = {
       "audit_receipt",
     ],
     allowedReferenceClasses: ["official", "evidence", "academic", "dataset", "visual", "issuer_rule", "unavailable"],
+    issuerOverridePolicy: { allowedReferenceClasses: ["issuer_rule"], allowedRuleIds: [] },
   },
   private_partnership: {
     documentMode: "private_partnership",
@@ -150,6 +156,7 @@ const DOCUMENT_MODE_POLICIES: Record<DocumentMode, DocumentModePolicy> = {
       "audit_receipt",
     ],
     allowedReferenceClasses: ["official", "evidence", "partner", "commercial", "visual", "issuer_rule", "unavailable"],
+    issuerOverridePolicy: { allowedReferenceClasses: ["issuer_rule"], allowedRuleIds: [] },
   },
   internal_decision: {
     documentMode: "internal_decision",
@@ -186,6 +193,7 @@ const DOCUMENT_MODE_POLICIES: Record<DocumentMode, DocumentModePolicy> = {
       "audit_receipt",
     ],
     allowedReferenceClasses: ["official", "evidence", "internal", "decision", "visual", "issuer_rule", "unavailable"],
+    issuerOverridePolicy: { allowedReferenceClasses: ["issuer_rule"], allowedRuleIds: [] },
   },
   document_restyle: {
     documentMode: "document_restyle",
@@ -222,6 +230,7 @@ const DOCUMENT_MODE_POLICIES: Record<DocumentMode, DocumentModePolicy> = {
       "acceptance_record",
     ],
     allowedReferenceClasses: ["official", "evidence", "source_document", "visual", "issuer_rule", "unavailable"],
+    issuerOverridePolicy: { allowedReferenceClasses: ["issuer_rule"], allowedRuleIds: [] },
   },
 };
 

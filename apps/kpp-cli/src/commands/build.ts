@@ -1,4 +1,6 @@
+import { randomUUID } from "node:crypto";
 import { lstat, readFile, readdir, realpath, rm, stat } from "node:fs/promises";
+import { isDeepStrictEqual } from "node:util";
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
@@ -18,6 +20,7 @@ import {
   PageArchitectureManifestSchema,
   PagePlanSchema,
   ReferenceManifestSchema,
+  type PageArchitectureManifest,
 } from "@longtable/kpp-schemas";
 import { success, type CliEnvelope } from "../output.js";
 import { writeJsonAtomically } from "./ingest.js";
@@ -56,6 +59,8 @@ interface BuildRequestPaths {
 interface ArchitectureBindings {
   readonly pageArchitectureSha256: string;
   readonly referenceManifestSha256: string;
+  readonly pageArchitecture: PageArchitectureManifest;
+  readonly issuerOverrideAuthorityIds: readonly string[];
 }
 
 export async function buildCommand(
@@ -89,6 +94,16 @@ export async function buildProject(
   const request = await readJsonObject(requestPath, "KPP_BUILD_REQUEST_INVALID");
   const outputs = await validateLockedBuildRequest(root, request);
   const architectureBindings = await validateLockedArchitecture(root, project);
+  const callerArchitecture = request.pageArchitecture;
+  if (callerArchitecture !== undefined) {
+    const parsed = PageArchitectureManifestSchema.safeParse(callerArchitecture);
+    if (!parsed.success || !isDeepStrictEqual(parsed.data, architectureBindings.pageArchitecture)) {
+      throw new KppError("KPP_BUILD_ARCHITECTURE_CONFLICT", "BuildRequest의 pageArchitecture가 영수증 결속 원장과 다릅니다.", {
+        path: requestPath,
+        stage: "CONTENT_APPROVED",
+      });
+    }
+  }
   await validateApprovedContent(root, request);
   await validateManagedTemplate(request);
   await validateApprovedStructure(root, request);
@@ -100,10 +115,16 @@ export async function buildProject(
 
   const pythonPath = await resolveManagedPython(options.pythonPath);
   const generationsBefore = await existingGenerationPaths(root);
+  const workerRequestPath = join(root, "build", `.worker-request-${randomUUID()}.json`);
+  await writeJsonAtomically(workerRequestPath, {
+    ...request,
+    pageArchitecture: architectureBindings.pageArchitecture,
+    issuerOverrideAuthorityIds: architectureBindings.issuerOverrideAuthorityIds,
+  });
   let generationPath: string | undefined;
   let receiptCreated = false;
   try {
-    const result = await executeFile(pythonPath, ["-c", PYTHON_BRIDGE, requestPath], {
+    const result = await executeFile(pythonPath, ["-c", PYTHON_BRIDGE, workerRequestPath], {
       cwd: root,
       environment: pythonEnvironment(pythonPath),
       timeoutMs: 120_000,
@@ -147,6 +168,8 @@ export async function buildProject(
       if (receiptCreated) await rm(receiptPath, { force: true });
     }
     throw error;
+  } finally {
+    await rm(workerRequestPath, { force: true });
   }
 }
 
@@ -215,6 +238,13 @@ async function validateLockedArchitecture(
   return {
     pageArchitectureSha256: await sha256File(pageArchitecturePath),
     referenceManifestSha256: await sha256File(referenceManifestPath),
+    pageArchitecture: architecture.data,
+    issuerOverrideAuthorityIds: architecture.data.pages.flatMap((page) => {
+      const override = page.issuerOverride;
+      if (override?.sourceId !== undefined) return [`source:${override.sourceId}`];
+      if (override?.ruleId !== undefined) return [`rule:${override.ruleId}`];
+      return [];
+    }),
   };
 }
 
@@ -247,7 +277,11 @@ async function bindArchitectureHashes(path: string, bindings: ArchitectureBindin
   }
   await writeJsonAtomically(path, {
     ...manifest,
-    inputs: { ...inputs, ...bindings },
+    inputs: {
+      ...inputs,
+      pageArchitectureSha256: bindings.pageArchitectureSha256,
+      referenceManifestSha256: bindings.referenceManifestSha256,
+    },
   });
 }
 

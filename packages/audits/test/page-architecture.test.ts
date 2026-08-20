@@ -150,6 +150,7 @@ describe("rendered page architecture audit", () => {
     expect(auditRenderedPageArchitecture({
       architecture: locked,
       observations: observations(20.5),
+      issuerOverrideAuthorityIds: ["source:SRC-ISSUER-01"],
     })).toMatchObject({ status: "PASS", findings: [] });
   });
 });

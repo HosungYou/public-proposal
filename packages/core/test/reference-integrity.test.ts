@@ -121,6 +121,7 @@ describe("validateReferenceManifest", () => {
 
   it("accepts a permitted issuer title override backed by a declared source", () => {
     const value = fixture();
+    value.manifest.references[0] = { ...value.manifest.references[0]!, referenceClass: "issuer_rule" };
     value.architecture.pages[0] = {
       ...value.architecture.pages[0]!,
       continuation: true,
@@ -133,6 +134,24 @@ describe("validateReferenceManifest", () => {
     };
     expect(validateReferenceManifest(value.manifest, value.architecture, value.evidence))
       .toEqual({ status: "PASS", findings: [] });
+  });
+
+  it("rejects an issuer override backed only by a generic official source", () => {
+    const value = fixture();
+    value.architecture.pages[0] = {
+      ...value.architecture.pages[0]!,
+      continuation: true,
+      issuerOverride: {
+        documentMode: "public_procurement",
+        modePolicyVersion: "1.0.0",
+        sourceId: "SRC-001",
+        reason: "A generic source cannot authorize a title exception.",
+      },
+    };
+    expect(validateReferenceManifest(value.manifest, value.architecture, value.evidence)).toMatchObject({
+      status: "FAIL",
+      findings: expect.arrayContaining([expect.objectContaining({ ruleId: "KPP_REF_ISSUER_OVERRIDE_INVALID" })]),
+    });
   });
 
   it("rejects issuer overrides whose source is undeclared", () => {

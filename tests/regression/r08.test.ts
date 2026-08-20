@@ -9,6 +9,7 @@ afterEach(cleanupFixtures);
 async function audit(fixture: Awaited<ReturnType<typeof materializeR08Reference>>, suffix: string) {
   const result = await auditProposal({
     root: await projectPath(fixture), docx: { docxPath: fixture.docxPath, buildManifestPath: fixture.buildManifestPath, geometryReportPath: fixture.geometryReportPath },
+    pageArchitecturePath: fixture.pageArchitecturePath,
     renderManifestPath: fixture.renderManifestPath, trustedPdftotextPath: fixture.extractorPath, figures: [fixture.figure], outputPath: `${fixture.root}/audit/${suffix}.json`,
   });
   return result;

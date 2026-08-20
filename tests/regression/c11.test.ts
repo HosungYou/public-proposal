@@ -8,6 +8,7 @@ test("C11 remains BLOCKED for stale lineage, generic Gantt boxes, and invalid DO
   const fixture = await materializeC11KnownBad();
   const report = await auditProposal({
     root: await projectPath(fixture), docx: { docxPath: fixture.docxPath, buildManifestPath: fixture.buildManifestPath, geometryReportPath: fixture.geometryReportPath },
+    pageArchitecturePath: fixture.pageArchitecturePath,
     renderManifestPath: fixture.renderManifestPath, trustedPdftotextPath: fixture.extractorPath, figures: [fixture.figure], outputPath: `${fixture.root}/audit/c11.json`,
   });
   expect(report.status).toBe("BLOCKED");
@@ -21,6 +22,7 @@ test("C11 remains BLOCKED for stale lineage, generic Gantt boxes, and invalid DO
   await rebindFigureOutputHash(fixture.figure.manifestPath, fixture.figure.svgPath);
   const rebound = await auditProposal({
     root: await projectPath(fixture), docx: { docxPath: fixture.docxPath, buildManifestPath: fixture.buildManifestPath, geometryReportPath: fixture.geometryReportPath },
+    pageArchitecturePath: fixture.pageArchitecturePath,
     renderManifestPath: fixture.renderManifestPath, trustedPdftotextPath: fixture.extractorPath, figures: [fixture.figure], outputPath: `${fixture.root}/audit/c11-rebound.json`,
   });
   expect(rebound.status).toBe("BLOCKED");

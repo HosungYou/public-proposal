@@ -17,6 +17,7 @@ export interface ProposalFixture {
   readonly docxPath: string;
   readonly buildManifestPath: string;
   readonly geometryReportPath: string;
+  readonly pageArchitecturePath: string;
   readonly renderManifestPath: string;
   readonly pdfPath: string;
   readonly pagePath: string;
@@ -126,9 +127,42 @@ async function materialize(relativeFixture: string, prefix: string): Promise<Pro
   const geometryReportPath = join(copied, "docx", "geometry.json");
   const geometry = await executeFile(python, [geometryWorker, docxPath, "--profile-sha256", profileSha256]);
   await writeFile(geometryReportPath, geometry.stdout, "utf8");
+  const geometryReport = JSON.parse(geometry.stdout) as { pageObservations: Array<{ measuredHeadingPointSizes: number[] }> };
+  const pageArchitecturePath = join(copied, "docx", "page-architecture.json");
+  const architecturePages = geometryReport.pageObservations.map((observation, index, pages) => ({
+    pageId: `P-${String(index + 1).padStart(2, "0")}`,
+    chapterId: "CH-01",
+    sectionId: `SEC-${String(index + 1).padStart(2, "0")}`,
+    pageRole: "source_inventory",
+    surfaceTemplateId: "source_output_comparison",
+    titleScope: index === 0 ? "chapter" : "section",
+    titlePointSize: Math.max(12, ...observation.measuredHeadingPointSizes),
+    continuation: index > 0,
+    dominantSurface: "mixed",
+    surfaceVisibility: "internal",
+    claimIds: [], proofIds: [], referenceIds: [], figureIds: [],
+    ...(index > 0 ? { continuityFromPageId: `P-${String(index).padStart(2, "0")}` } : {}),
+    ...(index < pages.length - 1 ? { continuityToPageId: `P-${String(index + 2).padStart(2, "0")}` } : {}),
+  }));
+  await writeJson(pageArchitecturePath, {
+    schemaVersion: "2.0.0",
+    projectId: "sanitized-r08-regression",
+    documentMode: "document_restyle",
+    modePolicyVersion: "1.0.0",
+    architectureStatus: "staged",
+    chapters: [{ chapterId: "CH-01" }],
+    sections: architecturePages.map((page) => ({ sectionId: page.sectionId, chapterId: "CH-01" })),
+    pages: architecturePages,
+  });
+  const buildManifest = JSON.parse(await readFile(buildManifestPath, "utf8")) as Record<string, unknown>;
+  buildManifest.inputs = {
+    ...((buildManifest.inputs as Record<string, unknown> | undefined) ?? {}),
+    pageArchitectureSha256: await sha256File(pageArchitecturePath),
+  };
+  await writeJson(buildManifestPath, buildManifest);
   const render = await renderDocx(copied, docxPath);
   await makeRenderedProject(root, [buildManifestPath, docxPath], [render.renderManifestPath, render.pdfPath, render.pagePath]);
-  return { root, docxPath, buildManifestPath, geometryReportPath, ...render, figure };
+  return { root, docxPath, buildManifestPath, geometryReportPath, pageArchitecturePath, ...render, figure };
 }
 
 async function buildDocx(copied: string, docxPath: string): Promise<void> {

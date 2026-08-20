@@ -81,7 +81,7 @@ export function validateReferenceManifest(
         ));
       }
     }
-    validateIssuerOverride(page, references, manifest, findings);
+    validateIssuerOverride(page, references, manifest, policy, findings);
   }
 
   for (const reference of manifest.references) {
@@ -176,17 +176,26 @@ function validateIssuerOverride(
   page: PageArchitectureManifest["pages"][number],
   references: ReadonlyMap<string, ReferenceRecord>,
   manifest: ReferenceManifest,
+  policy: ReturnType<typeof getDocumentModePolicy>,
   findings: ValidationFinding[],
 ): void {
   const override = page.issuerOverride;
   if (override === undefined) return;
   const validIdentity = override.documentMode === manifest.documentMode
     && override.modePolicyVersion === manifest.modePolicyVersion;
-  const sourceValid = override.sourceId === undefined || references.has(override.sourceId);
-  if (!validIdentity || !sourceValid) {
+  const source = override.sourceId === undefined ? undefined : references.get(override.sourceId);
+  const sourceValid = override.sourceId === undefined || (
+    source !== undefined
+    && page.referenceIds.includes(override.sourceId)
+    && policy.issuerOverridePolicy.allowedReferenceClasses.includes(source.referenceClass)
+    && source.verificationStatus === "verified"
+  );
+  const ruleValid = override.ruleId === undefined
+    || policy.issuerOverridePolicy.allowedRuleIds.includes(override.ruleId);
+  if (!validIdentity || !sourceValid || !ruleValid) {
     findings.push(finding(
       "KPP_REF_ISSUER_OVERRIDE_INVALID",
-      "Issuer overrides must match the selected mode policy and identify a declared source.",
+      "Issuer overrides must match the selected mode policy and identify verified issuer_rule authority.",
       `page:${page.pageId}/issuerOverride`,
       identity(manifest),
       override,

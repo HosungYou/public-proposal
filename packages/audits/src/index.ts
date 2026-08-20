@@ -57,7 +57,10 @@ export {
 } from "./source.js";
 
 import { resolve } from "node:path";
-import { auditDocxArtifacts, type DocxAuditInput } from "./content.js";
+import { getDocumentModePolicy } from "@longtable/kpp-core";
+import { PageArchitectureManifestSchema, ReferenceManifestSchema } from "@longtable/kpp-schemas";
+import { auditDocxArtifacts, readRenderObservations, type DocxAuditInput } from "./content.js";
+import { auditRenderedPageArchitecture } from "./page-architecture.js";
 import { auditFigureArtifacts, auditFigureDocumentBindings, type FigureAuditInput } from "./figure-family.js";
 import { auditReleaseReadiness, type ReleaseArtifactBindings } from "./release.js";
 import { blocked, combineSlices, inspectArtifact, makeSlice, readJsonObject, writeStableJson, type AuditArtifact, type AuditFinding, type AuditStatus } from "./source.js";
@@ -67,6 +70,8 @@ export interface ProposalAuditInput {
   readonly root: string;
   readonly docx: DocxAuditInput;
   readonly renderManifestPath: string;
+  readonly pageArchitecturePath?: string;
+  readonly referenceManifestPath?: string;
   readonly trustedPdftotextPath?: string;
   readonly figures: readonly FigureAuditInput[];
   readonly outputPath: string;
@@ -88,6 +93,7 @@ export async function auditProposal(input: ProposalAuditInput): Promise<Proposal
     auditFigureArtifacts(input.figures),
     auditReleaseReadiness(resolve(input.root), receiptBindings),
     auditCrossSurfaceLineage(input.docx.docxPath, input.renderManifestPath),
+    auditBoundRenderedPageArchitecture(input),
   ];
   slices.push(auditFigureDocumentBindings({
     figures: input.figures,
@@ -104,6 +110,77 @@ export async function auditProposal(input: ProposalAuditInput): Promise<Proposal
   };
   await writeStableJson(input.outputPath, report);
   return report;
+}
+
+async function auditBoundRenderedPageArchitecture(input: ProposalAuditInput) {
+  const path = input.pageArchitecturePath;
+  if (path === undefined) {
+    return makeSlice([blocked(
+      "KPP_PAGE_ARCHITECTURE_UNBOUND",
+      "렌더 페이지 감사에 잠긴 page architecture 경로가 결속되지 않았습니다.",
+      { expected: "receipt-bound content/page-architecture.json" },
+    )], []);
+  }
+  try {
+    const artifact = await inspectArtifact(path);
+    const buildManifest = await readJsonObject(input.docx.buildManifestPath);
+    const buildInputs = objectAt(buildManifest, "inputs");
+    if (buildInputs?.pageArchitectureSha256 !== artifact.sha256) {
+      return makeSlice([blocked(
+        "KPP_PAGE_ARCHITECTURE_LINEAGE",
+        "page architecture bytes가 canonical build manifest 입력 해시와 다릅니다.",
+        { path, expected: buildInputs?.pageArchitectureSha256, actual: artifact.sha256 },
+      )], [artifact]);
+    }
+    const architecture = PageArchitectureManifestSchema.parse(await readJsonObject(path));
+    const observations = await readRenderObservations(input.docx.geometryReportPath, {
+      projectId: architecture.projectId,
+      documentMode: architecture.documentMode,
+      modePolicyVersion: architecture.modePolicyVersion,
+    });
+    const authorityIds: string[] = [];
+    const authorityArtifacts: AuditArtifact[] = [];
+    if (input.referenceManifestPath !== undefined) {
+      const referenceArtifact = await inspectArtifact(input.referenceManifestPath);
+      const references = ReferenceManifestSchema.parse(await readJsonObject(input.referenceManifestPath));
+      const policy = getDocumentModePolicy(architecture.documentMode);
+      if (buildInputs?.referenceManifestSha256 !== referenceArtifact.sha256) {
+        return makeSlice([blocked(
+          "KPP_REFERENCE_MANIFEST_LINEAGE",
+          "issuer override 권한 원장이 canonical build manifest 입력 해시와 다릅니다.",
+          { path: input.referenceManifestPath, expected: buildInputs?.referenceManifestSha256, actual: referenceArtifact.sha256 },
+        )], [artifact, referenceArtifact]);
+      }
+      authorityArtifacts.push(referenceArtifact);
+      for (const page of architecture.pages) {
+        const override = page.issuerOverride;
+        if (override?.sourceId !== undefined) {
+          const reference = references.references.find(({ referenceId }) => referenceId === override.sourceId);
+          if (reference !== undefined
+            && page.referenceIds.includes(override.sourceId)
+            && reference.verificationStatus === "verified"
+            && policy.issuerOverridePolicy.allowedReferenceClasses.includes(reference.referenceClass)) {
+            authorityIds.push(`source:${override.sourceId}`);
+          }
+        }
+        if (override?.ruleId !== undefined && policy.issuerOverridePolicy.allowedRuleIds.includes(override.ruleId)) {
+          authorityIds.push(`rule:${override.ruleId}`);
+        }
+      }
+    }
+    const slice = auditRenderedPageArchitecture({
+      architecture,
+      observations,
+      issuerOverrideAuthorityIds: authorityIds,
+    });
+    return makeSlice(slice.findings, [...slice.artifacts, artifact, ...authorityArtifacts]);
+  } catch (error) {
+    return makeSlice([blocked(
+      "KPP_PAGE_ARCHITECTURE_UNBOUND",
+      "잠긴 page architecture와 직접 측정 geometry를 결합할 수 없습니다.",
+      { path, actual: error instanceof Error ? error.message : error },
+    )], []);
+  }
 }
 
 async function proposalReceiptBindings(input: ProposalAuditInput): Promise<ReleaseArtifactBindings> {

@@ -76,6 +76,8 @@ export async function auditProject(rootInput: string, options: AuditProjectOptio
     const report = await auditProposal({
       root,
       docx: { docxPath, buildManifestPath, geometryReportPath: geometryPath },
+      pageArchitecturePath: await regularFile(root, join(root, "content", "page-architecture.json"), "KPP_AUDIT_ARCHITECTURE_INVALID"),
+      referenceManifestPath: await regularFile(root, join(root, "evidence", "reference-manifest.json"), "KPP_AUDIT_REFERENCE_MANIFEST_INVALID"),
       renderManifestPath,
       trustedPdftotextPath: options.trustedPdftotextPath,
       figures: await Promise.all(options.figures.map(async (figure) => ({

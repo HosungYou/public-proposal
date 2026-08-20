@@ -5,6 +5,7 @@ import type { RenderObservationManifest } from "./render-observations.js";
 export interface RenderedPageArchitectureAuditInput {
   readonly architecture: PageArchitectureManifest;
   readonly observations: RenderObservationManifest;
+  readonly issuerOverrideAuthorityIds?: readonly string[];
 }
 
 export function auditRenderedPageArchitecture(
@@ -59,7 +60,11 @@ export function auditRenderedPageArchitecture(
       ));
     }
     const strongestHeading = Math.max(0, ...observed.measuredHeadingPointSizes);
-    const override = issuerOverrideBound(architecture, planned);
+    const override = issuerOverrideBound(
+      architecture,
+      planned,
+      input.issuerOverrideAuthorityIds ?? [],
+    );
     if (planned.continuation && strongestHeading > 12 && !override) {
       findings.push(blocked(
         "KPP_PAGE_TITLE_CONTINUATION_LARGE",
@@ -89,11 +94,15 @@ export function auditRenderedPageArchitecture(
 function issuerOverrideBound(
   architecture: PageArchitectureManifest,
   page: PageArchitectureManifest["pages"][number],
+  authorityIds: readonly string[],
 ): boolean {
   const override = page.issuerOverride;
   return override !== undefined
     && override.documentMode === architecture.documentMode
     && override.modePolicyVersion === architecture.modePolicyVersion
     && (override.ruleId !== undefined || override.sourceId !== undefined)
+    && authorityIds.includes(override.sourceId !== undefined
+      ? `source:${override.sourceId}`
+      : `rule:${override.ruleId}`)
     && override.reason.trim().length > 0;
 }

@@ -1,11 +1,11 @@
-import { access, chmod, copyFile, mkdir, mkdtemp, readFile, readdir, rm, stat, symlink, writeFile } from "node:fs/promises";
+import { access, chmod, copyFile, mkdir, mkdtemp, readFile, readdir, realpath, rm, stat, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { resolveTool } from "../../../tests/support/tool-paths.js";
 import { advanceProject, executeFile, initializeProject, sha256File, verifyProjectState, writeReceipt } from "@longtable/kpp-core";
 import { R08_TOKEN_PROFILE_SHA256, renderFigureArtifact, type GanttFigureSpec } from "@longtable/kpp-renderers";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { buildProject } from "../src/commands/build.js";
 import { auditProject } from "../src/commands/audit.js";
 import { approveProject } from "../src/commands/approve.js";
@@ -13,11 +13,17 @@ import { releaseProject } from "../src/commands/release.js";
 import { renderProject } from "../src/commands/render.js";
 
 const TEMPLATE = resolve("workers/docx-python/assets/Korean Public Proposal A4 v1.docx");
+const WORKER_PYTHON = resolve("workers/docx-python/.venv/bin/python");
 
 describe("verified proposal release flow", () => {
   const roots: string[] = [];
 
+  beforeEach(() => {
+    process.env.KPP_WORKER_PATH = WORKER_PYTHON;
+  });
+
   afterEach(async () => {
+    delete process.env.KPP_WORKER_PATH;
     await Promise.all(roots.splice(0).map(async (root) => {
       await makeWritable(root);
       await rm(root, { recursive: true, force: true });
@@ -88,6 +94,40 @@ describe("verified proposal release flow", () => {
     });
   }, 60_000);
 
+  it("injects the receipt-bound continuation architecture and renders its heading at 12pt", async () => {
+    const fixture = await createContentApprovedProject(roots, false, false, 1, false, 12);
+    const built = await buildProject(fixture.root, { requestPath: fixture.requestPath });
+    const unzipped = await executeFile("/usr/bin/unzip", ["-p", built.docxPath, "word/document.xml"]);
+
+    expect(unzipped.stdout).toContain('w:sz w:val="24"');
+    expect(unzipped.stdout).not.toContain('w:sz w:val="32"');
+  }, 60_000);
+
+  it("blocks a receipt-bound 20.5pt continuation architecture through the normal CLI path", async () => {
+    const fixture = await createContentApprovedProject(roots, false, false, 1, false, 20.5);
+
+    await expect(buildProject(fixture.root, { requestPath: fixture.requestPath }))
+      .rejects.toMatchObject({ code: "KPP_BUILD_MANIFEST_UNBOUND" });
+    await expect(access(join(fixture.root, "receipts", "build.json"))).rejects.toBeDefined();
+  });
+
+  it("rejects caller-supplied page architecture that conflicts with the receipt-bound manifest", async () => {
+    const fixture = await createContentApprovedProject(roots);
+    const request = JSON.parse(await readFile(fixture.requestPath, "utf8")) as Record<string, unknown>;
+    request.pageArchitecture = {
+      schemaVersion: "2.0.0",
+      projectId: "conflicting-project",
+      documentMode: "research_service",
+      modePolicyVersion: "1.0.0",
+      architectureStatus: "complete",
+      chapters: [], sections: [], pages: [],
+    };
+    await writeFile(fixture.requestPath, `${JSON.stringify(request)}\n`);
+
+    await expect(buildProject(fixture.root, { requestPath: fixture.requestPath }))
+      .rejects.toMatchObject({ code: "KPP_BUILD_ARCHITECTURE_CONFLICT" });
+  });
+
   it("rejects a missing reference manifest before starting the build worker", async () => {
     const fixture = await createContentApprovedProject(roots);
     await rm(join(fixture.root, "evidence", "reference-manifest.json"));
@@ -139,6 +179,9 @@ describe("verified proposal release flow", () => {
       figures: fixture.auditFigures,
     });
     expect(audited.report).toMatchObject({ status: "PASS", humanBoundary: "TECHNICAL_GATE_ONLY" });
+    expect(audited.report.artifacts.map((artifact) => artifact.path)).toContain(
+      await realpath(join(fixture.root, "content", "page-architecture.json")),
+    );
     expect(audited.state).toBe("AUDITED");
     expect((await verifyProjectState(fixture.root)).state).toBe("AUDITED");
     const approved = await approveProject(fixture.root, { approvedBy: "제출책임자", auditPath: audited.auditPath });
@@ -372,6 +415,7 @@ async function createContentApprovedProject(
   unrelatedFigure = false,
   figureCount = 1,
   crossModeArchitecture = false,
+  continuationTitlePoint?: number,
 ): Promise<{
   readonly root: string;
   readonly requestPath: string;
@@ -513,7 +557,14 @@ async function createContentApprovedProject(
       pageRole: page.pageRole,
       surfaceTemplateId: page.surfaceTemplateId,
       titleScope: index === 0 ? "chapter" : "section",
-      continuation: false,
+      continuation: continuationTitlePoint !== undefined && index === 1,
+      ...(continuationTitlePoint !== undefined && index === 1 ? {
+        titlePointSize: continuationTitlePoint,
+        continuityFromPageId: pagePlan.pages[0]!.pageId,
+      } : {}),
+      ...(continuationTitlePoint !== undefined && index === 0 ? {
+        continuityToPageId: pagePlan.pages[1]!.pageId,
+      } : {}),
       dominantSurface: index === 0 && figureIds.length > 0 ? "mixed" : "narrative",
       surfaceVisibility: "internal",
       claimIds: index === 0 ? ["CLM-01"] : [],
