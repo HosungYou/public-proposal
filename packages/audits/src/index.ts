@@ -19,8 +19,22 @@ export {
 } from "./content-approval.js";
 export {
   auditDocxArtifacts,
+  readRenderObservations,
   type DocxAuditInput,
 } from "./content.js";
+export {
+  auditRenderedPageArchitecture,
+  type RenderedPageArchitectureAuditInput,
+} from "./page-architecture.js";
+export {
+  renderObservationManifestFromGeometry,
+  type RenderContinuationMarkers,
+  type RenderObservationIdentity,
+  type RenderObservationManifest,
+  type RenderPageGeometry,
+  type RenderPageObservation,
+  type RenderTitleBlockObservation,
+} from "./render-observations.js";
 export {
   auditRenderArtifacts,
   type RenderAuditOptions,

@@ -4,6 +4,11 @@ import { realpath } from "node:fs/promises";
 import { isDeepStrictEqual } from "node:util";
 import { executeFile } from "@longtable/kpp-core";
 import { inspectArtifact, readJsonObject, blocked, makeSlice, type AuditSlice } from "./source.js";
+import {
+  renderObservationManifestFromGeometry,
+  type RenderObservationIdentity,
+  type RenderObservationManifest,
+} from "./render-observations.js";
 
 export interface DocxAuditInput {
   readonly docxPath: string;
@@ -119,6 +124,17 @@ export async function auditDocxArtifacts(input: DocxAuditInput): Promise<AuditSl
     }));
   }
   return makeSlice(findings, artifacts);
+}
+
+/** Read measured OOXML observations without importing page roles from a plan. */
+export async function readRenderObservations(
+  geometryReportPath: string,
+  identity: RenderObservationIdentity,
+): Promise<RenderObservationManifest> {
+  return renderObservationManifestFromGeometry(
+    await readJsonObject(geometryReportPath),
+    identity,
+  );
 }
 
 async function sameExistingPath(left: unknown, right: string): Promise<boolean> {

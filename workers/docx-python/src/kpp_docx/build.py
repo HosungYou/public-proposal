@@ -95,6 +95,26 @@ class PlannedFigureSpec(StrictModel):
     ]
 
 
+class IssuerOverride(StrictModel):
+    document_mode: Literal[
+        "public_procurement",
+        "research_service",
+        "private_partnership",
+        "internal_decision",
+        "document_restyle",
+    ] = Field(alias="documentMode")
+    mode_policy_version: str = Field(alias="modePolicyVersion", min_length=1)
+    rule_id: str | None = Field(alias="ruleId", min_length=1, default=None)
+    source_id: str | None = Field(alias="sourceId", min_length=1, default=None)
+    reason: str = Field(min_length=1)
+
+    @model_validator(mode="after")
+    def validate_locator(self) -> "IssuerOverride":
+        if (self.rule_id is None) == (self.source_id is None):
+            raise ValueError("issuerOverride must identify exactly one ruleId or sourceId")
+        return self
+
+
 class FigureSpec(StrictModel):
     figure_id: str = Field(alias="figureId", min_length=1)
     requirement_id: str = Field(alias="requirementId", min_length=1)
@@ -121,6 +141,49 @@ class PagePlanItem(StrictModel):
     surface_template_id: str = Field(alias="surfaceTemplateId", min_length=1)
     claim_ids: list[str] = Field(alias="claimIds")
     figure_specs: list[PlannedFigureSpec] = Field(alias="figureSpecs")
+
+
+class PageArchitectureItem(StrictModel):
+    page_id: str = Field(alias="pageId", min_length=1)
+    chapter_id: str = Field(alias="chapterId", min_length=1)
+    section_id: str = Field(alias="sectionId", min_length=1)
+    page_role: str = Field(alias="pageRole", min_length=1)
+    surface_template_id: str = Field(alias="surfaceTemplateId", min_length=1)
+    title_scope: Literal["cover", "chapter", "section", "surface", "none"] = Field(
+        alias="titleScope"
+    )
+    title_point_size: float | None = Field(alias="titlePointSize", gt=0, le=72, default=None)
+    continuation: bool
+    dominant_surface: Literal["narrative", "table", "figure", "mixed", "form"] = Field(
+        alias="dominantSurface"
+    )
+    surface_visibility: Literal["internal", "reader"] = Field(alias="surfaceVisibility")
+    evaluation_question: str | None = Field(alias="evaluationQuestion", min_length=1, default=None)
+    direct_answer: str | None = Field(alias="directAnswer", min_length=1, default=None)
+    claim_ids: list[str] = Field(alias="claimIds")
+    proof_ids: list[str] = Field(alias="proofIds")
+    reference_ids: list[str] = Field(alias="referenceIds")
+    figure_ids: list[str] = Field(alias="figureIds")
+    continuity_from_page_id: str | None = Field(alias="continuityFromPageId", min_length=1, default=None)
+    continuity_to_page_id: str | None = Field(alias="continuityToPageId", min_length=1, default=None)
+    issuer_override: IssuerOverride | None = Field(alias="issuerOverride", default=None)
+
+
+class PageArchitecture(StrictModel):
+    schema_version: str = Field(alias="schemaVersion", min_length=1)
+    project_id: str = Field(alias="projectId", min_length=1)
+    document_mode: Literal[
+        "public_procurement",
+        "research_service",
+        "private_partnership",
+        "internal_decision",
+        "document_restyle",
+    ] = Field(alias="documentMode")
+    mode_policy_version: str = Field(alias="modePolicyVersion", min_length=1)
+    architecture_status: Literal["staged", "complete"] = Field(alias="architectureStatus")
+    chapters: list[dict[str, object]]
+    sections: list[dict[str, object]]
+    pages: list[PageArchitectureItem] = Field(min_length=1)
 
 
 class PagePlan(StrictModel):
@@ -230,6 +293,7 @@ class BuildRequest(StrictModel):
     project_id: str = Field(alias="projectId", min_length=1)
     template: TemplateRef
     page_plan: PagePlan = Field(alias="pagePlan")
+    page_architecture: PageArchitecture | None = Field(alias="pageArchitecture", default=None)
     evidence_ledger: EvidenceLedger = Field(alias="evidenceLedger")
     content_blocks: list[ContentBlock] = Field(alias="contentBlocks", min_length=1)
     figure_manifest: FigureManifest = Field(alias="figureManifest")
@@ -246,6 +310,39 @@ class BuildRequest(StrictModel):
             raise ValueError("content block pageId values must be unique")
         if set(content_page_ids) != set(page_ids):
             raise ValueError("content blocks must map exactly to pagePlan pages")
+
+        if self.page_architecture is not None:
+            architecture = self.page_architecture
+            architecture_page_ids = [page.page_id for page in architecture.pages]
+            if architecture.project_id != self.project_id:
+                raise KppBuildError(
+                    "KPP_PAGE_ARCHITECTURE_IDENTITY",
+                    "pageArchitecture projectId must match BuildRequest",
+                )
+            if architecture_page_ids != page_ids:
+                raise KppBuildError(
+                    "KPP_PAGE_ARCHITECTURE_PAGES",
+                    "pageArchitecture pages must match pagePlan order exactly",
+                )
+            for page in architecture.pages:
+                override = page.issuer_override
+                override_bound = (
+                    override is not None
+                    and override.document_mode == architecture.document_mode
+                    and override.mode_policy_version == architecture.mode_policy_version
+                )
+                if override is not None and not override_bound:
+                    raise KppBuildError(
+                        "KPP_PAGE_ISSUER_OVERRIDE_UNBOUND",
+                        "issuerOverride must match pageArchitecture mode identity",
+                    )
+                point_size = _architecture_title_point_size(page)
+                if page.continuation and point_size > 12 and not override_bound:
+                    raise KppBuildError(
+                        "KPP_PAGE_TITLE_CONTINUATION_LARGE",
+                        f"{page.page_id} continuation heading is "
+                        f"{point_size}pt; maximum is 12pt",
+                    )
 
         figures = {figure.figure_id: figure for figure in self.figure_manifest.figures}
         if len(figures) != len(self.figure_manifest.figures):
@@ -450,6 +547,9 @@ def build_document(request: BuildRequest) -> BuildResult:
             format_navigation_paragraph(paragraph, typography)
     table_contract = _table_contract(request.surface_profile.table)
     content_by_page_id = {block.page_id: block for block in request.content_blocks}
+    architecture_by_page_id = {
+        page.page_id: page for page in request.page_architecture.pages
+    } if request.page_architecture is not None else {}
     figure_by_id = {figure.figure_id: figure for figure in request.figure_manifest.figures}
     table_records: list[dict[str, object]] = []
 
@@ -460,10 +560,16 @@ def build_document(request: BuildRequest) -> BuildResult:
 
         heading = document.add_paragraph(style=style_ids["heading"])
         heading_run = heading.add_run(block.heading)
+        architecture_page = architecture_by_page_id.get(planned_page.page_id)
+        title_point_size = (
+            _architecture_title_point_size(architecture_page)
+            if architecture_page is not None
+            else 16
+        )
         format_run(
             heading_run,
             font=typography.heading_font,
-            half_points=32,
+            half_points=round(title_point_size * 2),
             bold=True,
         )
         for paragraph_content in block.paragraphs:
@@ -635,6 +741,12 @@ def _typography_contract(profile: TypographyProfile) -> TypographyContract:
         line_height=profile.line_height,
         character_spacing_pt=profile.character_spacing_pt,
     )
+
+
+def _architecture_title_point_size(page: PageArchitectureItem) -> float:
+    if page.title_point_size is not None:
+        return page.title_point_size
+    return 20.5 if page.title_scope in ("cover", "chapter") else 12
 
 
 def _table_contract(profile: TableProfile) -> TableContract:

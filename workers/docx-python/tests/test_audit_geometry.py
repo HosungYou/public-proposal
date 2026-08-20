@@ -4,6 +4,7 @@ import hashlib
 import json
 import zipfile
 from pathlib import Path
+from unittest.mock import ANY
 
 from kpp_docx.audit_geometry import audit_docx_geometry
 
@@ -54,6 +55,96 @@ def test_blocks_missing_table_geometry_and_unbound_drawing(tmp_path: Path) -> No
     codes = {finding["code"] for finding in report["findings"]}
     assert "KPP_DOCX_TABLE_GEOMETRY" in codes
     assert "KPP_DOCX_DRAWING_RELATIONSHIP" in codes
+
+
+def test_emits_measured_page_observations_with_stable_source_binding(tmp_path: Path) -> None:
+    docx = tmp_path / "proposal.docx"
+    _write_two_page_docx(docx)
+
+    report = audit_docx_geometry(docx, expected_profile_sha256="1" * 64)
+
+    assert report["docx"]["bytes"] == docx.stat().st_size
+    assert report["pageObservations"] == [
+        {
+            "pageNumber": 1,
+            "pageLocator": "page:0001",
+            "sourceArtifactSha256": hashlib.sha256(docx.read_bytes()).hexdigest(),
+            "measuredHeadingPointSizes": [20.5],
+            "titleBlocks": [
+                {
+                    "textFingerprint": hashlib.sha256("첫 장".encode()).hexdigest(),
+                    "pointSize": 20.5,
+                    "region": "top",
+                }
+            ],
+            "surfaceFamily": "narrative",
+            "regionFingerprints": [ANY],
+            "geometry": {
+                "widthPoint": 595.3,
+                "heightPoint": 841.9,
+                "textBlockCount": 2,
+                "tableCount": 0,
+                "figureCount": 0,
+            },
+            "continuationMarkers": {"fromPrevious": False, "toNext": True},
+        },
+        {
+            "pageNumber": 2,
+            "pageLocator": "page:0002",
+            "sourceArtifactSha256": hashlib.sha256(docx.read_bytes()).hexdigest(),
+            "measuredHeadingPointSizes": [12.0],
+            "titleBlocks": [
+                {
+                    "textFingerprint": hashlib.sha256("이어지는 장".encode()).hexdigest(),
+                    "pointSize": 12.0,
+                    "region": "top",
+                }
+            ],
+            "surfaceFamily": "narrative",
+            "regionFingerprints": [ANY],
+            "geometry": {
+                "widthPoint": 595.3,
+                "heightPoint": 841.9,
+                "textBlockCount": 2,
+                "tableCount": 0,
+                "figureCount": 0,
+            },
+            "continuationMarkers": {"fromPrevious": True, "toNext": False},
+        },
+    ]
+
+
+def _write_two_page_docx(path: Path) -> None:
+    document = '''<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
+ <w:body>
+  <w:p><w:pPr><w:pStyle w:val="KPPHeading1"/></w:pPr><w:r><w:rPr><w:sz w:val="41"/><w:szCs w:val="41"/></w:rPr><w:t>첫 장</w:t></w:r></w:p>
+  <w:p><w:pPr><w:pStyle w:val="KPPBody"/><w:jc w:val="both"/><w:spacing w:line="365" w:lineRule="auto"/></w:pPr><w:r><w:rPr><w:rFonts w:ascii="Noto Serif CJK KR" w:hAnsi="Noto Serif CJK KR" w:eastAsia="Noto Serif CJK KR" w:cs="Noto Serif CJK KR"/><w:sz w:val="19"/><w:szCs w:val="19"/><w:spacing w:val="-4"/></w:rPr><w:t>첫 본문</w:t></w:r></w:p>
+  <w:p><w:r><w:br w:type="page"/></w:r></w:p>
+  <w:p><w:pPr><w:pStyle w:val="KPPHeading1"/></w:pPr><w:r><w:rPr><w:sz w:val="24"/><w:szCs w:val="24"/></w:rPr><w:t>이어지는 장</w:t></w:r></w:p>
+  <w:p><w:pPr><w:pStyle w:val="KPPBody"/><w:jc w:val="both"/><w:spacing w:line="365" w:lineRule="auto"/></w:pPr><w:r><w:rPr><w:rFonts w:ascii="Noto Serif CJK KR" w:hAnsi="Noto Serif CJK KR" w:eastAsia="Noto Serif CJK KR" w:cs="Noto Serif CJK KR"/><w:sz w:val="19"/><w:szCs w:val="19"/><w:spacing w:val="-4"/></w:rPr><w:t>둘째 본문</w:t></w:r></w:p>
+  <w:sectPr><w:pgSz w:w="11906" w:h="16838"/></w:sectPr>
+ </w:body>
+</w:document>'''
+    styles = _styles_xml()
+    rels = '''<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"/>'''
+    with zipfile.ZipFile(path, "w") as archive:
+        archive.writestr("word/document.xml", document)
+        archive.writestr("word/styles.xml", styles)
+        archive.writestr("word/_rels/document.xml.rels", rels)
+
+
+def _styles_xml() -> str:
+    return '''<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<w:styles xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
+ <w:style w:type="paragraph" w:styleId="KPPBody"><w:rPr><w:rFonts w:ascii="Noto Serif CJK KR" w:hAnsi="Noto Serif CJK KR" w:eastAsia="Noto Serif CJK KR" w:cs="Noto Serif CJK KR"/><w:sz w:val="19"/><w:szCs w:val="19"/><w:spacing w:val="-4"/></w:rPr></w:style>
+ <w:style w:type="paragraph" w:styleId="KPPHeading1"><w:rPr><w:rFonts w:ascii="Noto Sans CJK KR" w:hAnsi="Noto Sans CJK KR" w:eastAsia="Noto Sans CJK KR" w:cs="Noto Sans CJK KR"/><w:sz w:val="32"/><w:szCs w:val="32"/></w:rPr></w:style>
+ <w:style w:type="paragraph" w:styleId="KPPNavigation"><w:rPr><w:rFonts w:ascii="Noto Sans CJK KR" w:hAnsi="Noto Sans CJK KR" w:eastAsia="Noto Sans CJK KR" w:cs="Noto Sans CJK KR"/><w:sz w:val="18"/><w:szCs w:val="18"/></w:rPr></w:style>
+ <w:style w:type="paragraph" w:styleId="KPPCaption"><w:rPr><w:rFonts w:ascii="Noto Sans CJK KR" w:hAnsi="Noto Sans CJK KR" w:eastAsia="Noto Sans CJK KR" w:cs="Noto Sans CJK KR"/><w:sz w:val="18"/><w:szCs w:val="18"/></w:rPr></w:style>
+ <w:style w:type="paragraph" w:styleId="KPPTableHeader"><w:rPr><w:rFonts w:ascii="Noto Sans CJK KR" w:hAnsi="Noto Sans CJK KR" w:eastAsia="Noto Sans CJK KR" w:cs="Noto Sans CJK KR"/><w:sz w:val="18"/><w:szCs w:val="18"/></w:rPr></w:style>
+ <w:style w:type="paragraph" w:styleId="KPPTableBody"><w:rPr><w:rFonts w:ascii="Noto Serif CJK KR" w:hAnsi="Noto Serif CJK KR" w:eastAsia="Noto Serif CJK KR" w:cs="Noto Serif CJK KR"/><w:sz w:val="18"/><w:szCs w:val="18"/><w:spacing w:val="-4"/></w:rPr></w:style>
+</w:styles>'''
 
 
 def _write_docx(path: Path, *, valid: bool) -> None:

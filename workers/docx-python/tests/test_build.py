@@ -276,6 +276,79 @@ def test_missing_precision_policy_defaults_to_exact_and_blocks_9_3pt(
         BuildRequest.model_validate(payload)
 
 
+def test_rejects_large_explicit_continuation_heading_without_override(
+    tmp_path: Path,
+) -> None:
+    payload = sample_request(tmp_path).model_dump(by_alias=True)
+    payload["pageArchitecture"] = _page_architecture(
+        continuation=True,
+        title_point_size=20.5,
+    )
+
+    with pytest.raises(
+        ValidationError, match="KPP_PAGE_TITLE_CONTINUATION_LARGE"
+    ):
+        BuildRequest.model_validate(payload)
+
+
+def test_allows_large_explicit_continuation_heading_with_bound_override(
+    tmp_path: Path,
+) -> None:
+    payload = sample_request(tmp_path).model_dump(by_alias=True)
+    payload["pageArchitecture"] = _page_architecture(
+        continuation=True,
+        title_point_size=20.5,
+        issuer_override={
+                "documentMode": "private_partnership",
+                "modePolicyVersion": "1.0.0",
+                "sourceId": "SRC-ISSUER-01",
+                "reason": "파트너 지정 양식의 연속 면 제목 규칙",
+        }
+    )
+
+    request = BuildRequest.model_validate(payload)
+    result = build_document(request)
+    document_xml = _xml(result.docx, "word/document.xml")
+
+    assert 'w:sz w:val="41"' in document_xml
+
+
+def _page_architecture(
+    *,
+    continuation: bool,
+    title_point_size: float,
+    issuer_override: dict[str, object] | None = None,
+) -> dict[str, object]:
+    page: dict[str, object] = {
+        "pageId": "P-01",
+        "chapterId": "CH-01",
+        "sectionId": "SEC-01",
+        "pageRole": "research_method",
+        "surfaceTemplateId": "r08-research-method-v1",
+        "titleScope": "section",
+        "titlePointSize": title_point_size,
+        "continuation": continuation,
+        "dominantSurface": "table",
+        "surfaceVisibility": "internal",
+        "claimIds": ["CLM-01"],
+        "proofIds": [],
+        "referenceIds": ["EV-01"],
+        "figureIds": [],
+    }
+    if issuer_override is not None:
+        page["issuerOverride"] = issuer_override
+    return {
+        "schemaVersion": "2.0.0",
+        "projectId": "synthetic-research-proposal",
+        "documentMode": "private_partnership",
+        "modePolicyVersion": "1.0.0",
+        "architectureStatus": "complete",
+        "chapters": [{"chapterId": "CH-01"}],
+        "sections": [{"sectionId": "SEC-01", "chapterId": "CH-01"}],
+        "pages": [page],
+    }
+
+
 def test_manifest_publication_failure_rolls_back_docx_and_manifest(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
