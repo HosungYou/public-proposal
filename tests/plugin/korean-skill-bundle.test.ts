@@ -78,25 +78,18 @@ test("the public proposal plugin ships a validated package copy and rewrites the
 });
 
 test("the canonical, source, and packaged Korean skill payloads share the vNext contract", async () => {
-  const canonicalSkillRoot = process.env.KPP_CANONICAL_SKILL_ROOT
-    ?? join(homedir(), ".codex", "skills", "korean-public-proposal");
   const sourceSkillRoot = join(sourcePluginRoot, "skills", "korean-public-proposal");
   const packagedSkillRoot = join(packagedPluginRoot, "skills", "korean-public-proposal");
   const manifest = await readBundleManifest(sourcePluginRoot);
+  const resolution = resolveCanonicalSkillRoot({ sourceSkillRoot });
+  console.info(`[kpp skill parity] ${resolution.report}`);
 
-  for (const entry of manifest.files) {
-    const [sourcePayload, packagedPayload] = await Promise.all([
-      readFile(join(sourceSkillRoot, entry.path)),
-      readFile(join(packagedSkillRoot, entry.path)),
-    ]);
-    expect(packagedPayload.equals(sourcePayload), `source/packaged mismatch for ${entry.path}`).toBe(true);
-    if (existsSync(canonicalSkillRoot)) {
-      const canonicalPayload = await readFile(join(canonicalSkillRoot, entry.path));
-      expect(sourcePayload.equals(canonicalPayload), `canonical/source mismatch for ${entry.path}`).toBe(true);
-    } else if (process.env.KPP_CANONICAL_SKILL_ROOT !== undefined) {
-      throw new Error(`KPP_CANONICAL_SKILL_ROOT does not exist: ${canonicalSkillRoot}`);
-    }
-  }
+  await assertSkillPayloadParity({
+    canonicalSkillRoot: resolution.root,
+    manifest,
+    packagedSkillRoot,
+    sourceSkillRoot,
+  });
 
   const skill = await readFile(join(sourceSkillRoot, "SKILL.md"), "utf8");
   const contract = await readFile(join(sourceSkillRoot, "references", "vnext-contract.md"), "utf8");
@@ -127,6 +120,52 @@ test("the canonical, source, and packaged Korean skill payloads share the vNext 
   expect(contract).toMatch(/continuation.*(?:<=|at most).*12\s*pt/is);
   expect(skill).not.toContain("- Title 20.5 pt");
   expect(contract).toContain("human-approved");
+});
+
+test("canonical skill parity honors an override, rejects a missing override, and records the repository fallback", async () => {
+  const sourceSkillRoot = join(sourcePluginRoot, "skills", "korean-public-proposal");
+  const packagedSkillRoot = join(packagedPluginRoot, "skills", "korean-public-proposal");
+  const manifest = await readBundleManifest(sourcePluginRoot);
+  const fixtureRoot = await mkdtemp(join(tmpdir(), "public-proposal-canonical-skill-"));
+  tempDirectories.push(fixtureRoot);
+  const overrideRoot = join(fixtureRoot, "override");
+  await cp(sourceSkillRoot, overrideRoot, { recursive: true });
+
+  const overrideResolution = resolveCanonicalSkillRoot({
+    environment: { KPP_CANONICAL_SKILL_ROOT: overrideRoot },
+    installedSkillRoot: join(fixtureRoot, "not-used"),
+    sourceSkillRoot,
+  });
+  expect(overrideResolution.source).toBe("environment override");
+  await expect(assertSkillPayloadParity({
+    canonicalSkillRoot: overrideResolution.root,
+    manifest,
+    packagedSkillRoot,
+    sourceSkillRoot,
+  })).resolves.toBeUndefined();
+
+  await writeFile(join(overrideRoot, "SKILL.md"), "canonical mismatch\n", "utf8");
+  await expect(assertSkillPayloadParity({
+    canonicalSkillRoot: overrideResolution.root,
+    manifest,
+    packagedSkillRoot,
+    sourceSkillRoot,
+  })).rejects.toThrow(/canonical\/source mismatch for SKILL.md/i);
+
+  expect(() => resolveCanonicalSkillRoot({
+    environment: { KPP_CANONICAL_SKILL_ROOT: join(fixtureRoot, "missing") },
+    installedSkillRoot: join(fixtureRoot, "not-used"),
+    sourceSkillRoot,
+  })).toThrow(/KPP_CANONICAL_SKILL_ROOT does not exist/i);
+
+  const fallbackResolution = resolveCanonicalSkillRoot({
+    environment: {},
+    installedSkillRoot: join(fixtureRoot, "not-installed"),
+    sourceSkillRoot,
+  });
+  expect(fallbackResolution.source).toBe("repository canonical source fallback");
+  expect(fallbackResolution.root).toBe(sourceSkillRoot);
+  expect(fallbackResolution.report).toContain("repository canonical source fallback");
 });
 
 test("the bundle validator rejects generic absolute source path leaks in bundle payloads", async () => {
@@ -239,6 +278,62 @@ async function runSync(repoRoot: string): Promise<string> {
   }
 }
 
+function resolveCanonicalSkillRoot({
+  environment = process.env,
+  installedSkillRoot = join(homedir(), ".codex", "skills", "korean-public-proposal"),
+  sourceSkillRoot,
+}: {
+  environment?: NodeJS.ProcessEnv;
+  installedSkillRoot?: string;
+  sourceSkillRoot: string;
+}): CanonicalSkillResolution {
+  const configuredRoot = environment.KPP_CANONICAL_SKILL_ROOT;
+  if (configuredRoot !== undefined) {
+    if (!existsSync(configuredRoot)) {
+      throw new Error(`KPP_CANONICAL_SKILL_ROOT does not exist: ${configuredRoot}`);
+    }
+    return {
+      root: configuredRoot,
+      source: "environment override",
+      report: `canonical skill root: environment override (${configuredRoot})`,
+    };
+  }
+  if (existsSync(installedSkillRoot)) {
+    return {
+      root: installedSkillRoot,
+      source: "installed default",
+      report: `canonical skill root: installed default (${installedSkillRoot})`,
+    };
+  }
+  return {
+    root: sourceSkillRoot,
+    source: "repository canonical source fallback",
+    report: "canonical skill root: repository canonical source fallback (installed default unavailable)",
+  };
+}
+
+async function assertSkillPayloadParity({
+  canonicalSkillRoot,
+  manifest,
+  packagedSkillRoot,
+  sourceSkillRoot,
+}: {
+  canonicalSkillRoot: string;
+  manifest: BundleManifest;
+  packagedSkillRoot: string;
+  sourceSkillRoot: string;
+}): Promise<void> {
+  for (const entry of manifest.files) {
+    const [canonicalPayload, sourcePayload, packagedPayload] = await Promise.all([
+      readFile(join(canonicalSkillRoot, entry.path)),
+      readFile(join(sourceSkillRoot, entry.path)),
+      readFile(join(packagedSkillRoot, entry.path)),
+    ]);
+    expect(packagedPayload.equals(sourcePayload), `source/packaged mismatch for ${entry.path}`).toBe(true);
+    expect(sourcePayload.equals(canonicalPayload), `canonical/source mismatch for ${entry.path}`).toBe(true);
+  }
+}
+
 function parseJson(source: string): unknown {
   return JSON.parse(source) as unknown;
 }
@@ -272,4 +367,10 @@ interface BundleEntry {
   path: string;
   bytes: number;
   sha256: string;
+}
+
+interface CanonicalSkillResolution {
+  root: string;
+  source: "environment override" | "installed default" | "repository canonical source fallback";
+  report: string;
 }
