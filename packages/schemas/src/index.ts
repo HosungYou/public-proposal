@@ -1,4 +1,31 @@
 export {
+  DOCUMENT_MODES,
+  DocumentModeSchema,
+  type DocumentMode,
+} from "./document-mode.js";
+export {
+  IssuerOverrideSchema,
+  PageArchitectureManifestSchema,
+  PageArchitecturePageSchema,
+  PageSurfaceVisibilitySchema,
+  PageTitleScopeSchema,
+  type IssuerOverride,
+  type PageArchitectureManifest,
+  type PageArchitecturePage,
+  type PageSurfaceVisibility,
+  type PageTitleScope,
+} from "./page-architecture.js";
+export {
+  ReferenceClassSchema,
+  ReferenceManifestSchema,
+  ReferenceRecordSchema,
+  ReferenceTargetSchema,
+  type ReferenceClass,
+  type ReferenceManifest,
+  type ReferenceRecord,
+  type ReferenceTarget,
+} from "./reference-manifest.js";
+export {
   EvidenceBindingSchema,
   EvidenceItemSchema,
   EvidenceLedgerSchema,
@@ -112,9 +139,13 @@ export {
   ApprovalPolicySchema,
   ProposalClassSchema,
   ProjectSchema,
+  ProjectV1Schema,
+  ProjectV2Schema,
   ProjectStateSchema,
   type ProposalClass,
   type ProjectRecord,
+  type ProjectV1Record,
+  type ProjectV2Record,
   type ProjectState,
 } from "./project.js";
 export {

@@ -102,6 +102,42 @@ describe("canonical persisted schemas", () => {
     ).toBe("INIT");
   });
 
+  it("keeps legacy projects readable while requiring metadata for v2", () => {
+    const legacy = ProjectSchema.parse({
+      schemaVersion: "1.0.0",
+      projectId: "legacy",
+      proposalClass: "general_procurement",
+      state: "INIT",
+      issuerPack: null,
+      approvalPolicy: "single_owner",
+    });
+    expect("documentMode" in legacy).toBe(false);
+
+    expect(() => ProjectSchema.parse({
+      schemaVersion: "2.0.0",
+      projectId: "v2",
+      proposalClass: "general_procurement",
+      state: "INIT",
+      issuerPack: null,
+      approvalPolicy: "single_owner",
+      modePolicyVersion: "1.0.0",
+      migrationHistory: [],
+    })).toThrow();
+
+    const current = ProjectSchema.parse({
+      schemaVersion: "2.0.0",
+      projectId: "v2",
+      proposalClass: "general_procurement",
+      state: "INIT",
+      issuerPack: null,
+      approvalPolicy: "single_owner",
+      documentMode: "public_procurement",
+      modePolicyVersion: "1.0.0",
+      migrationHistory: [],
+    });
+    expect("documentMode" in current ? current.documentMode : undefined).toBe("public_procurement");
+  });
+
   it("accepts only the supported proposal classes", () => {
     const classes = [
       "academic_research",
