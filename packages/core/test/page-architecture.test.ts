@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import type { PageArchitectureManifest, PagePlan } from "@longtable/kpp-schemas";
+import { PageArchitectureManifestSchema, type PageArchitectureManifest, type PagePlan } from "@longtable/kpp-schemas";
 import { getDocumentModePolicy, validatePageArchitecture } from "../src/index.js";
 
 const figure = {
@@ -85,6 +85,54 @@ describe("validatePageArchitecture", () => {
       status: "FAIL",
       findings: [{ ruleId: "KPP_ARCH_MODE_MISMATCH", evidence: { locator: "manifest" } }],
     });
+  });
+
+  it("rejects a cross-mode page role even when the page plan repeats it", () => {
+    const manifest = architecture();
+    const plan = structuredClone(pagePlan);
+    manifest.pages[0] = { ...manifest.pages[0]!, pageRole: "mutual_value" };
+    plan.pages[0] = { ...plan.pages[0]!, pageRole: "mutual_value" };
+    expect(validatePageArchitecture(manifest, plan, getDocumentModePolicy("public_procurement"))).toMatchObject({
+      status: "FAIL",
+      findings: expect.arrayContaining([expect.objectContaining({
+        ruleId: "KPP_ARCH_MODE_PAGE_ROLE",
+        evidence: expect.objectContaining({ locator: "page:PAGE-001/pageRole" }),
+      })]),
+    });
+  });
+
+  it("rejects a cross-mode surface template even when the page plan repeats it", () => {
+    const manifest = architecture();
+    const plan = structuredClone(pagePlan);
+    manifest.pages[0] = { ...manifest.pages[0]!, surfaceTemplateId: "partnership_narrative" };
+    plan.pages[0] = { ...plan.pages[0]!, surfaceTemplateId: "partnership_narrative" };
+    expect(validatePageArchitecture(manifest, plan, getDocumentModePolicy("public_procurement"))).toMatchObject({
+      status: "FAIL",
+      findings: expect.arrayContaining([expect.objectContaining({
+        ruleId: "KPP_ARCH_MODE_SURFACE",
+        evidence: expect.objectContaining({ locator: "page:PAGE-001/surfaceTemplateId" }),
+      })]),
+    });
+  });
+
+  it("rejects missing required roles in a complete-sized architecture", () => {
+    const manifest = architecture();
+    const plan = structuredClone(pagePlan);
+    manifest.pages[1] = { ...manifest.pages[1]!, pageRole: "approach_overview" };
+    plan.pages[1] = { ...plan.pages[1]!, pageRole: "approach_overview" };
+    expect(validatePageArchitecture(manifest, plan, getDocumentModePolicy("public_procurement"))).toMatchObject({
+      status: "FAIL",
+      findings: expect.arrayContaining([expect.objectContaining({
+        ruleId: "KPP_ARCH_REQUIRED_ROLE_MISSING",
+        evidence: expect.objectContaining({ locator: "manifest/pageRoles" }),
+      })]),
+    });
+  });
+
+  it("rejects an untyped continuation title size at the schema boundary", () => {
+    const manifest = architecture() as unknown as { pages: Array<Record<string, unknown>> };
+    manifest.pages[3] = { ...manifest.pages[3]!, titlePointSize: "20.5" };
+    expect(PageArchitectureManifestSchema.safeParse(manifest)).toMatchObject({ success: false });
   });
 
   it("rejects duplicate page IDs", () => {

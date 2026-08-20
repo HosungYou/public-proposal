@@ -58,6 +58,7 @@ export function validatePageArchitecture(
   }
 
   const planById = new Map(pagePlan.pages.map((page) => [page.pageId, page]));
+  const observedCanonicalRoles = new Set<string>();
   for (const page of manifest.pages) {
     const planned = planById.get(page.pageId);
     if (
@@ -75,9 +76,26 @@ export function validatePageArchitecture(
       continue;
     }
 
+    validateModePolicy(page, policy, observedCanonicalRoles, findings);
     validateTitleScope(page, findings);
     validateContinuity(page, architectureById, findings);
     validateIdentifiers(page, planned, findings);
+  }
+
+  // Small requirement subsets remain valid for backwards-compatible staged
+  // planning. Once the architecture is large enough to carry the complete
+  // policy role set, every required role must be represented.
+  if (manifest.pages.length >= policy.requiredPageRoles.length) {
+    const missingRoles = policy.requiredPageRoles.filter((role) => !observedCanonicalRoles.has(role));
+    if (missingRoles.length > 0) {
+      findings.push(finding(
+        "KPP_ARCH_REQUIRED_ROLE_MISSING",
+        "Complete-sized architectures must represent every required mode role.",
+        "manifest/pageRoles",
+        policy.requiredPageRoles,
+        [...observedCanonicalRoles],
+      ));
+    }
   }
 
   for (const planned of pagePlan.pages) {
@@ -94,8 +112,39 @@ export function validatePageArchitecture(
   return result(findings);
 }
 
+function validateModePolicy(
+  page: PageArchitecturePage,
+  policy: DocumentModePolicy,
+  observedCanonicalRoles: Set<string>,
+  findings: ValidationFinding[],
+): void {
+  const canonicalRole = policy.pageRoleAliases[page.pageRole] ?? page.pageRole;
+  if (!policy.allowedPageRoles.includes(canonicalRole)) {
+    findings.push(finding(
+      "KPP_ARCH_MODE_PAGE_ROLE",
+      "Page role is not allowed by the selected document mode.",
+      `page:${page.pageId}/pageRole`,
+      policy.allowedPageRoles,
+      page.pageRole,
+    ));
+  } else {
+    observedCanonicalRoles.add(canonicalRole);
+  }
+  const surfaceFamily = policy.surfaceTemplateFamilies[page.surfaceTemplateId]
+    ?? page.surfaceTemplateId;
+  if (!policy.allowedSurfaceFamilies.includes(surfaceFamily)) {
+    findings.push(finding(
+      "KPP_ARCH_MODE_SURFACE",
+      "Surface template does not resolve to a family allowed by the selected document mode.",
+      `page:${page.pageId}/surfaceTemplateId`,
+      policy.allowedSurfaceFamilies,
+      { surfaceTemplateId: page.surfaceTemplateId, resolvedSurfaceFamily: surfaceFamily },
+    ));
+  }
+}
+
 function validateTitleScope(page: PageArchitecturePage, findings: ValidationFinding[]): void {
-  const titlePointSize = (page as PageArchitecturePage & { readonly titlePointSize?: unknown }).titlePointSize;
+  const titlePointSize = page.titlePointSize;
   const forbiddenScope = page.titleScope === "cover" || page.titleScope === "chapter";
   const oversized = typeof titlePointSize === "number" && titlePointSize > 12;
   if (page.continuation && (forbiddenScope || oversized) && page.issuerOverride === undefined) {

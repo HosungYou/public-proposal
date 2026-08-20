@@ -280,6 +280,8 @@ async function runContentFixture(
     "synthetic-research-proposal",
     "--proposal-class",
     proposalClass,
+    "--document-mode",
+    proposalClass === "general_procurement" ? "public_procurement" : "research_service",
     "--json",
   ])).toMatchObject({ code: 0, stderr: "" });
   expect(await runCli(["ingest", root, rfpPath, "--json"])).toMatchObject({ code: 0, stderr: "" });

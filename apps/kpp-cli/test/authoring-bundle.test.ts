@@ -211,7 +211,7 @@ async function createFixture(temporaryDirectories: string[]) {
     writeFile(terminologyPath, terminologyText, "utf8"),
   ]);
 
-  expect(await run(["init", root, "--json"])).toMatchObject({ code: 0, stderr: "" });
+  expect(await run(["init", root, "--document-mode", "research_service", "--json"])).toMatchObject({ code: 0, stderr: "" });
   expect(await run(["ingest", root, rfpPath, "--json"])).toMatchObject({ code: 0, stderr: "" });
   const requirementsPath = join(fixtureDirectory, "requirements.json");
   await writeFile(requirementsPath, `${JSON.stringify({

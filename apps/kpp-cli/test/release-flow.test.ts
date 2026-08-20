@@ -109,6 +109,13 @@ describe("verified proposal release flow", () => {
     await expect(access(join(fixture.root, "receipts", "build.json"))).rejects.toBeDefined();
   });
 
+  it("rejects receipt-bound cross-mode roles and templates before the worker", async () => {
+    const fixture = await createContentApprovedProject(roots, false, false, 1, true);
+    await expect(buildProject(fixture.root, { requestPath: fixture.requestPath }))
+      .rejects.toMatchObject({ code: "KPP_BUILD_MANIFEST_UNBOUND" });
+    await expect(access(join(fixture.root, "receipts", "build.json"))).rejects.toBeDefined();
+  });
+
   it("runs managed build, real render, file-backed PASS audit, human approval, and immutable release", async () => {
     const fixture = await createContentApprovedProject(roots, true);
     const built = await buildProject(fixture.root, { requestPath: fixture.requestPath });
@@ -354,6 +361,7 @@ async function createContentApprovedProject(
   withFigure = false,
   unrelatedFigure = false,
   figureCount = 1,
+  crossModeArchitecture = false,
 ): Promise<{
   readonly root: string;
   readonly requestPath: string;
@@ -361,7 +369,7 @@ async function createContentApprovedProject(
 }> {
   const root = await mkdtemp(join(tmpdir(), "kpp-release-build-"));
   roots.push(root);
-  await initializeProject(root, { projectId: "release-build-fixture" });
+  await initializeProject(root, { projectId: "release-build-fixture", documentMode: "research_service" });
   const semanticFigures: GanttFigureSpec[] = [{
     figureId: "FIG-GANTT-01",
     family: "gantt",
@@ -400,9 +408,11 @@ async function createContentApprovedProject(
     family: "gantt",
     renderer: "svg-gantt",
   }));
+  const architecturePageRole = crossModeArchitecture ? "mutual_value" : "research_method";
+  const architectureSurfaceTemplateId = crossModeArchitecture ? "partnership_narrative" : "r08-research-method-v1";
   const pagePlan = {
     schemaVersion: "1.0.0",
-    pages: [{ pageId: "P-01", requirementId: "REQ-01", pageRole: "research_method", surfaceTemplateId: "r08-research-method-v1", claimIds: ["CLM-01"], figureSpecs: plannedFigures }],
+    pages: [{ pageId: "P-01", requirementId: "REQ-01", pageRole: architecturePageRole, surfaceTemplateId: architectureSurfaceTemplateId, claimIds: ["CLM-01"], figureSpecs: plannedFigures }],
   };
   const evidenceLedger = {
     schemaVersion: "1.0.0",
@@ -461,7 +471,7 @@ async function createContentApprovedProject(
   await writeFile(pageArchitecturePath, `${JSON.stringify({
     schemaVersion: "2.0.0",
     projectId: "release-build-fixture",
-    documentMode: "public_procurement",
+    documentMode: "research_service",
     modePolicyVersion: "1.0.0",
     chapters: [{ chapterId: "CH-001", order: 0 }],
     sections: [{ sectionId: "SEC-001", chapterId: "CH-001", order: 0 }],
@@ -469,8 +479,8 @@ async function createContentApprovedProject(
       pageId: "P-01",
       chapterId: "CH-001",
       sectionId: "SEC-001",
-      pageRole: "research_method",
-      surfaceTemplateId: "r08-research-method-v1",
+      pageRole: architecturePageRole,
+      surfaceTemplateId: architectureSurfaceTemplateId,
       titleScope: "chapter",
       continuation: false,
       dominantSurface: figureIds.length > 0 ? "mixed" : "narrative",
@@ -484,7 +494,7 @@ async function createContentApprovedProject(
   await writeFile(referenceManifestPath, `${JSON.stringify({
     schemaVersion: "2.0.0",
     projectId: "release-build-fixture",
-    documentMode: "public_procurement",
+    documentMode: "research_service",
     modePolicyVersion: "1.0.0",
     references: [{
       referenceId: "EV-01",

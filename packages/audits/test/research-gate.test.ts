@@ -148,6 +148,7 @@ async function createProjectAt(
   await core.initializeProject(root, {
     projectId: "research-gate-fixture",
     proposalClass: options.proposalClass ?? "research_service",
+    documentMode: "research_service",
   });
   const requirementsPath = join(root, "requirements", "requirements.json");
   await writeFile(requirementsPath, `${JSON.stringify({

@@ -58,9 +58,29 @@ describe("plan architecture and reference persistence", () => {
     await expect(readFile(join(fixture.root, "evidence", "reference-manifest.json"), "utf8"))
       .rejects.toMatchObject({ code: "ENOENT" });
   });
+
+  it("refuses cross-mode roles and templates before persisting manifests", async () => {
+    const fixture = await createFixture(undefined, {
+      pageRole: "mutual_value",
+      surfaceTemplateId: "partnership_narrative",
+    });
+    await expect(planCommand(fixture.root, fixture.requirementsPath)).rejects.toMatchObject({
+      code: "KPP_PLAN_MANIFEST_INVALID",
+    });
+    await expect(readFile(join(fixture.root, "content", "page-architecture.json"), "utf8"))
+      .rejects.toMatchObject({ code: "ENOENT" });
+    await expect(readFile(join(fixture.root, "evidence", "reference-manifest.json"), "utf8"))
+      .rejects.toMatchObject({ code: "ENOENT" });
+  });
 });
 
-async function createFixture(storedHash?: string): Promise<{ root: string; requirementsPath: string }> {
+async function createFixture(
+  storedHash?: string,
+  page: { readonly pageRole: string; readonly surfaceTemplateId: string } = {
+    pageRole: "requirement_response",
+    surfaceTemplateId: "evidence_analysis",
+  },
+): Promise<{ root: string; requirementsPath: string }> {
   const root = await mkdtemp(join(tmpdir(), "kpp-plan-v2-"));
   roots.push(root);
   await initializeProject(root, {
@@ -91,14 +111,14 @@ async function createFixture(storedHash?: string): Promise<{ root: string; requi
       claimIds: ["CLAIM-001"],
       targetRequirementId: "REQ-001",
       targetPageId: "PAGE-001",
-      targetPageRole: "requirement_response",
+      targetPageRole: page.pageRole,
     }],
     requirements: [{
       requirementId: "REQ-001",
       title: "Requirement response",
       critical: false,
-      pageRole: "requirement_response",
-      surfaceTemplateId: "evidence_analysis",
+      pageRole: page.pageRole,
+      surfaceTemplateId: page.surfaceTemplateId,
       claims: [{ claimId: "CLAIM-001", critical: false, evidenceIds: ["EVID-001"] }],
       figureSpecs: [],
     }],

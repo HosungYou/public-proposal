@@ -52,6 +52,7 @@ export const PageArchitecturePageSchema = z.object({
   pageRole: IdentifierSchema,
   surfaceTemplateId: IdentifierSchema,
   titleScope: PageTitleScopeSchema,
+  titlePointSize: z.number().finite().positive().max(72).optional(),
   continuation: z.boolean(),
   dominantSurface: DominantSurfaceSchema,
   surfaceVisibility: PageSurfaceVisibilitySchema.default("internal"),
