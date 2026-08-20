@@ -68,6 +68,9 @@ export async function auditProject(rootInput: string, options: AuditProjectOptio
   ]);
   const auditPath = join(root, "audit", "audit.json");
   const geometryPath = join(root, "audit", "docx-geometry.json");
+  const pageArchitecturePath = await regularFile(root, join(root, "content", "page-architecture.json"), "KPP_AUDIT_ARCHITECTURE_INVALID");
+  const referenceManifestPath = await regularFile(root, join(root, "evidence", "reference-manifest.json"), "KPP_AUDIT_REFERENCE_MANIFEST_INVALID");
+  const authoringResponsePath = await receiptBoundAuthoringResponse(root);
   if (await lstat(auditPath).catch(() => undefined) !== undefined) {
     throw new KppError("KPP_AUDIT_EXISTS", "기존 audit 결과를 덮어쓸 수 없습니다.", { path: auditPath, stage: "RENDERED" });
   }
@@ -77,9 +80,9 @@ export async function auditProject(rootInput: string, options: AuditProjectOptio
     const report = await auditProposal({
       root,
       docx: { docxPath, buildManifestPath, geometryReportPath: geometryPath },
-      pageArchitecturePath: await regularFile(root, join(root, "content", "page-architecture.json"), "KPP_AUDIT_ARCHITECTURE_INVALID"),
-      referenceManifestPath: await regularFile(root, join(root, "evidence", "reference-manifest.json"), "KPP_AUDIT_REFERENCE_MANIFEST_INVALID"),
-      authoringResponsePath: await receiptBoundAuthoringResponse(root),
+      pageArchitecturePath,
+      referenceManifestPath,
+      authoringResponsePath,
       renderManifestPath,
       trustedPdftotextPath: options.trustedPdftotextPath,
       figures: await Promise.all(options.figures.map(async (figure) => ({
@@ -95,7 +98,7 @@ export async function auditProject(rootInput: string, options: AuditProjectOptio
     const receiptPath = join(root, "receipts", "audit.json");
     await writeReceipt({
       stage: "AUDITED",
-      files: [auditPath, geometryPath],
+      files: [auditPath, geometryPath, pageArchitecturePath, referenceManifestPath, authoringResponsePath],
       inputReceiptHashes: [await sha256File(join(root, "receipts", "render.json"))],
       output: receiptPath,
     });

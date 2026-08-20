@@ -1,7 +1,7 @@
 import { lstat, realpath } from "node:fs/promises";
-import { join } from "node:path";
-import { PROJECT_STATES, readProject, sha256File, verifyReceipt } from "@longtable/kpp-core";
-import type { ProjectState } from "@longtable/kpp-schemas";
+import { isAbsolute, join, relative, resolve, sep } from "node:path";
+import { getDocumentModePolicy, PROJECT_STATES, readProject, verifyReceipt } from "@longtable/kpp-core";
+import { CompositeAuditReceiptSchema, type DocumentMode, type ProjectState } from "@longtable/kpp-schemas";
 import {
   blocked,
   inspectArtifact,
@@ -27,6 +27,149 @@ const RECEIPTS: Partial<Record<ProjectState, string>> = {
 export interface ReleaseArtifactBindings {
   readonly built: readonly string[];
   readonly rendered: readonly string[];
+  readonly architecture?: readonly string[];
+  readonly references?: readonly string[];
+  readonly observations?: readonly string[];
+}
+
+export interface AuditReceiptIdentity {
+  readonly projectId: string;
+  readonly documentMode: DocumentMode;
+  readonly modePolicyVersion: string;
+}
+
+const UNIVERSAL_AUDIT_SLICES = [
+  "page_architecture",
+  "reference_integrity",
+  "render_repetition",
+  "figure_value",
+  "korean_prose_review",
+] as const;
+
+const UNIVERSAL_ARTIFACT_CLASSES = new Set([
+  "page_architecture",
+  "reference_manifest",
+  "render_observation",
+  "composite_audit",
+  "authoring_response",
+  "docx",
+  "build_manifest",
+  "render_manifest",
+  "pdf",
+  "page_image",
+  "geometry_report",
+  "figure_spec",
+  "figure_svg",
+  "figure_manifest",
+  "project_state",
+  "stage_receipt",
+]);
+
+/** Validate a machine-readable audit receipt against current bytes and one mode policy. */
+export async function validateCompositeAuditReceiptForRelease(
+  root: string,
+  value: unknown,
+  expectedIdentity?: AuditReceiptIdentity,
+): Promise<AuditSlice> {
+  const canonicalRoot = await realpath(root).catch(() => resolve(root));
+  const parsed = CompositeAuditReceiptSchema.safeParse(value);
+  if (!parsed.success) {
+    return makeSlice([blocked("KPP_RELEASE_AUDIT_INVALID", "release에는 구조화된 composite audit receipt가 필요합니다.", {
+      actual: parsed.error.issues,
+    })], []);
+  }
+  const receipt = parsed.data;
+  const findings: AuditFinding[] = [];
+  const artifacts: AuditArtifact[] = [];
+  const identity = expectedIdentity ?? receipt;
+  if (receipt.projectId !== identity.projectId
+    || receipt.documentMode !== identity.documentMode
+    || receipt.modePolicyVersion !== identity.modePolicyVersion) {
+    findings.push(blocked("KPP_RELEASE_AUDIT_MODE_MISMATCH", "composite audit identity가 현재 프로젝트 mode identity와 다릅니다.", {
+      expected: identity,
+      actual: { projectId: receipt.projectId, documentMode: receipt.documentMode, modePolicyVersion: receipt.modePolicyVersion },
+    }));
+  }
+  const policy = getDocumentModePolicy(identity.documentMode);
+  if (identity.modePolicyVersion !== policy.modePolicyVersion) {
+    findings.push(blocked("KPP_RELEASE_AUDIT_MODE_MISMATCH", "현재 프로젝트의 mode policy version을 지원하지 않습니다.", {
+      expected: policy.modePolicyVersion,
+      actual: identity.modePolicyVersion,
+    }));
+  }
+  const sliceIds = new Set(receipt.slices.map(({ sliceId }) => sliceId));
+  for (const sliceId of new Set([...UNIVERSAL_AUDIT_SLICES, ...policy.requiredAuditSlices])) {
+    if (!sliceIds.has(sliceId)) {
+      findings.push(blocked("KPP_RELEASE_AUDIT_SLICE_MISSING", "선택한 document mode에 필요한 audit slice가 없습니다.", {
+        expected: sliceId,
+        actual: [...sliceIds].sort(),
+      }));
+    }
+  }
+  if (receipt.status !== "PASS") {
+    findings.push(blocked("KPP_RELEASE_AUDIT_NOT_PASS", "BLOCKED composite audit는 release에 사용할 수 없습니다.", {
+      expected: "PASS",
+      actual: receipt.status,
+    }));
+  }
+  const allowedClasses = new Set([...UNIVERSAL_ARTIFACT_CLASSES, ...policy.artifactAllowlist]);
+  for (const binding of receipt.artifactBindings) {
+    if (!allowedClasses.has(binding.artifactClass)) {
+      findings.push(blocked("KPP_RELEASE_ARTIFACT_CLASS_NOT_ALLOWED", "artifact class가 선택한 document mode release allowlist에 없습니다.", {
+        path: binding.path,
+        expected: [...allowedClasses].sort(),
+        actual: binding.artifactClass,
+      }));
+    }
+  }
+  for (const requiredClass of ["page_architecture", "reference_manifest", "render_observation"] as const) {
+    if (!receipt.artifactBindings.some(({ artifactClass }) => artifactClass === requiredClass)) {
+      findings.push(blocked("KPP_RELEASE_AUDIT_ARTIFACT_MISSING", "release audit receipt에 필수 architecture/reference/observation 결속이 없습니다.", {
+        expected: requiredClass,
+      }));
+    }
+  }
+  for (const input of receipt.inputHashes) {
+    try {
+      const canonical = await realpath(input.path);
+      if (!isWithin(canonicalRoot, canonical)) throw new Error("artifact is outside project root");
+      const artifact = await inspectArtifact(canonical);
+      artifacts.push(artifact);
+      if (artifact.sha256 !== input.sha256) {
+        findings.push(blocked("KPP_RELEASE_AUDIT_INPUT_STALE", "audit input hash가 현재 artifact bytes와 다릅니다.", {
+          path: input.path,
+          expected: input.sha256,
+          actual: artifact.sha256,
+        }));
+      }
+    } catch (error) {
+      findings.push(blocked("KPP_RELEASE_AUDIT_INPUT_STALE", "audit input artifact를 현재 project bytes로 검증할 수 없습니다.", {
+        path: input.path,
+        actual: error instanceof Error ? error.message : error,
+      }));
+    }
+  }
+  for (const binding of receipt.artifactBindings) {
+    if (binding.artifactClass === "project_state" || binding.artifactClass === "stage_receipt") continue;
+    try {
+      const canonical = await realpath(binding.path);
+      if (!isWithin(canonicalRoot, canonical)) throw new Error("artifact is outside project root");
+      const artifact = await inspectArtifact(canonical);
+      if (artifact.sha256 !== binding.sha256 || artifact.bytes !== binding.bytes) {
+        findings.push(blocked("KPP_RELEASE_AUDIT_ARTIFACT_STALE", "audit artifact binding이 현재 path/hash/bytes와 다릅니다.", {
+          path: binding.path,
+          expected: binding,
+          actual: artifact,
+        }));
+      }
+    } catch (error) {
+      findings.push(blocked("KPP_RELEASE_AUDIT_ARTIFACT_STALE", "audit artifact binding을 현재 project bytes로 검증할 수 없습니다.", {
+        path: binding.path,
+        actual: error instanceof Error ? error.message : error,
+      }));
+    }
+  }
+  return makeSlice(findings, artifacts);
 }
 
 export async function auditReleaseReadiness(
@@ -73,6 +216,10 @@ export async function auditReleaseReadiness(
         ? bindings?.built
         : stage === "RENDERED"
           ? bindings?.rendered
+          : stage === "EVIDENCE_LOCKED"
+            ? [...(bindings?.references ?? []), ...(bindings?.architecture ?? [])]
+              : stage === "AUDITED"
+                ? bindings?.observations
           : undefined;
       if (expectedPaths !== undefined) {
         await bindExpectedArtifacts(path, expectedPaths, verification.receipt.files, findings, artifacts);
@@ -96,6 +243,11 @@ export async function auditReleaseReadiness(
   await rejectPrematureReceipt(root, "approval.json", "HUMAN_APPROVED", stateIndex, findings, artifacts);
   await rejectPrematureReceipt(root, "release.json", "RELEASED", stateIndex, findings, artifacts);
   return makeSlice(findings, artifacts);
+}
+
+function isWithin(parent: string, child: string): boolean {
+  const segment = relative(resolve(parent), resolve(child));
+  return segment.length > 0 && segment !== ".." && !segment.startsWith(`..${sep}`) && !isAbsolute(segment);
 }
 
 async function bindExpectedArtifacts(

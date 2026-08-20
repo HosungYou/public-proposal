@@ -17,13 +17,18 @@ async function audit(fixture: Awaited<ReturnType<typeof materializeR08Reference>
   return result;
 }
 
-test("synthetic reference renders its fixture-backed visual surface", async () => {
+test("synthetic reference renders its fixture-backed visual surface while incomplete v2 release bindings stay blocked", async () => {
   const fixture = await materializeR08Reference();
   const contentReceipt = await verifyReceipt(join(await projectPath(fixture), "receipts", "content-approval.json"));
   expect(contentReceipt.valid).toBe(true);
   expect(contentReceipt.receipt.files.map(({ path }) => path))
     .toContain(fixture.authoringResponsePath);
-  expect((await audit(fixture, "pass")).status).toBe("PASS");
+  const auditResult = await audit(fixture, "pass");
+  expect(auditResult.status).toBe("BLOCKED");
+  expect(auditResult.findings.map(({ code }) => code)).toEqual(expect.arrayContaining([
+    "KPP_REFERENCE_MANIFEST_UNBOUND",
+    "KPP_SOURCE_OUTPUT_TRACEABILITY_ROLE_MISSING",
+  ]));
 
   const visualReference = await readFile(join(fixture.root, "fixture", "ooxml", "word", "media", "visual-reference.png"));
   expect(visualReference.length).toBeGreaterThan(1_000_000);

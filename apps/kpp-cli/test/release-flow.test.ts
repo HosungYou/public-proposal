@@ -362,6 +362,8 @@ describe("verified proposal release flow", () => {
       "submission/proposal.pdf",
       "submission/render-manifest.json",
       "audit/audit.json",
+      "audit/page-architecture.json",
+      "audit/reference-manifest.json",
     ]));
     const members = await listedFiles(released.releasePath);
     expect(members).toContain("release.json");
@@ -780,9 +782,19 @@ async function createAuditedProject(
   await initializeProject(root, {
     projectId: "release-fixture",
     proposalClass: researchRequired ? "research_service" : "general_procurement",
+    documentMode: researchRequired ? "research_service" : "public_procurement",
   });
+  const architecturePath = join(root, "content", "page-architecture.json");
+  const referencePath = join(root, "evidence", "reference-manifest.json");
+  await mkdir(join(root, "content"), { recursive: true });
+  await mkdir(join(root, "evidence"), { recursive: true });
+  await writeFile(architecturePath, "synthetic locked architecture\n");
+  await writeFile(referencePath, "synthetic locked references\n");
   const researchReceiptPath = researchRequired ? await createResearchLock(root) : undefined;
-  await advanceToContentApproved(root, [], [], researchReceiptPath);
+  await advanceToContentApproved(root, [], [], researchReceiptPath, {
+    requirements: [architecturePath],
+    evidence: [architecturePath, referencePath],
+  });
   const generation = join(root, ".kpp-build-0123456789abcdef", "generations", "fixture");
   await mkdir(generation, { recursive: true });
   const docxPath = join(generation, "document.docx");
@@ -802,10 +814,73 @@ async function createAuditedProject(
   const auditPath = join(root, "audit", "audit.json");
   const geometryPath = join(root, "audit", "docx-geometry.json");
   await mkdir(join(root, "audit"), { recursive: true });
-  await writeFile(auditPath, "{\"schemaVersion\":\"1\",\"status\":\"PASS\",\"findings\":[],\"artifacts\":[],\"humanBoundary\":\"TECHNICAL_GATE_ONLY\"}\n");
   await writeFile(geometryPath, "{\"synthetic\":true}\n");
-  await writeStage(root, "AUDITED", [auditPath, geometryPath]);
+  await writeSyntheticCompositeAudit(auditPath, {
+    projectId: "release-fixture",
+    documentMode: researchRequired ? "research_service" : "public_procurement",
+    architecturePath,
+    referencePath,
+    geometryPath,
+  });
+  await writeStage(root, "AUDITED", [auditPath, geometryPath, architecturePath, referencePath]);
   return { root, auditPath, pdfPath };
+}
+
+async function writeSyntheticCompositeAudit(
+  auditPath: string,
+  input: {
+    readonly projectId: string;
+    readonly documentMode: "public_procurement" | "research_service";
+    readonly architecturePath: string;
+    readonly referencePath: string;
+    readonly geometryPath: string;
+  },
+): Promise<void> {
+  const artifacts = await Promise.all([
+    { artifactClass: "page_architecture", path: input.architecturePath },
+    { artifactClass: "reference_manifest", path: input.referencePath },
+    { artifactClass: "render_observation", path: input.geometryPath },
+  ].map(async (artifact) => ({
+    ...artifact,
+    sha256: await sha256File(artifact.path),
+    bytes: (await stat(artifact.path)).size,
+  })));
+  const inputHashes = artifacts.map(({ path, sha256 }) => ({ path, sha256 }));
+  const modeSlice = input.documentMode === "research_service"
+    ? "research_method_traceability"
+    : "procurement_evaluation_crosswalk";
+  const slices = [
+    "page_architecture",
+    "reference_integrity",
+    "render_repetition",
+    "figure_value",
+    "korean_prose_review",
+    modeSlice,
+  ].map((sliceId) => ({
+    schemaVersion: "1.0.0",
+    sliceId,
+    projectId: input.projectId,
+    documentMode: input.documentMode,
+    modePolicyVersion: "1.0.0",
+    status: "PASS",
+    inputHashes,
+    findings: [],
+    reviewerScope: { reviewerType: "machine", reviewedLocators: ["fixture:synthetic"], excludedLocators: [] },
+    artifactBindings: artifacts,
+  }));
+  await writeFile(auditPath, `${JSON.stringify({
+    schemaVersion: "1.0.0",
+    projectId: input.projectId,
+    documentMode: input.documentMode,
+    modePolicyVersion: "1.0.0",
+    status: "PASS",
+    inputHashes,
+    slices,
+    artifactBindings: artifacts,
+    findings: [],
+    artifacts: artifacts.map(({ path, sha256, bytes }) => ({ path, sha256, bytes })),
+    humanBoundary: "TECHNICAL_GATE_ONLY",
+  })}\n`);
 }
 
 async function advanceToContentApproved(

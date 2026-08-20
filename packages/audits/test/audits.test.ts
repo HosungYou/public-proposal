@@ -290,7 +290,7 @@ describe("artifact-backed proposal audits", () => {
     expect(result.findings.map((finding) => finding.code)).toContain("KPP_RELEASE_RECEIPT_CHAIN");
   });
 
-  test("writes a stable audit/audit.json that is bound to all real artifacts", async () => {
+  test("writes a stable structured audit when required reference and mode-role bindings are absent", async () => {
     const figure = await figureFixture();
     const docx = await docxFixture(figure);
     const render = await renderFixture(docx.docxPath);
@@ -339,7 +339,19 @@ describe("artifact-backed proposal audits", () => {
       outputPath,
     });
 
-    expect(first.status, JSON.stringify(first.findings)).toBe("PASS");
+    expect(first.status, JSON.stringify(first.findings)).toBe("BLOCKED");
+    expect(first.findings.map(({ code }) => code)).toEqual(expect.arrayContaining([
+      "KPP_REFERENCE_MANIFEST_UNBOUND",
+      "KPP_OPERATING_MODEL_TRACEABILITY_ROLE_MISSING",
+    ]));
+    expect(first.slices.map(({ sliceId }) => sliceId)).toEqual(expect.arrayContaining([
+      "page_architecture",
+      "reference_integrity",
+      "render_repetition",
+      "figure_value",
+      "korean_prose_review",
+      "operating_model_traceability",
+    ]));
     expect(second).toEqual(first);
     expect(await readFile(outputPath, "utf8")).toBe(firstBytes);
     expect(first.artifacts.every((artifact) => /^[a-f0-9]{64}$/u.test(artifact.sha256))).toBe(true);

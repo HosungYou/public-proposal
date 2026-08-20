@@ -56,6 +56,8 @@ export {
 } from "./figure-family.js";
 export {
   auditReleaseReadiness,
+  validateCompositeAuditReceiptForRelease,
+  type AuditReceiptIdentity,
   type ReleaseArtifactBindings,
 } from "./release.js";
 export {
@@ -65,18 +67,30 @@ export {
   type AuditStatus,
 } from "./source.js";
 
-import { resolve } from "node:path";
-import { getDocumentModePolicy } from "@longtable/kpp-core";
+import { basename, resolve } from "node:path";
+import { getDocumentModePolicy, readProject, validateReferenceManifest } from "@longtable/kpp-core";
 import { describeFigureSemanticValue, type FigureSpec } from "@longtable/kpp-renderers";
-import { AuthoringResponseSchema, PageArchitectureManifestSchema, ReferenceManifestSchema } from "@longtable/kpp-schemas";
+import {
+  AuthoringResponseSchema,
+  CompositeAuditReceiptSchema,
+  EvidenceLedgerSchema,
+  PageArchitectureManifestSchema,
+  ReferenceManifestSchema,
+  type AuditArtifactBinding,
+  type AuditReviewerType,
+  type AuditRuleFinding,
+  type AuditSliceReceipt,
+  type CompositeAuditReceipt,
+} from "@longtable/kpp-schemas";
 import { auditDocxArtifacts, readRenderObservations, type DocxAuditInput } from "./content.js";
 import { auditFigureSemanticValue, type NeighboringContentBlock } from "./figure-value.js";
 import { auditRenderedPageArchitecture } from "./page-architecture.js";
 import { auditFigureArtifacts, auditFigureDocumentBindings, type FigureAuditInput } from "./figure-family.js";
 import { auditReleaseReadiness, type ReleaseArtifactBindings } from "./release.js";
-import { blocked, combineSlices, inspectArtifact, makeSlice, readJsonObject, writeStableJson, type AuditArtifact, type AuditFinding, type AuditStatus } from "./source.js";
+import { blocked, combineSlices, inspectArtifact, makeSlice, readJsonObject, writeStableJson, type AuditArtifact, type AuditFinding, type AuditSlice } from "./source.js";
 import { auditSurfaceRepetition, surfaceTopologySignature, type SurfaceRepetitionException } from "./repetition.js";
 import { auditRenderArtifacts } from "./surface-lineage.js";
+import { lintAuthoringResponse } from "./korean-prose.js";
 
 export interface ProposalAuditInput {
   readonly root: string;
@@ -93,41 +107,202 @@ export interface ProposalAuditInput {
   readonly outputPath: string;
 }
 
-export interface ProposalAuditReport {
-  readonly schemaVersion: "1";
-  readonly status: AuditStatus;
+export type ProposalAuditReport = CompositeAuditReceipt & {
   readonly findings: readonly AuditFinding[];
   readonly artifacts: readonly AuditArtifact[];
-  readonly humanBoundary: "TECHNICAL_GATE_ONLY";
-}
+};
 
 export async function auditProposal(input: ProposalAuditInput): Promise<ProposalAuditReport> {
   const receiptBindings = await proposalReceiptBindings(input);
-  const slices = [
-    auditDocxArtifacts(input.docx),
-    auditRenderArtifacts(input.renderManifestPath, { trustedPdftotextPath: input.trustedPdftotextPath }),
-    auditFigureArtifacts(input.figures),
-    auditBoundFigureSemanticValue(input),
-    auditBoundSurfaceRepetition(input),
-    auditReleaseReadiness(resolve(input.root), receiptBindings),
-    auditCrossSurfaceLineage(input.docx.docxPath, input.renderManifestPath),
-    auditBoundRenderedPageArchitecture(input),
-  ];
-  slices.push(auditFigureDocumentBindings({
-    figures: input.figures,
-    buildManifestPath: input.docx.buildManifestPath,
-    geometryReportPath: input.docx.geometryReportPath,
-  }));
-  const combined = combineSlices(await Promise.all(slices));
-  const report: ProposalAuditReport = {
-    schemaVersion: "1",
+  const identity = await auditIdentity(input);
+  const policy = getDocumentModePolicy(identity.documentMode);
+  const named = await Promise.all([
+    namedSlice("docx_integrity", auditDocxArtifacts(input.docx)),
+    namedSlice("render_integrity", auditRenderArtifacts(input.renderManifestPath, { trustedPdftotextPath: input.trustedPdftotextPath })),
+    namedSlice("figure_lineage", auditFigureArtifacts(input.figures)),
+    namedSlice("figure_value", auditBoundFigureSemanticValue(input)),
+    namedSlice("render_repetition", auditBoundSurfaceRepetition(input)),
+    namedSlice("release_readiness", auditReleaseReadiness(resolve(input.root), receiptBindings)),
+    namedSlice("cross_surface_lineage", auditCrossSurfaceLineage(input.docx.docxPath, input.renderManifestPath)),
+    namedSlice("page_architecture", auditBoundRenderedPageArchitecture(input)),
+    namedSlice("figure_document_binding", auditFigureDocumentBindings({
+      figures: input.figures,
+      buildManifestPath: input.docx.buildManifestPath,
+      geometryReportPath: input.docx.geometryReportPath,
+    })),
+    namedSlice("reference_integrity", auditBoundReferenceIntegrity(input)),
+    auditBoundKoreanProse(input),
+  ]);
+  const modeTraceability = await auditModeTraceabilitySlices(input, policy);
+  const byId = new Map([...named, ...modeTraceability].map((entry) => [entry.id, entry]));
+  for (const required of policy.requiredAuditSlices) {
+    if (!byId.has(required)) {
+      byId.set(required, { id: required, slice: makeSlice([blocked(
+        "KPP_AUDIT_SLICE_IMPLEMENTATION_MISSING",
+        "mode policy가 요구하는 독립 audit slice 구현이 없습니다.",
+        { expected: required },
+      )], []) });
+    }
+  }
+  const anchor = await inspectArtifact(input.pageArchitecturePath ?? input.docx.buildManifestPath);
+  const receiptSlices = [...byId.values()].map((entry) => toReceiptSlice(entry, identity, anchor));
+  const combined = combineSlices([...byId.values()].map(({ slice }) => slice));
+  const inputHashes = uniqueInputs(receiptSlices.flatMap(({ inputHashes }) => inputHashes));
+  const artifactBindings = uniqueBindings(receiptSlices.flatMap(({ artifactBindings }) => artifactBindings));
+  const report = CompositeAuditReceiptSchema.parse({
+    schemaVersion: "1.0.0",
+    ...identity,
     status: combined.status,
+    inputHashes,
+    slices: receiptSlices,
+    artifactBindings,
     findings: combined.findings,
     artifacts: combined.artifacts,
     humanBoundary: "TECHNICAL_GATE_ONLY",
-  };
+  }) as ProposalAuditReport;
   await writeStableJson(input.outputPath, report);
   return report;
+}
+
+async function auditModeTraceabilitySlices(
+  input: ProposalAuditInput,
+  policy: ReturnType<typeof getDocumentModePolicy>,
+): Promise<readonly NamedSlice[]> {
+  if (input.pageArchitecturePath === undefined) return [];
+  const definitions: Readonly<Record<string, readonly string[]>> = {
+    procurement_evaluation_crosswalk: ["procurement_evaluation_crosswalk"],
+    research_method_traceability: ["research_method", "evidence_plan"],
+    operating_model_traceability: ["party_roles", "operating_model", "next_decision"],
+    decision_traceability: ["decision_request", "alternatives", "tradeoffs", "owner_approval"],
+    risk_owner_traceability: ["risk_register", "owner_approval"],
+    source_output_traceability: ["source_inventory", "content_ledger", "mutation_report"],
+    layout_accessibility: ["layout_accessibility", "acceptance_record"],
+    mutation_integrity: ["content_ledger", "mutation_report", "acceptance_record"],
+  };
+  try {
+    const artifact = await inspectArtifact(input.pageArchitecturePath);
+    const architecture = PageArchitectureManifestSchema.parse(await readJsonObject(input.pageArchitecturePath));
+    const canonicalRoles = new Map<string, string>();
+    for (const page of architecture.pages) {
+      canonicalRoles.set(policy.pageRoleAliases[page.pageRole] ?? page.pageRole, page.pageId);
+    }
+    return policy.requiredAuditSlices
+      .filter((sliceId) => definitions[sliceId] !== undefined)
+      .map((sliceId): NamedSlice => {
+        const requiredRoles = definitions[sliceId]!;
+        const missingRoles = requiredRoles.filter((role) => !canonicalRoles.has(role));
+        const findings = missingRoles.map((role) => blocked(
+          `KPP_${sliceId.toLocaleUpperCase("en-US")}_ROLE_MISSING`,
+          "mode-specific traceability slice에 필요한 canonical page role이 없습니다.",
+          { path: "page-architecture/pages", expected: role, actual: [...canonicalRoles.keys()].sort() },
+        ));
+        return {
+          id: sliceId,
+          slice: makeSlice(findings, [artifact]),
+          reviewedLocators: requiredRoles.flatMap((role) => {
+            const pageId = canonicalRoles.get(role);
+            return pageId === undefined ? [] : [`page:${pageId}/role:${role}`];
+          }),
+        };
+      });
+  } catch (error) {
+    return policy.requiredAuditSlices.filter((sliceId) => definitions[sliceId] !== undefined).map((sliceId): NamedSlice => ({
+      id: sliceId,
+      slice: makeSlice([blocked("KPP_MODE_TRACEABILITY_UNBOUND", "mode-specific traceability audit를 architecture bytes에 결속할 수 없습니다.", {
+        actual: error instanceof Error ? error.message : error,
+      })], []),
+    }));
+  }
+}
+
+interface NamedSlice {
+  readonly id: string;
+  readonly slice: AuditSlice;
+  readonly structuredFindings?: readonly AuditRuleFinding[];
+  readonly reviewerType?: AuditReviewerType;
+  readonly reviewedLocators?: readonly string[];
+  readonly excludedLocators?: readonly string[];
+}
+
+async function namedSlice(id: string, value: AuditSlice | Promise<AuditSlice>): Promise<NamedSlice> {
+  return { id, slice: await value };
+}
+
+async function auditIdentity(input: ProposalAuditInput) {
+  if (input.pageArchitecturePath !== undefined) {
+    const architecture = PageArchitectureManifestSchema.parse(await readJsonObject(input.pageArchitecturePath));
+    return { projectId: architecture.projectId, documentMode: architecture.documentMode, modePolicyVersion: architecture.modePolicyVersion };
+  }
+  const project = await readProject(resolve(input.root));
+  if (project.schemaVersion !== "2.0.0") throw new Error("explicit v2 migration is required before audit");
+  return { projectId: project.projectId, documentMode: project.documentMode, modePolicyVersion: project.modePolicyVersion };
+}
+
+function toReceiptSlice(
+  entry: NamedSlice,
+  identity: Awaited<ReturnType<typeof auditIdentity>>,
+  anchor: AuditArtifact,
+): AuditSliceReceipt {
+  const artifacts = entry.slice.artifacts.length === 0 ? [anchor] : entry.slice.artifacts;
+  const artifactBindings = artifacts.map(toArtifactBinding);
+  const immutableInputs = artifacts.filter((artifact) => basename(artifact.path) !== "kpp.project.yaml" && !artifact.path.includes("/receipts/"));
+  const inputs = immutableInputs.length === 0 ? [anchor] : immutableInputs;
+  const findings = entry.structuredFindings ?? entry.slice.findings.map((finding): AuditRuleFinding => ({
+    ruleId: finding.code,
+    severity: "BLOCKER",
+    message: finding.message,
+    ...(finding.path === undefined ? {} : { locator: finding.path }),
+    ...(finding.expected === undefined ? {} : { expected: finding.expected }),
+    ...(finding.actual === undefined ? {} : { observed: finding.actual }),
+  }));
+  return {
+    schemaVersion: "1.0.0",
+    sliceId: entry.id,
+    ...identity,
+    status: findings.some(({ severity }) => severity === "BLOCKER") ? "BLOCKED" : "PASS",
+    inputHashes: inputs.map(({ path, sha256 }) => ({ path, sha256 })),
+    findings: [...findings],
+    reviewerScope: {
+      reviewerType: entry.reviewerType ?? "machine",
+      reviewedLocators: [...(entry.reviewedLocators ?? entry.slice.findings.map(({ path }) => path).filter((path): path is string => path !== undefined))],
+      excludedLocators: [...(entry.excludedLocators ?? [])],
+    },
+    artifactBindings,
+  };
+}
+
+function toArtifactBinding(artifact: AuditArtifact): AuditArtifactBinding {
+  return { artifactClass: classifyArtifact(artifact.path), ...artifact };
+}
+
+function classifyArtifact(path: string): string {
+  const name = basename(path);
+  if (path.includes("/receipts/")) return "stage_receipt";
+  if (name === "page-architecture.json") return "page_architecture";
+  if (name === "reference-manifest.json") return "reference_manifest";
+  if (name === "docx-geometry.json" || name === "page-observations.json") return "render_observation";
+  if (name === "authoring-response.json") return "authoring_response";
+  if (name.endsWith(".docx")) return "docx";
+  if (name.endsWith(".pdf")) return "pdf";
+  if (/^page-\d+\.png$/u.test(name)) return "page_image";
+  if (name.endsWith(".spec.json")) return "figure_spec";
+  if (name.endsWith(".svg")) return "figure_svg";
+  if (name.endsWith(".render.json") && path.includes("figures")) return "figure_manifest";
+  if (name === "render.json") return "render_manifest";
+  if (name === "manifest.json") return "build_manifest";
+  if (name === "audit.json") return "composite_audit";
+  if (name === "kpp.project.yaml") return "project_state";
+  return "audit_receipt";
+}
+
+function uniqueInputs(inputs: readonly { readonly path: string; readonly sha256: string }[]) {
+  return [...new Map(inputs.map((input) => [`${input.path}\0${input.sha256}`, input])).values()]
+    .sort((left, right) => left.path.localeCompare(right.path));
+}
+
+function uniqueBindings(bindings: readonly AuditArtifactBinding[]) {
+  return [...new Map(bindings.map((binding) => [`${binding.artifactClass}\0${binding.path}\0${binding.sha256}\0${binding.bytes}`, binding])).values()]
+    .sort((left, right) => `${left.artifactClass}\0${left.path}`.localeCompare(`${right.artifactClass}\0${right.path}`));
 }
 
 async function auditBoundFigureSemanticValue(input: ProposalAuditInput) {
@@ -206,6 +381,74 @@ async function readAuthoringBlocks(
   artifacts.push(artifact);
   const response = AuthoringResponseSchema.parse(raw);
   return response.blocks.map((block) => ({ blockId: block.pageId, text: block.text }));
+}
+
+async function auditBoundReferenceIntegrity(input: ProposalAuditInput): Promise<AuditSlice> {
+  if (input.pageArchitecturePath === undefined || input.referenceManifestPath === undefined) {
+    return makeSlice([blocked("KPP_REFERENCE_MANIFEST_UNBOUND", "reference integrity audit에 architecture/reference manifest가 모두 필요합니다.")], []);
+  }
+  const evidencePath = resolve(input.root, "evidence", "evidence-ledger.json");
+  try {
+    const [architectureArtifact, referenceArtifact, evidenceArtifact, architectureRaw, referencesRaw, evidenceRaw] = await Promise.all([
+      inspectArtifact(input.pageArchitecturePath),
+      inspectArtifact(input.referenceManifestPath),
+      inspectArtifact(evidencePath),
+      readJsonObject(input.pageArchitecturePath),
+      readJsonObject(input.referenceManifestPath),
+      readJsonObject(evidencePath),
+    ]);
+    const result = validateReferenceManifest(
+      ReferenceManifestSchema.parse(referencesRaw),
+      PageArchitectureManifestSchema.parse(architectureRaw),
+      EvidenceLedgerSchema.parse(evidenceRaw),
+    );
+    return makeSlice(result.findings.map((finding) => blocked(finding.ruleId, finding.message, {
+      path: finding.evidence.locator,
+      expected: finding.evidence.expected,
+      actual: finding.evidence.actual,
+    })), [architectureArtifact, referenceArtifact, evidenceArtifact]);
+  } catch (error) {
+    return makeSlice([blocked("KPP_REFERENCE_MANIFEST_UNBOUND", "reference manifest와 현재 source bytes를 검증할 수 없습니다.", {
+      actual: error instanceof Error ? error.message : error,
+    })], []);
+  }
+}
+
+async function auditBoundKoreanProse(input: ProposalAuditInput): Promise<NamedSlice> {
+  if (input.authoringResponsePath === undefined) {
+    return { id: "korean_prose_review", slice: makeSlice([blocked("KPP_KOREAN_PROSE_UNBOUND", "Korean prose review에 receipt-bound authoring response가 없습니다.")], []) };
+  }
+  try {
+    const [artifact, raw] = await Promise.all([
+      inspectArtifact(input.authoringResponsePath),
+      readJsonObject(input.authoringResponsePath),
+    ]);
+    const response = AuthoringResponseSchema.parse(raw);
+    const lint = lintAuthoringResponse(response, { schemaVersion: "1.0.0", entries: [] });
+    const blockers = lint.blockers.map((finding) => blocked(finding.code, finding.message, {
+      path: finding.blockId === undefined ? undefined : `page:${finding.blockId}/${finding.field ?? "text"}`,
+      actual: finding.actual,
+    }));
+    const structuredFindings: AuditRuleFinding[] = lint.findings.map((finding) => ({
+      ruleId: finding.code,
+      severity: finding.severity === "blocker" ? "BLOCKER" : "WARNING",
+      message: finding.message,
+      ...(finding.blockId === undefined ? {} : { locator: `page:${finding.blockId}/${finding.field ?? "text"}` }),
+      ...(finding.actual === undefined ? {} : { observed: finding.actual }),
+    }));
+    return {
+      id: "korean_prose_review",
+      slice: makeSlice(blockers, [artifact]),
+      structuredFindings,
+      reviewerType: "machine",
+      reviewedLocators: response.blocks.map(({ pageId }) => `page:${pageId}`),
+      excludedLocators: [],
+    };
+  } catch (error) {
+    return { id: "korean_prose_review", slice: makeSlice([blocked("KPP_KOREAN_PROSE_UNBOUND", "Korean prose review 입력을 검증할 수 없습니다.", {
+      actual: error instanceof Error ? error.message : error,
+    })], []) };
+  }
 }
 
 export async function resolveSurfaceRepetitionAuthority(
@@ -354,6 +597,9 @@ async function proposalReceiptBindings(input: ProposalAuditInput): Promise<Relea
   return {
     built: [input.docx.buildManifestPath, input.docx.docxPath],
     rendered,
+    architecture: input.pageArchitecturePath === undefined ? undefined : [input.pageArchitecturePath],
+    references: input.referenceManifestPath === undefined ? undefined : [input.referenceManifestPath],
+    observations: [input.docx.geometryReportPath],
   };
 }
 

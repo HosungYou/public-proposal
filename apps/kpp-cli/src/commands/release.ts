@@ -4,12 +4,14 @@ import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "nod
 import {
   KppError,
   advanceProject,
+  getDocumentModePolicy,
   readProject,
   sha256File,
   verifyReceipt,
   verifyResearchRequirement,
   writeReceipt,
 } from "@longtable/kpp-core";
+import { validateCompositeAuditReceiptForRelease, type AuditReceiptIdentity } from "@longtable/kpp-audits";
 import { success, type CliEnvelope } from "../output.js";
 
 export interface ReleaseProjectOptions {
@@ -50,6 +52,12 @@ export async function releaseProject(rootInput: string, options: ReleaseProjectO
   // Do not call verifyProjectState here: a stale approval must not roll back the
   // project state as a side effect of a release attempt.
   const project = await readProject(root);
+  if (project.schemaVersion !== "2.0.0") {
+    throw new KppError("KPP_MIGRATION_REQUIRED", "release 전에 프로젝트를 명시적으로 2.0.0으로 마이그레이션해야 합니다.", {
+      stage: project.state,
+      actual: project.schemaVersion,
+    });
+  }
   if (project.state !== "HUMAN_APPROVED") {
     throw new KppError("KPP_RELEASE_STATE", "HUMAN_APPROVED 상태에서만 release를 만들 수 있습니다.", {
       stage: project.state,
@@ -75,9 +83,15 @@ export async function releaseProject(rootInput: string, options: ReleaseProjectO
   }
   const approvalDecisionPath = join(root, "audit", "approval-decision.json");
   const decision = await readApprovalDecision(approvalDecisionPath);
-  if (decision.humanBoundary !== "HUMAN_APPROVED" || decision.projectId !== project.projectId || decision.audit.sha256 !== await sha256File(join(root, "audit", "audit.json"))) {
+  const auditPath = join(root, "audit", "audit.json");
+  if (decision.humanBoundary !== "HUMAN_APPROVED" || decision.projectId !== project.projectId || decision.audit.sha256 !== await sha256File(auditPath)) {
     throw new KppError("KPP_RELEASE_APPROVAL_STALE", "approval decision이 현재 audit/project와 연결되지 않습니다.", { path: approvalDecisionPath, stage: "HUMAN_APPROVED" });
   }
+  await verifyReleaseAuditReceipt(root, auditPath, {
+    projectId: project.projectId,
+    documentMode: project.documentMode,
+    modePolicyVersion: project.modePolicyVersion,
+  });
   const outputParent = await prepareOutputParent(options.outputParent);
   const releaseId = `${project.projectId}-${new Date().toISOString().replaceAll(":", "-").replaceAll(".", "-")}-${randomUUID().slice(0, 8)}`;
   const releasePath = join(outputParent, releaseId);
@@ -89,7 +103,7 @@ export async function releaseProject(rootInput: string, options: ReleaseProjectO
   let published = false;
   try {
     await mkdir(staging, { mode: 0o700 });
-    const files = await copyAllowlistedArtifacts(root, staging, chain.files);
+    const files = await copyAllowlistedArtifacts(root, staging, chain.files, project.documentMode);
     const manifestPath = join(staging, "release.json");
     await writeSyncedJson(manifestPath, {
       schemaVersion: "1",
@@ -128,6 +142,32 @@ export async function releaseProject(rootInput: string, options: ReleaseProjectO
   }
 }
 
+/** Fail closed when a release is backed only by a free-form or stale PASS assertion. */
+export async function verifyReleaseAuditReceipt(
+  root: string,
+  auditPath: string,
+  identity: AuditReceiptIdentity,
+): Promise<void> {
+  let value: unknown;
+  try {
+    value = JSON.parse(await readFile(auditPath, "utf8"));
+  } catch (error) {
+    throw new KppError("KPP_RELEASE_AUDIT_INVALID", "구조화 audit receipt를 읽을 수 없습니다.", {
+      path: auditPath,
+      actual: error instanceof Error ? error.message : error,
+      stage: "HUMAN_APPROVED",
+    });
+  }
+  const validation = await validateCompositeAuditReceiptForRelease(root, value, identity);
+  if (validation.status !== "PASS") {
+    throw new KppError("KPP_RELEASE_AUDIT_INVALID", "현재 mode와 artifact bytes에 결속된 PASS audit receipt가 필요합니다.", {
+      path: auditPath,
+      actual: validation.findings,
+      stage: "HUMAN_APPROVED",
+    });
+  }
+}
+
 async function verifyCurrentChain(root: string): Promise<{ readonly valid: boolean; readonly reason?: unknown; readonly files: readonly string[]; readonly receiptHashes: readonly string[] }> {
   const filenames = ["source-lock.json", "requirements-lock.json", "evidence-lock.json", "design-lock.json", "content-approval.json", "build.json", "render.json", "audit.json", "approval.json"];
   let predecessor: string | undefined;
@@ -157,8 +197,22 @@ async function verifyCurrentChain(root: string): Promise<{ readonly valid: boole
   return { valid: true, files: [...files].sort(), receiptHashes: hashes };
 }
 
-async function copyAllowlistedArtifacts(root: string, staging: string, inputs: readonly string[]): Promise<ReleaseFile[]> {
-  const permitted = inputs.filter((path) => isSubmissionArtifact(root, path));
+async function copyAllowlistedArtifacts(
+  root: string,
+  staging: string,
+  inputs: readonly string[],
+  documentMode: Parameters<typeof getDocumentModePolicy>[0],
+): Promise<ReleaseFile[]> {
+  const policy = getDocumentModePolicy(documentMode);
+  const permittedClasses = new Set([
+    "submission_docx", "build_manifest", "render_manifest", "submission_pdf", "page_image",
+    "composite_audit", "render_observation", "page_architecture", "reference_manifest",
+    ...policy.artifactAllowlist,
+  ]);
+  const permitted = inputs.filter((path) => {
+    const artifactClass = releaseArtifactClass(root, path);
+    return artifactClass !== undefined && permittedClasses.has(artifactClass);
+  });
   if (permitted.length === 0) {
     throw new KppError("KPP_RELEASE_ALLOWLIST_EMPTY", "release 가능한 submission artifact가 없습니다.", { stage: "HUMAN_APPROVED" });
   }
@@ -179,13 +233,20 @@ async function copyAllowlistedArtifacts(root: string, staging: string, inputs: r
   return copied.sort((left, right) => left.releasePath.localeCompare(right.releasePath));
 }
 
-function isSubmissionArtifact(root: string, path: string): boolean {
+function releaseArtifactClass(root: string, path: string): string | undefined {
   const canonical = resolve(path);
-  if (!isWithin(root, canonical)) return false;
+  if (!isWithin(root, canonical)) return undefined;
   const local = relative(root, canonical);
-  const isBuildGeneration = /^(?:build\/)?\.kpp-build-[a-f0-9]{16}\/generations\/[^/]+\/(?:document\.docx|manifest\.json)$/u.test(local);
-  const isRenderGeneration = /^rendered\/generations\/[^/]+\/(?:render\.json|proposal\.pdf|page-\d{4}\.png)$/u.test(local);
-  return local === "audit/audit.json" || local === "audit/docx-geometry.json" || isBuildGeneration || isRenderGeneration;
+  if (/^(?:build\/)?\.kpp-build-[a-f0-9]{16}\/generations\/[^/]+\/document\.docx$/u.test(local)) return "submission_docx";
+  if (/^(?:build\/)?\.kpp-build-[a-f0-9]{16}\/generations\/[^/]+\/manifest\.json$/u.test(local)) return "build_manifest";
+  if (/^rendered\/generations\/[^/]+\/render\.json$/u.test(local)) return "render_manifest";
+  if (/^rendered\/generations\/[^/]+\/proposal\.pdf$/u.test(local)) return "submission_pdf";
+  if (/^rendered\/generations\/[^/]+\/page-\d{4}\.png$/u.test(local)) return "page_image";
+  if (local === "audit/audit.json") return "composite_audit";
+  if (local === "audit/docx-geometry.json") return "render_observation";
+  if (local === "content/page-architecture.json") return "page_architecture";
+  if (local === "evidence/reference-manifest.json") return "reference_manifest";
+  return undefined;
 }
 
 function releaseRelativePath(root: string, source: string): string {
@@ -195,6 +256,8 @@ function releaseRelativePath(root: string, source: string): string {
   if (local.endsWith("/render.json")) return "submission/render-manifest.json";
   if (local.endsWith("/proposal.pdf")) return "submission/proposal.pdf";
   if (/\/page-\d{4}\.png$/u.test(local)) return `submission/pages/${basename(local)}`;
+  if (local === "content/page-architecture.json") return "audit/page-architecture.json";
+  if (local === "evidence/reference-manifest.json") return "audit/reference-manifest.json";
   return local;
 }
 

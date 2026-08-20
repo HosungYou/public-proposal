@@ -164,6 +164,26 @@ export {
   type ReceiptResult,
 } from "./receipt.js";
 export {
+  AuditStatusSchema,
+  AuditFindingSeveritySchema,
+  AuditReviewerTypeSchema,
+  AuditInputHashSchema,
+  AuditArtifactBindingSchema,
+  AuditRuleFindingSchema,
+  AuditReviewerScopeSchema,
+  AuditSliceReceiptSchema,
+  CompositeAuditReceiptSchema,
+  type AuditStatus,
+  type AuditFindingSeverity,
+  type AuditReviewerType,
+  type AuditInputHash,
+  type AuditArtifactBinding,
+  type AuditRuleFinding,
+  type AuditReviewerScope,
+  type AuditSliceReceipt,
+  type CompositeAuditReceipt,
+} from "./audit-receipt.js";
+export {
   ResearchLockSchema,
   type ResearchLock,
 } from "./research-lock.js";
