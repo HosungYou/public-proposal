@@ -790,16 +790,84 @@ async function createAuditedProject(
   const referencePath = join(root, "evidence", "reference-manifest.json");
   const authoringPath = join(root, "content", "authoring-response.json");
   const evidenceLedgerPath = join(root, "evidence", "evidence-ledger.json");
+  const sourcePath = join(root, "evidence", "source.txt");
   await mkdir(join(root, "content"), { recursive: true });
   await mkdir(join(root, "evidence"), { recursive: true });
-  await writeFile(architecturePath, "synthetic locked architecture\n");
-  await writeFile(referencePath, "synthetic locked references\n");
+  const documentMode = researchRequired ? "research_service" : "public_procurement";
+  const pageRoles = researchRequired
+    ? ["research_method", "evidence_plan", "research_question", "limitations", "utilization_plan"]
+    : ["procurement_evaluation_crosswalk", "executive_summary", "requirement_response", "delivery_control"];
+  const pages = pageRoles.map((pageRole, index) => ({
+    pageId: `P-${String(index + 1).padStart(2, "0")}`,
+    chapterId: "CH-01",
+    sectionId: `SEC-${String(index + 1).padStart(2, "0")}`,
+    pageRole,
+    surfaceTemplateId: `${pageRole}-fixture`,
+    titleScope: index === 0 ? "chapter" : "section",
+    titlePointSize: index === 0 ? 20.5 : 12,
+    continuation: index > 0,
+    dominantSurface: "narrative",
+    surfaceVisibility: "reader",
+    evaluationQuestion: `fixture question ${index + 1}`,
+    directAnswer: `fixture answer ${index + 1}`,
+    claimIds: index === 0 ? ["CLM-01"] : [],
+    proofIds: index === 0 ? ["EV-01"] : [],
+    referenceIds: index === 0 ? ["REF-01"] : [],
+    figureIds: [],
+    ...(index > 0 ? { continuityFromPageId: `P-${String(index).padStart(2, "0")}` } : {}),
+    ...(index + 1 < pageRoles.length ? { continuityToPageId: `P-${String(index + 2).padStart(2, "0")}` } : {}),
+  }));
+  await writeFile(architecturePath, `${JSON.stringify({
+    schemaVersion: "2.0.0",
+    projectId: "release-fixture",
+    documentMode,
+    modePolicyVersion: "1.0.0",
+    architectureStatus: "complete",
+    chapters: [{ chapterId: "CH-01", title: "fixture", order: 0 }],
+    sections: pages.map((page, index) => ({
+      sectionId: page.sectionId,
+      chapterId: page.chapterId,
+      title: `fixture section ${index + 1}`,
+      order: index,
+    })),
+    pages,
+  }, null, 2)}\n`);
+  await writeFile(sourcePath, "synthetic verified source\n");
+  const sourceSha256 = await sha256File(sourcePath);
+  await writeFile(referencePath, `${JSON.stringify({
+    schemaVersion: "2.0.0",
+    projectId: "release-fixture",
+    documentMode,
+    modePolicyVersion: "1.0.0",
+    references: [{
+      referenceId: "REF-01",
+      referenceClass: "official",
+      sourcePath,
+      sourceSha256,
+      targets: [{ kind: "page", id: "P-01" }],
+      verificationStatus: "verified",
+      availability: "available",
+    }],
+  }, null, 2)}\n`);
   await writeFile(authoringPath, "synthetic approved prose\n");
-  await writeFile(evidenceLedgerPath, "synthetic evidence ledger\n");
+  await writeFile(evidenceLedgerPath, `${JSON.stringify({
+    schemaVersion: "1.0.0",
+    claims: [{ claimId: "CLM-01", status: "verified", evidenceIds: ["EV-01"] }],
+    bindings: [{
+      evidenceId: "EV-01",
+      sourcePath,
+      sourceSha256,
+      scope: "fixture release evidence",
+      claimIds: ["CLM-01"],
+      targetRequirementId: "REQ-01",
+      targetPageId: "P-01",
+      targetPageRole: pageRoles[0],
+    }],
+  }, null, 2)}\n`);
   const researchReceiptPath = researchRequired ? await createResearchLock(root) : undefined;
   await advanceToContentApproved(root, [authoringPath], [], researchReceiptPath, {
     requirements: [architecturePath],
-    evidence: [architecturePath, referencePath, evidenceLedgerPath],
+    evidence: [architecturePath, referencePath, evidenceLedgerPath, sourcePath],
   });
   const generation = join(root, ".kpp-build-0123456789abcdef", "generations", "fixture");
   await mkdir(generation, { recursive: true });
@@ -823,7 +891,7 @@ async function createAuditedProject(
   await writeFile(geometryPath, "{\"synthetic\":true}\n");
   await writeSyntheticCompositeAudit(auditPath, {
     projectId: "release-fixture",
-    documentMode: researchRequired ? "research_service" : "public_procurement",
+    documentMode,
     architecturePath,
     referencePath,
     geometryPath,
@@ -869,7 +937,7 @@ async function writeSyntheticCompositeAudit(
     : ["page:P-01/role:procurement_evaluation_crosswalk"];
   const definitions = [
     { sliceId: "page_architecture", classes: ["page_architecture", "render_observation"], locators: ["page:P-01"] },
-    { sliceId: "reference_integrity", classes: ["page_architecture", "reference_manifest", "evidence_ledger"], locators: ["reference:manifest", "evidence:ledger"] },
+    { sliceId: "reference_integrity", classes: ["page_architecture", "reference_manifest", "evidence_ledger"], locators: ["reference:REF-01", "evidence:EV-01"] },
     { sliceId: "render_repetition", classes: ["page_architecture", "render_observation"], locators: ["page:P-01"] },
     { sliceId: "figure_value", classes: ["authoring_response", "content_approval_receipt"], locators: ["figure:none"] },
     { sliceId: "korean_prose_review", classes: ["authoring_response", "content_approval_receipt"], locators: ["page:P-01"] },

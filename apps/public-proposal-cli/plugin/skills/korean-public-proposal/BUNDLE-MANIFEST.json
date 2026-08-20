@@ -1,12 +1,12 @@
 {
   "schemaVersion": "1.0.0",
   "sourceSkillName": "korean-public-proposal",
-  "sourceSnapshotDate": "2026-08-18",
+  "sourceSnapshotDate": "2026-08-20",
   "files": [
     {
       "path": "SKILL.md",
-      "bytes": 10992,
-      "sha256": "143aa3bec2a1051055057b162a797cb530fddfd6cf39f6067ac800ace753a57b",
+      "bytes": 13681,
+      "sha256": "64009d61e35912555bdac6b523ab74b2a5fda46747bbfa30670301c78b9070f2",
       "classification": "skill"
     },
     {
@@ -65,8 +65,8 @@
     },
     {
       "path": "references/figure-grammar.md",
-      "bytes": 2656,
-      "sha256": "e2afb23fcd8899c2cffd82df0df7002a513ccd67796d50dfdc38014832062927",
+      "bytes": 3116,
+      "sha256": "f16da99f2e719d8dd672a04637e7b43a9c8ff18f1a9c0f052b8551461336f9b3",
       "classification": "reference"
     },
     {
@@ -77,8 +77,8 @@
     },
     {
       "path": "references/korean-report-visual-system.md",
-      "bytes": 4543,
-      "sha256": "8ac9f9814d87ca7ea717f2c05c15d8150b52cc559afcbfe174d62c034d1b8d8c",
+      "bytes": 4914,
+      "sha256": "029609f364f09cd6efb5e580054c2f9b052775bc8f9f2a79bb05f51edd5327a3",
       "classification": "reference"
     },
     {
@@ -89,8 +89,8 @@
     },
     {
       "path": "references/page-contract.md",
-      "bytes": 1735,
-      "sha256": "d44b9c0e39e0bb3638e475d155f75abc9f60fb7ec5cb7d76295efbe81ca609a7",
+      "bytes": 2133,
+      "sha256": "651cf07c873e4aee860cd6143b3770beee40485a981c0f95dd2c0291ecad902a",
       "classification": "reference"
     },
     {
@@ -101,26 +101,32 @@
     },
     {
       "path": "references/public-document-grammar.md",
-      "bytes": 3287,
-      "sha256": "1c0aea52aa8d048433467ccdbf8903fa32a41ecc344d5abe0ad5ed1078411360",
+      "bytes": 3686,
+      "sha256": "cc99bc86868c01e434e5d07179a88b590849d4de18dcead976fff8c717c916e2",
       "classification": "reference"
     },
     {
       "path": "references/qa-gates.md",
-      "bytes": 4317,
-      "sha256": "88a3dc1a34933f9945a86c43bb01234257ee0ad09f761234e5ba37a1cd02a4ee",
+      "bytes": 4820,
+      "sha256": "335508584a8b0d65e73752a3157659a5bcb3a07ae9aa01418c8dc78cbee03420",
       "classification": "reference"
     },
     {
       "path": "references/surface-system-spec.md",
-      "bytes": 7545,
-      "sha256": "c7246c56f1c1521bcee96612784140909101a75faa1a48d9d663fd6fbd57976d",
+      "bytes": 8600,
+      "sha256": "b2322a972c457a2363154852a8ec748a7f5074e5d7221c85509db4cc51cdc781",
       "classification": "reference"
     },
     {
       "path": "references/table-grammar.md",
       "bytes": 1459,
       "sha256": "4c5636b4ddb85931e40e5180ffa5f7c2d18b7607a137dc32a94b1c40bce15d7b",
+      "classification": "reference"
+    },
+    {
+      "path": "references/vnext-contract.md",
+      "bytes": 7028,
+      "sha256": "1c2298e7e8c05bbaf88e6c8b669823978ac66300ada511a2945a690694dfb0dc",
       "classification": "reference"
     },
     {

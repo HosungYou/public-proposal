@@ -12,7 +12,7 @@ Figma, Word, HTML, SVG, and PDF are consumers of the same token file. Figma is n
 
 - Use A4 portrait, 210 x 297 mm.
 - Use 14 mm top/bottom and 18 mm left/right content insets for the approved editorial surface. Use the issuer margins when specified.
-- Use a 4 mm base grid. Align titles, table edges, chart plots, judgment bands, and footer labels to it.
+- Use a 4 mm base grid. Align chapter titles, compact headings, table edges, chart plots, semantic judgment bands, and footer labels to it.
 - Keep the running header in a 9 mm zone and the page-number baseline 7 mm from the bottom.
 - Target 65-82% printable-area occupancy on ordinary pages. Review below 60% or above 88%; split before shrinking type.
 
@@ -22,7 +22,7 @@ Use Noto Sans CJK KR for navigation, headings, captions, tables, and labels. Use
 
 | Role | Size | Line | Tracking | Weight |
 |---|---:|---:|---:|---:|
-| Page title | 20.5 pt | 1.12 | -0.045 em | 700 |
+| Chapter-opener title | 20.5 pt | 1.12 | -0.045 em | 700 |
 | Section | 12 pt | 1.22 | -0.025 em | 700 |
 | Subsection | 9.2 pt | 1.25 | -0.015 em | 700 |
 | Direct-answer thesis | 10.2 pt | 1.45 | default | 600 |
@@ -36,7 +36,7 @@ Use tracking as a measured role token, not per-line optical correction. Do not m
 ## 4. Paragraph system
 
 - Body: justified, no first-line indent, 2.3 mm after, Korean word integrity on, widow/orphan control on.
-- Direct answer: place once below the title; use a navy sans label and one substantive sentence.
+- Direct answer: place near the relevant chapter/section heading; use a navy sans label and one substantive sentence. Do not repeat it as a decorative lead band on every page.
 - Section: 5 mm before and 2 mm after; keep with the following paragraph or surface.
 - Subsection: 3.5 mm before and 1.4 mm after; keep with the next element.
 - Avoid isolated one-line paragraphs, stacked slogans, excessive bold, and manual blank lines.
@@ -69,7 +69,9 @@ Frameworks use square nodes, straight or orthogonal connectors, 1.1 pt primary s
 
 Use boxes only for a semantic boundary: direct answer, judgment, gate, source note, or status. Default radius is 0 mm, shadow is none, and gradient is prohibited. Use 3 x 2.5 mm internal padding, 0.8 pt outer rule, white or neutral fill, and a 26 mm navy label band for judgment boxes. A box never exists only to fill space.
 
-## 8. Eight page roles
+## 8. Surface composition recipes
+
+These are reusable visual recipes, not vNext `pageRole` values. The closed mode policy and the project's `PageArchitectureManifest` determine each permitted `pageRole`; use a recipe only as a declared `surfaceTemplateId`/surface family compatible with that role.
 
 1. `chapter_opener`: direct answer, linked evaluation, argument flow, judgment band.
 2. `analysis_evidence`: chart, interpretation table, unit, basis date, source, boundary.
@@ -80,7 +82,9 @@ Use boxes only for a semantic boundary: direct answer, judgment, gate, source no
 7. `evaluation_crosswalk`: criterion, score, direct answer, page, claim, proof, status.
 8. `evidence_ledger`: claim, proof, deliverable, acceptance, owner, status.
 
-Do not force all roles onto one page. Assign one dominant reader task to each page and split when two dominant surfaces compete.
+Do not force all recipes onto one page. Assign one dominant reader task to each page and split when two dominant surfaces compete.
+
+The large chapter-title token does not apply to ordinary continuation pages. Keep running chapter/section context and use headings at 12 pt or smaller. Never require a standalone title shell or a page break at the end of every subsection. Block three consecutive pages with equivalent title, lead, surface, and judgment regions unless the manifest carries a verified source-bound issuer/accessibility exception.
 
 ## 9. Figma bridge
 
@@ -91,7 +95,7 @@ Figma may test hierarchy, density, alignment, and component variants. Final Kore
 ## 10. Production and QA
 
 1. Copy the canonical token file into the numbered project package and add issuer overrides without changing the skill asset.
-2. Assign every planned page one of the eight roles.
+2. Assign every planned page a mode-permitted `pageRole` and compatible `surfaceTemplateId` in the complete architecture manifest.
 3. Build Word-native prose and tables; build data figures deterministically.
 4. Render every page to PNG and compare at the same geometry with the approved reference.
 5. Validate page size, fonts, tracking roles, paragraph rhythm, table rules, figure data, grayscale, occupancy, and status text.
@@ -108,3 +112,5 @@ Figma may test hierarchy, density, alignment, and component variants. Final Kore
 - a chart whose data cannot be reproduced from a lock file;
 - Figma measurements treated as authoritative print dimensions;
 - an ordinary page containing multiple unrelated dominant surfaces.
+- a 20.5 pt title or title/subtitle shell repeated on ordinary continuation pages;
+- three consecutive structurally equivalent pages without a verified exception.

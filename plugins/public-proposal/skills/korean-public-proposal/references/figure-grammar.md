@@ -11,6 +11,8 @@
 
 Every figure must answer one question. The title states the question or conclusion. Nodes carry an operational definition, evidence item, threshold, score, owner, or decision state.
 
+Every non-decorative figure also declares `semanticValueIntent`, `decisionEffect`, `nonDuplicateOf`, `encodedVariables`, claim IDs, and evidence IDs. It must add a decision-relevant relationship or value not already supplied by neighboring prose/table content. `decorative` is explicit, carries no evidentiary bindings, and cannot serve as proof.
+
 For conceptual or research frameworks, first classify the figure and lock its research logic using `academic-framework-grammar.md`.
 
 ## Production boundary
@@ -37,5 +39,6 @@ For conceptual or research frameworks, first classify the figure and lock its re
 7. A human compares the render with the input and approves it.
 8. Caption count, drawing-object count, figure-ledger count, and visible rendered-figure count agree.
 9. No orphan image relationship, orphan media file, or zero-size drawing remains.
+10. The semantic-value and non-decorative repetition audits pass against the receipt-bound neighboring content.
 
 If any gate fails, do not place the figure in the proposal. Simplify or reconstruct it.

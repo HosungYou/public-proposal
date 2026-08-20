@@ -1,7 +1,8 @@
 import { createHash } from "node:crypto";
 import { execFile as execFileCallback } from "node:child_process";
+import { existsSync } from "node:fs";
 import { cp, mkdir, mkdtemp, readFile, readdir, rename, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
 import { afterEach, expect, test } from "vitest";
@@ -74,6 +75,58 @@ test("the public proposal plugin ships a validated package copy and rewrites the
     expect(sha256(packagedPayload)).toBe(entry.sha256);
     expect(packagedPayload.byteLength).toBe(entry.bytes);
   }
+});
+
+test("the canonical, source, and packaged Korean skill payloads share the vNext contract", async () => {
+  const canonicalSkillRoot = process.env.KPP_CANONICAL_SKILL_ROOT
+    ?? join(homedir(), ".codex", "skills", "korean-public-proposal");
+  const sourceSkillRoot = join(sourcePluginRoot, "skills", "korean-public-proposal");
+  const packagedSkillRoot = join(packagedPluginRoot, "skills", "korean-public-proposal");
+  const manifest = await readBundleManifest(sourcePluginRoot);
+
+  for (const entry of manifest.files) {
+    const [sourcePayload, packagedPayload] = await Promise.all([
+      readFile(join(sourceSkillRoot, entry.path)),
+      readFile(join(packagedSkillRoot, entry.path)),
+    ]);
+    expect(packagedPayload.equals(sourcePayload), `source/packaged mismatch for ${entry.path}`).toBe(true);
+    if (existsSync(canonicalSkillRoot)) {
+      const canonicalPayload = await readFile(join(canonicalSkillRoot, entry.path));
+      expect(sourcePayload.equals(canonicalPayload), `canonical/source mismatch for ${entry.path}`).toBe(true);
+    } else if (process.env.KPP_CANONICAL_SKILL_ROOT !== undefined) {
+      throw new Error(`KPP_CANONICAL_SKILL_ROOT does not exist: ${canonicalSkillRoot}`);
+    }
+  }
+
+  const skill = await readFile(join(sourceSkillRoot, "SKILL.md"), "utf8");
+  const contract = await readFile(join(sourceSkillRoot, "references", "vnext-contract.md"), "utf8");
+  for (const mode of [
+    "public_procurement",
+    "research_service",
+    "private_partnership",
+    "internal_decision",
+    "document_restyle",
+  ]) {
+    expect(`${skill}\n${contract}`).toContain(mode);
+  }
+  for (const token of [
+    "kpp migrate --apply",
+    "titleScope",
+    "continuation",
+    "surfaceTemplateId",
+    "semanticValueIntent",
+    "decisionEffect",
+    "nonDuplicateOf",
+    "encodedVariables",
+    "CompositeAuditReceipt",
+    "TECHNICAL_GATE_ONLY",
+  ]) {
+    expect(`${skill}\n${contract}`).toContain(token);
+  }
+  expect(contract).toMatch(/three consecutive structurally equivalent pages/i);
+  expect(contract).toMatch(/continuation.*(?:<=|at most).*12\s*pt/is);
+  expect(skill).not.toContain("- Title 20.5 pt");
+  expect(contract).toContain("human-approved");
 });
 
 test("the bundle validator rejects generic absolute source path leaks in bundle payloads", async () => {

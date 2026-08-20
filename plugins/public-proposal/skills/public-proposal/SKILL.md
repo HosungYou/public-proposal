@@ -38,6 +38,8 @@ kpp doctor --json
 kpp status --json
 ```
 
+Resolve exactly one v2 mode: `public_procurement`, `research_service`, `private_partnership`, `internal_decision`, or `document_restyle`. A v1 project remains unchanged until an operator explicitly runs `kpp migrate PROJECT --apply`; no read, plan, build, audit, or release command may auto-migrate it.
+
 Use `npx @longtable/kpp-cli` when the `kpp` executable is not installed. The published package family is:
 
 - `@longtable/kpp-cli`: user-facing CLI and state transitions;
@@ -58,6 +60,8 @@ Before drafting or changing a project, keep these lanes separate and linked:
 - **Content**: claims, evidence IDs, direct evaluator answers, page locators, deliverables, risks, owners, and approval state.
 
 Every ordinary page must connect an evaluation question, direct answer, mechanism or evidence interpretation, deliverable or acceptance criterion, and claim/proof status. A table or figure is not a substitute for developed prose; it needs a body callout, source/date, interpretation boundary, and action or decision.
+
+Use the bundled `korean-public-proposal/references/vnext-contract.md` for page architecture. A large title belongs to the cover or chapter opener. Ordinary continuation pages retain running context and headings at 12 pt or smaller; three consecutive structurally equivalent pages block release unless a verified issuer/accessibility exception is source-bound.
 
 ## LongTable routing
 
@@ -94,6 +98,8 @@ The minimum release review covers:
 - table/figure shell and body linkage;
 - Korean fonts, geometry, page occupancy, glyphs, overlap, and clipping;
 - PDF/DOCX lineage, receipts, and human approval.
+
+Release also requires a mode-aware `CompositeAuditReceipt` that binds the current architecture, references, render observations, required audit slices, and allowlisted artifacts. Its human boundary is `TECHNICAL_GATE_ONLY`; npm `latest`, GitHub release, and final submission remain blocked until the final rendered exemplar receives explicit human approval.
 
 ## Handoff
 

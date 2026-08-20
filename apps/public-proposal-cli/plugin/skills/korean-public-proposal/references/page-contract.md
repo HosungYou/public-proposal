@@ -2,6 +2,8 @@
 
 Every ordinary proposal page must contain the required fields below. Cover, contents, chapter opener, official annex, and scanned evidence pages must declare their exception type.
 
+The contract does not require a large page title. Ordinary continuation pages use running context and compact headings at 12 pt or smaller. Page boundaries follow chapter structure and measured content, not every subsection.
+
 ## Required fields
 
 1. `evaluation_question`: the RFP question or decision the page answers.
@@ -36,4 +38,5 @@ The front crosswalk uses `evaluation code/score -> direct answer -> final page -
 - Flag figures below 8 pt equivalent at insertion size.
 - Flag tables and figures without their shell.
 - Flag final locators that differ between TOC, bookmarks, crosswalk, and evidence register.
+- Fail when three consecutive pages have structurally equivalent title, lead, surface, and judgment regions without a verified source-bound issuer/accessibility exception.
 - Fail submission mode when a critical page contains an unresolved placeholder, unbound proof, or blocker.

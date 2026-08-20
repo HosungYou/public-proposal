@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { cpSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { dirname, extname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -29,6 +30,7 @@ const knownPosixRoots = new Set([
   "/Volumes",
 ]);
 
+refreshBundleManifest(sourcePluginRoot);
 runValidator(sourcePluginRoot);
 replaceDirectory(sourcePluginRoot, packagedPluginRoot);
 runValidator(packagedPluginRoot);
@@ -41,6 +43,49 @@ assertRelativePluginSource(packagedMarketplacePath, "./plugin");
 
 console.log(`Packaged public-proposal plugin copied to ${packagedPluginRoot}`);
 console.log(`Packaged marketplace manifest written to ${packagedMarketplacePath}`);
+
+function refreshBundleManifest(pluginRoot) {
+  const bundleRoot = join(pluginRoot, "skills", "korean-public-proposal");
+  const manifestPath = join(bundleRoot, "BUNDLE-MANIFEST.json");
+  const previous = JSON.parse(readFileSync(manifestPath, "utf8"));
+  const files = listRelativeFiles(bundleRoot)
+    .filter((path) => path !== "BUNDLE-MANIFEST.json")
+    .map((path) => {
+      const payload = readFileSync(join(bundleRoot, path));
+      return {
+        path,
+        bytes: payload.byteLength,
+        sha256: createHash("sha256").update(payload).digest("hex"),
+        classification: classifyBundlePath(path),
+      };
+    });
+  const manifest = {
+    schemaVersion: "1.0.0",
+    sourceSkillName: "korean-public-proposal",
+    sourceSnapshotDate: previous.sourceSnapshotDate,
+    files,
+  };
+  writeFileSync(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`, "utf8");
+}
+
+function listRelativeFiles(root, relativeRoot = "") {
+  const currentRoot = relativeRoot ? join(root, relativeRoot) : root;
+  return readdirSync(currentRoot)
+    .flatMap((entry) => {
+      const relativePath = relativeRoot ? `${relativeRoot}/${entry}` : entry;
+      const stats = statSync(join(root, relativePath));
+      return stats.isDirectory() ? listRelativeFiles(root, relativePath) : [relativePath];
+    })
+    .sort();
+}
+
+function classifyBundlePath(path) {
+  if (path === "SKILL.md") return "skill";
+  if (path.startsWith("references/")) return "reference";
+  if (path.startsWith("scripts/")) return "script";
+  if (path.startsWith("assets/")) return "asset";
+  throw new Error(`Unsupported Korean skill bundle path ${path}`);
+}
 
 function runValidator(pluginRoot) {
   const result = spawnSync("python3", [validatorPath, pluginRoot], {

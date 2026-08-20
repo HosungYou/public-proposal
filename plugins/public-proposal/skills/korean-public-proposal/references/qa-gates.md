@@ -24,6 +24,8 @@
 
 - No unresolved placeholders, duplicated template prose, generic hype, decorative AI figures, copied layouts, or unverified numbers.
 - Every ordinary page satisfies the page contract; table-only and figure-only pages require an explicit approved exception.
+- Chapter openers may use the large-title token; ordinary continuation pages keep compact headings at 12 pt or smaller and never repeat a standalone page-title shell.
+- Three consecutive structurally equivalent pages are blocked unless a current issuer/accessibility exception is bound to its reference and source hash.
 - Every table and figure has a number, question-led title, body callout, source/date, interpretation, and action or decision boundary.
 - Product Design/ImageGen candidates were grounded with attached Korean reference pages and deterministically rebuilt before final use.
 
@@ -41,6 +43,7 @@
 - Run `audit_docx_integrity.py`. Caption count, DOCX drawing count, figure-ledger count, and visible rendered-figure count must agree. Required figures equal to zero, orphan image relationships, orphan media files, and zero-size drawings are blockers.
 - Scan all document, style, table, header, footer, footnote, and endnote font declarations against the approved allowlist. Embedded but undeclared Arial, Helvetica, or other fallback fonts remain blockers unless an issuer-form exception is explicitly registered.
 - Record the canonical surface-token path, version, SHA-256, and page-role coverage in the build manifest. A reference PDF without this binding does not prove that the surface system was applied.
+- Record mode-aware architecture, reference, rendered-observation, Korean prose, figure-value, repetition, and composite audit receipts. Technical PASS remains `TECHNICAL_GATE_ONLY`.
 
 ## G6 Human approval
 
