@@ -1,11 +1,22 @@
 import { lstat, realpath } from "node:fs/promises";
 import { isAbsolute, join, relative, resolve, sep } from "node:path";
-import { getDocumentModePolicy, PROJECT_STATES, readProject, verifyReceipt } from "@longtable/kpp-core";
-import { CompositeAuditReceiptSchema, type AuditSliceReceipt, type DocumentMode, type ProjectState } from "@longtable/kpp-schemas";
+import { getDocumentModePolicy, PROJECT_STATES, readProject, validateReferenceManifest, verifyReceipt } from "@longtable/kpp-core";
+import {
+  CompositeAuditReceiptSchema,
+  EvidenceLedgerSchema,
+  PageArchitectureManifestSchema,
+  ReferenceManifestSchema,
+  type AuditArtifactBinding,
+  type AuditSliceReceipt,
+  type CompositeAuditReceipt,
+  type DocumentMode,
+  type ProjectState,
+} from "@longtable/kpp-schemas";
 import {
   blocked,
   inspectArtifact,
   makeSlice,
+  readJsonObject,
   type AuditArtifact,
   type AuditFinding,
   type AuditSlice,
@@ -210,29 +221,147 @@ export async function validateCompositeAuditReceiptForRelease(
       }));
     }
   }
-  const contentReceipt = receipt.artifactBindings.find(({ artifactClass }) => artifactClass === "content_approval_receipt");
-  const authoring = receipt.artifactBindings.find(({ artifactClass }) => artifactClass === "authoring_response");
-  if (contentReceipt !== undefined && authoring !== undefined) {
-    try {
-      const verification = await verifyReceipt(contentReceipt.path);
-      const authoringCanonical = await realpath(authoring.path);
-      const matching = await Promise.all(verification.receipt.files.map(async (file) => ({
-        ...file,
-        canonical: await realpath(file.path).catch(() => undefined),
-      })));
-      if (!verification.valid || verification.receipt.stage !== "CONTENT_APPROVED"
-        || verification.receipt.result !== "PASS"
-        || !matching.some((file) => file.canonical === authoringCanonical && file.sha256 === authoring.sha256)) {
-        throw new Error("receipt does not bind the current authoring response bytes");
+  await validateBoundAuditSubjects(canonicalRoot, receipt, identity, findings);
+  await validateSliceAuthoringApprovals(receipt, requiredSliceIds, findings);
+  return makeSlice(findings, artifacts);
+}
+
+async function validateBoundAuditSubjects(
+  canonicalRoot: string,
+  receipt: CompositeAuditReceipt,
+  identity: AuditReceiptIdentity,
+  findings: AuditFinding[],
+): Promise<void> {
+  const policy = getDocumentModePolicy(identity.documentMode);
+  let architecture: ReturnType<typeof PageArchitectureManifestSchema.parse>;
+  try {
+    const binding = requireSingleBinding(receipt.artifactBindings, "page_architecture");
+    const canonical = await realpath(binding.path);
+    if (!isWithin(canonicalRoot, canonical)) throw new Error("page architecture is outside project root");
+    architecture = PageArchitectureManifestSchema.parse(await readJsonObject(canonical));
+    if (architecture.architectureStatus !== "complete"
+      || architecture.projectId !== identity.projectId
+      || architecture.documentMode !== identity.documentMode
+      || architecture.modePolicyVersion !== identity.modePolicyVersion) {
+      throw new Error("page architecture identity/status does not match the release audit");
+    }
+    const roles = new Set(architecture.pages.map(({ pageRole }) => policy.pageRoleAliases[pageRole] ?? pageRole));
+    const missingRoles = policy.requiredPageRoles.filter((role) => !roles.has(role));
+    if (missingRoles.length > 0) throw new Error(`page architecture omits required roles: ${missingRoles.join(",")}`);
+  } catch (error) {
+    findings.push(blocked("KPP_RELEASE_AUDIT_SUBJECT_UNBOUND", "audit locator를 현재 page architecture bytes에 결속할 수 없습니다.", {
+      path: "artifact:page_architecture",
+      actual: error instanceof Error ? error.message : error,
+    }));
+    return;
+  }
+
+  const pages = new Map(architecture.pages.map((page) => [page.pageId, page]));
+  for (const slice of receipt.slices) {
+    for (const locator of slice.reviewerScope.reviewedLocators.filter((entry) => entry.startsWith("page:"))) {
+      const matched = /^page:([^/]+)(?:\/role:([^/]+))?$/u.exec(locator);
+      const page = matched?.[1] === undefined ? undefined : pages.get(matched[1]);
+      const claimedRole = matched?.[2];
+      const actualRole = page === undefined ? undefined : (policy.pageRoleAliases[page.pageRole] ?? page.pageRole);
+      if (matched === null || page === undefined || (claimedRole !== undefined && claimedRole !== actualRole)) {
+        findings.push(blocked("KPP_RELEASE_AUDIT_SUBJECT_UNBOUND", "reviewed page/role locator가 현재 architecture의 실제 page/role과 일치하지 않습니다.", {
+          path: `slice:${slice.sliceId}`,
+          expected: locator,
+          actual: page === undefined ? "page not found" : `page:${page.pageId}/role:${actualRole}`,
+        }));
       }
-    } catch (error) {
-      findings.push(blocked("KPP_RELEASE_AUTHORING_RECEIPT_INVALID", "Korean prose와 figure-value 입력이 현재 PASS CONTENT_APPROVED receipt에 결속되지 않았습니다.", {
-        path: contentReceipt.path,
-        actual: error instanceof Error ? error.message : error,
-      }));
     }
   }
-  return makeSlice(findings, artifacts);
+
+  const referenceSlice = receipt.slices.find(({ sliceId }) => sliceId === "reference_integrity");
+  if (referenceSlice === undefined) return;
+  try {
+    const referenceBinding = requireSingleBinding(referenceSlice.artifactBindings, "reference_manifest");
+    const evidenceBinding = requireSingleBinding(referenceSlice.artifactBindings, "evidence_ledger");
+    const [referenceCanonical, evidenceCanonical] = await Promise.all([
+      realpath(referenceBinding.path),
+      realpath(evidenceBinding.path),
+    ]);
+    if (!isWithin(canonicalRoot, referenceCanonical) || !isWithin(canonicalRoot, evidenceCanonical)) {
+      throw new Error("reference manifest or evidence ledger is outside project root");
+    }
+    const [references, evidence] = await Promise.all([
+      readJsonObject(referenceCanonical).then((value) => ReferenceManifestSchema.parse(value)),
+      readJsonObject(evidenceCanonical).then((value) => EvidenceLedgerSchema.parse(value)),
+    ]);
+    const validation = validateReferenceManifest(references, architecture, evidence);
+    if (validation.status !== "PASS") {
+      throw new Error(validation.findings.map(({ ruleId, evidence: detail }) => `${ruleId}:${detail.locator}`).join(", "));
+    }
+    const reviewed = new Set(referenceSlice.reviewerScope.reviewedLocators);
+    const expectedReferenceLocators = references.references.map(({ referenceId }) => `reference:${referenceId}`);
+    const evidenceIds = new Set([
+      ...evidence.bindings.map(({ evidenceId }) => evidenceId),
+      ...evidence.claims.flatMap(({ evidenceIds: ids }) => ids),
+    ]);
+    const expectedEvidenceLocators = [...evidenceIds].map((evidenceId) => `evidence:${evidenceId}`);
+    const expected = [...expectedReferenceLocators, ...expectedEvidenceLocators];
+    const actualSubjectLocators = [...reviewed].filter((locator) => locator.startsWith("reference:") || locator.startsWith("evidence:"));
+    if (expected.length === 0
+      || expected.some((locator) => !reviewed.has(locator))
+      || actualSubjectLocators.some((locator) => !expected.includes(locator))) {
+      throw new Error(`reviewed reference/evidence locators do not match current subjects; expected=${expected.join(",")}`);
+    }
+  } catch (error) {
+    findings.push(blocked("KPP_RELEASE_AUDIT_SUBJECT_UNBOUND", "reference integrity slice를 현재 manifest/ledger/source/target bytes에 결속할 수 없습니다.", {
+      path: "slice:reference_integrity",
+      actual: error instanceof Error ? error.message : error,
+    }));
+  }
+}
+
+async function validateSliceAuthoringApprovals(
+  receipt: CompositeAuditReceipt,
+  requiredSliceIds: ReadonlySet<string>,
+  findings: AuditFinding[],
+): Promise<void> {
+  const verificationCache = new Map<string, Awaited<ReturnType<typeof verifyReceipt>> | Error>();
+  for (const slice of receipt.slices) {
+    if (!requiredSliceIds.has(slice.sliceId) || !["figure_value", "korean_prose_review"].includes(slice.sliceId)) continue;
+    const authoringBindings = slice.artifactBindings.filter(({ artifactClass }) => artifactClass === "authoring_response");
+    const contentReceipts = slice.artifactBindings.filter(({ artifactClass }) => artifactClass === "content_approval_receipt");
+    for (const authoring of authoringBindings) {
+      const authoringCanonical = await realpath(authoring.path).catch(() => undefined);
+      let approved = false;
+      for (const contentReceipt of contentReceipts) {
+        let cached = verificationCache.get(contentReceipt.path);
+        if (cached === undefined) {
+          cached = await verifyReceipt(contentReceipt.path).catch((error: unknown) => error instanceof Error ? error : new Error(String(error)));
+          verificationCache.set(contentReceipt.path, cached);
+        }
+        if (cached instanceof Error || authoringCanonical === undefined) continue;
+        const matching = await Promise.all(cached.receipt.files.map(async (file) => ({
+          ...file,
+          canonical: await realpath(file.path).catch(() => undefined),
+        })));
+        if (cached.valid && cached.receipt.stage === "CONTENT_APPROVED" && cached.receipt.result === "PASS"
+          && matching.some((file) => file.canonical === authoringCanonical && file.sha256 === authoring.sha256)) {
+          approved = true;
+          break;
+        }
+      }
+      if (!approved) {
+        findings.push(blocked("KPP_RELEASE_AUTHORING_RECEIPT_INVALID", "Korean prose와 figure-value slice의 각 authoring response는 현재 PASS CONTENT_APPROVED receipt에 결속되어야 합니다.", {
+          path: authoring.path,
+          actual: contentReceipts.map(({ path }) => path),
+        }));
+      }
+    }
+  }
+}
+
+function requireSingleBinding(
+  bindings: readonly AuditArtifactBinding[],
+  artifactClass: string,
+): AuditArtifactBinding {
+  const matches = bindings.filter((binding) => binding.artifactClass === artifactClass);
+  if (matches.length !== 1) throw new Error(`expected exactly one ${artifactClass} binding, received ${matches.length}`);
+  return matches[0]!;
 }
 
 function validateSliceCoverage(

@@ -480,7 +480,21 @@ async function receiptBoundAuthoringResponse(root: string, path: string): Promis
 }
 
 async function reviewedLocatorsForSlice(id: string, input: ProposalAuditInput): Promise<readonly string[]> {
-  if (id === "reference_integrity") return ["reference:manifest", "evidence:ledger"];
+  if (id === "reference_integrity" && input.referenceManifestPath !== undefined) {
+    const evidencePath = resolve(input.root, "evidence", "evidence-ledger.json");
+    const [references, evidence] = await Promise.all([
+      readJsonObject(input.referenceManifestPath).then((value) => ReferenceManifestSchema.parse(value)),
+      readJsonObject(evidencePath).then((value) => EvidenceLedgerSchema.parse(value)),
+    ]);
+    const evidenceIds = new Set([
+      ...evidence.bindings.map(({ evidenceId }) => evidenceId),
+      ...evidence.claims.flatMap(({ evidenceIds: ids }) => ids),
+    ]);
+    return [
+      ...references.references.map(({ referenceId }) => `reference:${referenceId}`),
+      ...[...evidenceIds].map((evidenceId) => `evidence:${evidenceId}`),
+    ];
+  }
   if (id === "figure_value") {
     const ids = await Promise.all(input.figures.map(async ({ specPath }) => {
       const value = await readJsonObject(specPath);

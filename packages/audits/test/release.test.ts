@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, rm, stat, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, test } from "vitest";
@@ -22,26 +22,13 @@ async function fixture(documentMode: DocumentMode = "private_partnership") {
     evidence: join(root, "evidence", "evidence-ledger.json"),
     authoring: join(root, "content", "authoring-response.json"),
     contentReceipt: join(root, "receipts", "content-approval.json"),
+    source: join(root, "evidence", "source.txt"),
     audit: join(root, "audit", "audit.json"),
   };
   await Promise.all([mkdir(join(root, "content")), mkdir(join(root, "evidence")), mkdir(join(root, "audit")), mkdir(join(root, "receipts"))]);
-  await writeFile(paths.architecture, "architecture-v1\n");
-  await writeFile(paths.references, "references-v1\n");
-  await writeFile(paths.observations, "observations-v1\n");
-  await writeFile(paths.evidence, "evidence-v1\n");
-  await writeFile(paths.authoring, "authoring-v1\n");
-  await writeReceipt({ stage: "CONTENT_APPROVED", files: [paths.authoring], output: paths.contentReceipt });
-  const binding = async (artifactClass: string, path: string): Promise<AuditArtifactBinding> => ({
-    artifactClass, path, sha256: await sha256File(path), bytes: (await stat(path)).size,
-  });
-  const artifacts = {
-    architecture: await binding("page_architecture", paths.architecture),
-    references: await binding("reference_manifest", paths.references),
-    observations: await binding("render_observation", paths.observations),
-    evidence: await binding("evidence_ledger", paths.evidence),
-    authoring: await binding("authoring_response", paths.authoring),
-    contentReceipt: await binding("content_approval_receipt", paths.contentReceipt),
-  };
+  await writeFile(paths.source, "verified source bytes\n");
+  const sourceSha256 = await sha256File(paths.source);
+  const projectId = `${documentMode}-fixture`;
   const roleSlices: Readonly<Record<DocumentMode, Readonly<Record<string, readonly string[]>>>> = {
     public_procurement: { procurement_evaluation_crosswalk: ["procurement_evaluation_crosswalk"] },
     research_service: { research_method_traceability: ["research_method", "evidence_plan"] },
@@ -56,17 +43,94 @@ async function fixture(documentMode: DocumentMode = "private_partnership") {
       mutation_integrity: ["content_ledger", "mutation_report", "acceptance_record"],
     },
   };
+  const requiredRoles: Readonly<Record<DocumentMode, readonly string[]>> = {
+    public_procurement: ["executive_summary", "procurement_evaluation_crosswalk", "requirement_response", "delivery_control"],
+    research_service: ["research_question", "research_method", "evidence_plan", "limitations", "utilization_plan"],
+    private_partnership: ["mutual_value", "party_roles", "operating_model", "collaboration_options", "next_decision"],
+    internal_decision: ["decision_request", "alternatives", "tradeoffs", "risk_register", "owner_approval"],
+    document_restyle: ["source_inventory", "content_ledger", "layout_accessibility", "mutation_report", "acceptance_record"],
+  };
+  const baseRole = requiredRoles[documentMode][0]!;
+  const architecturePages = requiredRoles[documentMode]
+    .map((pageRole, index) => ({
+      pageId: index === 0 ? "P-01" : `P-${String(index + 1).padStart(2, "0")}`,
+      chapterId: "C-01",
+      sectionId: "S-01",
+      pageRole,
+      surfaceTemplateId: "fixture-v1",
+      titleScope: index === 0 ? "chapter" : "none",
+      continuation: index !== 0,
+      dominantSurface: "narrative",
+      surfaceVisibility: "reader",
+      claimIds: index === 0 ? ["claim-1"] : [],
+      proofIds: index === 0 ? ["ref-1"] : [],
+      referenceIds: index === 0 ? ["ref-1"] : [],
+      figureIds: [],
+    }));
+  await writeFile(paths.architecture, `${JSON.stringify({
+    schemaVersion: "2.0.0",
+    projectId,
+    documentMode,
+    modePolicyVersion: "1.0.0",
+    architectureStatus: "complete",
+    chapters: [{ chapterId: "C-01", title: "Fixture" }],
+    sections: [{ sectionId: "S-01", chapterId: "C-01", title: "Fixture" }],
+    pages: architecturePages,
+  })}\n`);
+  await writeFile(paths.references, `${JSON.stringify({
+    schemaVersion: "2.0.0",
+    projectId,
+    documentMode,
+    modePolicyVersion: "1.0.0",
+    references: [{
+      referenceId: "ref-1",
+      referenceClass: "evidence",
+      sourcePath: paths.source,
+      sourceSha256,
+      targets: [{ kind: "claim", id: "claim-1" }],
+      verificationStatus: "verified",
+      availability: "available",
+    }],
+  })}\n`);
+  await writeFile(paths.observations, "observations-v1\n");
+  await writeFile(paths.evidence, `${JSON.stringify({
+    schemaVersion: "1.0.0",
+    claims: [{ claimId: "claim-1", status: "verified", evidenceIds: ["ref-1"] }],
+    bindings: [{
+      evidenceId: "ref-1",
+      sourcePath: paths.source,
+      sourceSha256,
+      scope: "fixture source",
+      claimIds: ["claim-1"],
+      targetRequirementId: "REQ-1",
+      targetPageId: "P-01",
+      targetPageRole: baseRole,
+    }],
+  })}\n`);
+  await writeFile(paths.authoring, "authoring-v1\n");
+  await writeReceipt({ stage: "CONTENT_APPROVED", files: [paths.authoring], output: paths.contentReceipt });
+  const binding = async (artifactClass: string, path: string): Promise<AuditArtifactBinding> => ({
+    artifactClass, path, sha256: await sha256File(path), bytes: (await stat(path)).size,
+  });
+  const artifacts = {
+    architecture: await binding("page_architecture", paths.architecture),
+    references: await binding("reference_manifest", paths.references),
+    observations: await binding("render_observation", paths.observations),
+    evidence: await binding("evidence_ledger", paths.evidence),
+    authoring: await binding("authoring_response", paths.authoring),
+    contentReceipt: await binding("content_approval_receipt", paths.contentReceipt),
+  };
+  const pageByRole = new Map(architecturePages.map(({ pageId, pageRole }) => [pageRole, pageId]));
   const definition: Array<{ id: string; bindings: AuditArtifactBinding[]; locators: string[] }> = [
     { id: "page_architecture", bindings: [artifacts.architecture, artifacts.observations], locators: ["page:P-01"] },
-    { id: "reference_integrity", bindings: [artifacts.architecture, artifacts.references, artifacts.evidence], locators: ["reference:manifest", "evidence:ledger"] },
+    { id: "reference_integrity", bindings: [artifacts.architecture, artifacts.references, artifacts.evidence], locators: ["reference:ref-1", "evidence:ref-1"] },
     { id: "render_repetition", bindings: [artifacts.architecture, artifacts.observations], locators: ["page:P-01"] },
     { id: "figure_value", bindings: [artifacts.authoring, artifacts.contentReceipt], locators: ["figure:none"] },
     { id: "korean_prose_review", bindings: [artifacts.authoring, artifacts.contentReceipt], locators: ["page:P-01"] },
     ...Object.entries(roleSlices[documentMode]).map(([id, roles]) => ({
-      id, bindings: [artifacts.architecture], locators: roles.map((role) => `page:P-${role}/role:${role}`),
+      id, bindings: [artifacts.architecture], locators: roles.map((role) => `page:${pageByRole.get(role)!}/role:${role}`),
     })),
   ];
-  const projectId = `${documentMode}-fixture`;
   const slices: AuditSliceReceipt[] = definition.map(({ id: sliceId, bindings, locators }) => ({
     schemaVersion: "1.0.0",
     sliceId,
@@ -152,6 +216,55 @@ describe("mode-aware audit release validation", () => {
     expect(result.findings.map(({ code }) => code)).toContain("KPP_RELEASE_ARTIFACT_CLASS_NOT_ALLOWED");
   });
 
+  test("rejects a hash-current role locator whose page does not exist in the bound architecture", async () => {
+    const { root, receipt } = await fixture();
+    const slice = receipt.slices.find(({ sliceId }) => sliceId === "operating_model_traceability")!;
+    slice.reviewerScope.reviewedLocators = slice.reviewerScope.reviewedLocators.map((locator) => locator.endsWith("/role:party_roles")
+      ? "page:P-forged/role:party_roles"
+      : locator);
+    const result = await validateCompositeAuditReceiptForRelease(root, receipt);
+    expect(result.findings.map(({ code }) => code)).toContain("KPP_RELEASE_AUDIT_SUBJECT_UNBOUND");
+  });
+
+  test("rejects malformed hash-current manifest bytes despite self-claimed locators", async () => {
+    const { root, paths, receipt } = await fixture();
+    await writeFile(paths.architecture, "architecture-v1\n");
+    const sha256 = await sha256File(paths.architecture);
+    const bytes = (await stat(paths.architecture)).size;
+    for (const slice of receipt.slices) {
+      slice.inputHashes = slice.inputHashes.map((input) => input.path === paths.architecture ? { path: input.path, sha256 } : input);
+      slice.artifactBindings = slice.artifactBindings.map((binding) => binding.path === paths.architecture ? { ...binding, sha256, bytes } : binding);
+    }
+    receipt.inputHashes = receipt.inputHashes.map((input) => input.path === paths.architecture ? { path: input.path, sha256 } : input);
+    receipt.artifactBindings = receipt.artifactBindings.map((binding) => binding.path === paths.architecture ? { ...binding, sha256, bytes } : binding);
+    const result = await validateCompositeAuditReceiptForRelease(root, receipt);
+    expect(result.findings.map(({ code }) => code)).toContain("KPP_RELEASE_AUDIT_SUBJECT_UNBOUND");
+  });
+
+  test("rejects a complete architecture that omits a mode-required page role", async () => {
+    const { root, paths, receipt } = await fixture();
+    const architecture = JSON.parse(await readFile(paths.architecture, "utf8")) as { pages: Array<{ pageRole: string }> };
+    architecture.pages = architecture.pages.filter(({ pageRole }) => pageRole !== "collaboration_options");
+    await writeFile(paths.architecture, `${JSON.stringify(architecture)}\n`);
+    const sha256 = await sha256File(paths.architecture);
+    const bytes = (await stat(paths.architecture)).size;
+    for (const slice of receipt.slices) {
+      slice.inputHashes = slice.inputHashes.map((input) => input.path === paths.architecture ? { path: input.path, sha256 } : input);
+      slice.artifactBindings = slice.artifactBindings.map((binding) => binding.path === paths.architecture ? { ...binding, sha256, bytes } : binding);
+    }
+    receipt.inputHashes = receipt.inputHashes.map((input) => input.path === paths.architecture ? { path: input.path, sha256 } : input);
+    receipt.artifactBindings = receipt.artifactBindings.map((binding) => binding.path === paths.architecture ? { ...binding, sha256, bytes } : binding);
+    const result = await validateCompositeAuditReceiptForRelease(root, receipt);
+    expect(result.findings.map(({ code }) => code)).toContain("KPP_RELEASE_AUDIT_SUBJECT_UNBOUND");
+  });
+
+  test("rejects a reference manifest when its declared source hash is no longer current", async () => {
+    const { root, paths, receipt } = await fixture();
+    await writeFile(paths.source, "mutated source bytes\n");
+    const result = await validateCompositeAuditReceiptForRelease(root, receipt);
+    expect(result.findings.map(({ code }) => code)).toContain("KPP_RELEASE_AUDIT_SUBJECT_UNBOUND");
+  });
+
   test.each<DocumentMode>([
     "public_procurement",
     "research_service",
@@ -175,6 +288,25 @@ describe("mode-aware audit release validation", () => {
     }
     receipt.inputHashes = receipt.inputHashes.map((input) => input.path === paths.contentReceipt ? { path: input.path, sha256 } : input);
     receipt.artifactBindings = receipt.artifactBindings.map((binding) => binding.path === paths.contentReceipt ? { ...binding, sha256, bytes } : binding);
+    const result = await validateCompositeAuditReceiptForRelease(root, receipt);
+    expect(result.findings.map(({ code }) => code)).toContain("KPP_RELEASE_AUTHORING_RECEIPT_INVALID");
+  });
+
+  test("rejects an unapproved authoring response mixed into a figure slice with an approved response", async () => {
+    const { root, paths, receipt } = await fixture();
+    const unapprovedPath = join(root, "content", "unapproved-authoring-response.json");
+    await writeFile(unapprovedPath, "unapproved-current-bytes\n");
+    const unapproved = {
+      artifactClass: "authoring_response",
+      path: unapprovedPath,
+      sha256: await sha256File(unapprovedPath),
+      bytes: (await stat(unapprovedPath)).size,
+    };
+    const figureSlice = receipt.slices.find(({ sliceId }) => sliceId === "figure_value")!;
+    figureSlice.artifactBindings.push(unapproved);
+    figureSlice.inputHashes.push({ path: unapproved.path, sha256: unapproved.sha256 });
+    receipt.artifactBindings.push(unapproved);
+    receipt.inputHashes.push({ path: unapproved.path, sha256: unapproved.sha256 });
     const result = await validateCompositeAuditReceiptForRelease(root, receipt);
     expect(result.findings.map(({ code }) => code)).toContain("KPP_RELEASE_AUTHORING_RECEIPT_INVALID");
   });
