@@ -30,6 +30,7 @@ describe("project migration", () => {
       fromSchemaVersion: "1.0.0",
       toSchemaVersion: "2.0.0",
       backupPath: null,
+      backupScope: "project_metadata_only",
       receiptPath: expect.stringContaining(".kpp-migrations"),
       decisions: expect.arrayContaining(["documentMode:private_partnership"]),
     });
@@ -42,6 +43,7 @@ describe("project migration", () => {
     const root = await createLegacyProject(temporaryDirectories);
     const projectPath = join(root, "kpp.project.yaml");
     const originalProject = await readFile(projectPath);
+    const originalSource = await readFile(join(root, "sources", "rfp.txt"));
     const originalEvidence = await readFile(join(root, "evidence", "source.txt"));
 
     const report = await migrateProject(root, {
@@ -50,10 +52,12 @@ describe("project migration", () => {
     });
 
     expect(report.backupPath).toMatch(/\.kpp-migrations\/[^/]+\/backup$/);
+    expect(report.backupScope).toBe("project_metadata_only");
     expect(report.receiptPath).toContain(report.migrationId);
     await expect(readFile(join(report.backupPath ?? "", "kpp.project.yaml"))).resolves.toEqual(originalProject);
     await expect(readFile(projectPath, "utf8")).resolves.toContain("schemaVersion: 2.0.0");
     await expect(readFile(projectPath, "utf8")).resolves.toContain("documentMode: private_partnership");
+    await expect(readFile(join(root, "sources", "rfp.txt"))).resolves.toEqual(originalSource);
     await expect(readFile(join(root, "evidence", "source.txt"))).resolves.toEqual(originalEvidence);
     await expect(readFile(report.receiptPath, "utf8")).resolves.toContain(report.destinationSha256);
     await expect(readFile(join(root, "content", "page-architecture.json"), "utf8")).resolves.toContain('"pages": []');
@@ -68,9 +72,24 @@ describe("project migration", () => {
     });
     await expect(readdir(root)).resolves.not.toContain(".kpp-migrations");
   });
+
+  it("fails closed for an unsupported source schema version", async () => {
+    const root = await createLegacyProject(temporaryDirectories, "3.0.0");
+    const projectPath = join(root, "kpp.project.yaml");
+    const originalProject = await readFile(projectPath);
+
+    await expect(migrateProject(root, {
+      apply: false,
+      documentMode: "private_partnership",
+    })).rejects.toMatchObject({ code: "KPP_MIGRATION_UNSUPPORTED_SOURCE" });
+    await expect(readFile(projectPath)).resolves.toEqual(originalProject);
+  });
 });
 
-async function createLegacyProject(temporaryDirectories: string[]): Promise<string> {
+async function createLegacyProject(
+  temporaryDirectories: string[],
+  schemaVersion: string = "1.0.0",
+): Promise<string> {
   const root = await mkdtemp(join(tmpdir(), "kpp-migration-"));
   temporaryDirectories.push(root);
   await Promise.all([
@@ -79,7 +98,7 @@ async function createLegacyProject(temporaryDirectories: string[]): Promise<stri
   ]);
   await Promise.all([
     writeFile(join(root, "kpp.project.yaml"), [
-      "schemaVersion: 1.0.0",
+      `schemaVersion: ${schemaVersion}`,
       "projectId: legacy-project",
       "proposalClass: general_procurement",
       "state: INIT",

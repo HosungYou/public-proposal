@@ -6,7 +6,7 @@ import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { success, type CliEnvelope } from "../output.js";
 import { EXPECTED_WORKER_PROTOCOL, ManagedWorkerError, WORKER_PROTOCOL_PROBE, resolveExplicitWorker, resolveManagedWorker } from "../managed-worker.js";
-import { readProject } from "@longtable/kpp-core";
+import { KppError, readProject } from "@longtable/kpp-core";
 
 const execFileAsync = promisify(execFile);
 
@@ -124,7 +124,17 @@ async function migrationCheck(root: string | undefined): Promise<DoctorCheck> {
       message: "프로젝트 경로가 없어 마이그레이션 진단을 건너뛰었습니다.",
     };
   }
-  const project = await readProject(root);
+  let project;
+  try {
+    project = await readProject(root);
+  } catch (error) {
+    if (error instanceof KppError && error.code === "KPP_INPUT_PROJECT_INVALID") {
+      throw new KppError("KPP_MIGRATION_UNSUPPORTED_SOURCE", "지원하지 않는 프로젝트 스키마 버전입니다.", {
+        actual: error.details.actual,
+      });
+    }
+    throw error;
+  }
   if (project.schemaVersion === "1.0.0") {
     return {
       name: "project_migration",

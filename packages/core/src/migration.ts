@@ -22,6 +22,7 @@ export interface MigrationReport {
   readonly sourceSha256: string;
   readonly destinationSha256: string;
   readonly backupPath: string | null;
+  readonly backupScope: "project_metadata_only";
   readonly decisions: readonly string[];
   readonly warnings: readonly string[];
   readonly reportPath: string;
@@ -43,7 +44,18 @@ export async function migrateProject(
   options: MigrateProjectOptions,
 ): Promise<MigrationReport> {
   const sourceProjectPath = projectPath(root);
-  const project = await readProject(root);
+  let project;
+  try {
+    project = await readProject(root);
+  } catch (error) {
+    if (error instanceof KppError && error.code === "KPP_INPUT_PROJECT_INVALID") {
+      throw new KppError("KPP_MIGRATION_UNSUPPORTED_SOURCE", "지원하지 않는 프로젝트 스키마 버전입니다.", {
+        path: sourceProjectPath,
+        actual: error.details.actual,
+      });
+    }
+    throw error;
+  }
   assertSupportedSource(project.schemaVersion);
   if (project.schemaVersion === TARGET_SCHEMA_VERSION) {
     throw new KppError("KPP_MIGRATION_ALREADY_CURRENT", "프로젝트가 이미 현재 스키마입니다.", {
@@ -82,7 +94,7 @@ export async function migrateProject(
       .map((skeleton) => `created:${skeleton.name}`),
   ];
   const warnings = [
-    "기존 source/evidence 바이트는 수정하지 않습니다.",
+    "백업 범위는 project metadata only이며 기존 source/evidence 바이트는 원래 위치에서 수정하지 않습니다.",
     "아키텍처와 참조 골격은 비어 있으므로 다음 승인 전에 채우고 검증해야 합니다.",
     ...preservedSkeletons
       .filter((skeleton) => skeleton.exists)
@@ -96,6 +108,7 @@ export async function migrateProject(
     sourceSha256,
     destinationSha256,
     backupPath: options.apply ? backupPath : null,
+    backupScope: "project_metadata_only",
     decisions,
     warnings,
     reportPath,

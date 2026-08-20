@@ -39,9 +39,7 @@ const ProjectFieldsSchema = z.object({
 
 /** The v1 shape remains readable for diagnosis and explicit migration. */
 export const ProjectV1Schema = ProjectFieldsSchema.extend({
-  schemaVersion: z.string().min(1).refine((version) => !version.startsWith("2."), {
-    message: "schema version 2.x requires the v2 project fields",
-  }),
+  schemaVersion: z.literal("1.0.0"),
 });
 
 export const ProjectV2Schema = ProjectFieldsSchema.extend({

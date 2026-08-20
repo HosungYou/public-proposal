@@ -125,6 +125,65 @@ describe("kpp CLI", () => {
     });
   });
 
+  it("keeps proposal class and document mode independent during init", async () => {
+    const root = await mkdtemp(join(tmpdir(), "kpp-cli-"));
+    temporaryDirectories.push(root);
+
+    const initialized = await run([
+      "init",
+      root,
+      "--proposal-class",
+      "research_service",
+      "--document-mode",
+      "private_partnership",
+      "--json",
+    ]);
+
+    expect(initialized).toMatchObject({ code: 0, stderr: "" });
+    expect(parseEnvelope(initialized.stdout)).toMatchObject({
+      data: {
+        proposalClass: "research_service",
+        documentMode: "private_partnership",
+      },
+    });
+  });
+
+  it("rejects unsupported migration targets and unknown document modes", async () => {
+    const root = await mkdtemp(join(tmpdir(), "kpp-cli-migrate-"));
+    temporaryDirectories.push(root);
+
+    const unsupportedTarget = await run(["migrate", root, "--to", "3.0.0", "--json"]);
+    const unknownMode = await run(["migrate", root, "--document-mode", "unknown_mode", "--json"]);
+
+    expect(unsupportedTarget.code).toBe(1);
+    expect(parseEnvelope(unsupportedTarget.stdout)).toMatchObject({
+      code: "KPP_MIGRATION_UNSUPPORTED_TARGET",
+    });
+    expect(unknownMode.code).toBe(1);
+    expect(parseEnvelope(unknownMode.stdout)).toMatchObject({ code: "KPP_INPUT_COMMAND" });
+  });
+
+  it("fails closed when doctor encounters an unknown schema version", async () => {
+    const root = await mkdtemp(join(tmpdir(), "kpp-cli-migrate-"));
+    temporaryDirectories.push(root);
+    await writeFile(join(root, "kpp.project.yaml"), [
+      "schemaVersion: 3.0.0",
+      "projectId: unknown-schema",
+      "proposalClass: general_procurement",
+      "state: INIT",
+      "issuerPack: null",
+      "approvalPolicy: single_owner",
+      "",
+    ].join("\n"));
+
+    const diagnosis = await run(["doctor", root, "--json"]);
+
+    expect(diagnosis.code).toBe(1);
+    expect(parseEnvelope(diagnosis.stdout)).toMatchObject({
+      code: "KPP_MIGRATION_UNSUPPORTED_SOURCE",
+    });
+  });
+
   it("migrates only when --apply is supplied and doctor leaves v1 metadata untouched", async () => {
     const root = await mkdtemp(join(tmpdir(), "kpp-cli-migrate-"));
     temporaryDirectories.push(root);

@@ -1,4 +1,5 @@
 import { type DocumentMode } from "@longtable/kpp-schemas";
+import { KppError } from "./errors.js";
 
 export const MODE_POLICY_VERSION = "1.0.0";
 
@@ -176,5 +177,11 @@ const DOCUMENT_MODE_POLICIES: Record<DocumentMode, DocumentModePolicy> = {
 };
 
 export function getDocumentModePolicy(mode: DocumentMode): DocumentModePolicy {
-  return DOCUMENT_MODE_POLICIES[mode];
+  const policy = DOCUMENT_MODE_POLICIES[mode];
+  if (policy === undefined) {
+    throw new KppError("KPP_MODE_POLICY_UNKNOWN", "지원하지 않는 문서 모드 정책입니다.", {
+      actual: mode,
+    });
+  }
+  return policy;
 }

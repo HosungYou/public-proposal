@@ -138,6 +138,17 @@ describe("canonical persisted schemas", () => {
     expect("documentMode" in current ? current.documentMode : undefined).toBe("public_procurement");
   });
 
+  it("rejects unknown project schema versions instead of treating them as legacy", () => {
+    expect(() => ProjectSchema.parse({
+      schemaVersion: "3.0.0",
+      projectId: "unknown",
+      proposalClass: "general_procurement",
+      state: "INIT",
+      issuerPack: null,
+      approvalPolicy: "single_owner",
+    })).toThrow();
+  });
+
   it("accepts only the supported proposal classes", () => {
     const classes = [
       "academic_research",

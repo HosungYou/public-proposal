@@ -26,4 +26,17 @@ describe("document mode policies", () => {
     expect(policy.requiredAuditSlices).not.toContain("procurement_evaluation_crosswalk");
     expect(policy.artifactAllowlist).not.toContain("procurement_evaluation_crosswalk");
   });
+
+  it("rejects an unknown mode when an untyped caller bypasses TypeScript", () => {
+    let thrown: unknown;
+    try {
+      getDocumentModePolicy("unknown_mode" as never);
+    } catch (error) {
+      thrown = error;
+    }
+
+    expect(thrown).toMatchObject({
+      code: "KPP_MODE_POLICY_UNKNOWN",
+    });
+  });
 });
