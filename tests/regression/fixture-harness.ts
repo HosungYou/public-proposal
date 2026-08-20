@@ -18,6 +18,7 @@ export interface ProposalFixture {
   readonly buildManifestPath: string;
   readonly geometryReportPath: string;
   readonly pageArchitecturePath: string;
+  readonly referenceManifestPath: string;
   readonly renderManifestPath: string;
   readonly pdfPath: string;
   readonly pagePath: string;
@@ -135,7 +136,7 @@ async function materialize(relativeFixture: string, prefix: string): Promise<Pro
     pageId: `P-${String(index + 1).padStart(2, "0")}`,
     chapterId: "CH-01",
     sectionId: `SEC-${String(index + 1).padStart(2, "0")}`,
-    pageRole: "source_inventory",
+    pageRole: "procurement_evaluation_crosswalk",
     surfaceTemplateId: "source_output_comparison",
     titleScope: index === 0 ? "chapter" : "section",
     titlePointSize: Math.max(12, ...observation.measuredHeadingPointSizes),
@@ -149,17 +150,28 @@ async function materialize(relativeFixture: string, prefix: string): Promise<Pro
   await writeJson(pageArchitecturePath, {
     schemaVersion: "2.0.0",
     projectId: "sanitized-r08-regression",
-    documentMode: "document_restyle",
+    documentMode: "public_procurement",
     modePolicyVersion: "1.0.0",
-    architectureStatus: "staged",
+    architectureStatus: "complete",
     chapters: [{ chapterId: "CH-01" }],
     sections: architecturePages.map((page) => ({ sectionId: page.sectionId, chapterId: "CH-01" })),
     pages: architecturePages,
   });
+  const referenceManifestPath = join(copied, "evidence", "reference-manifest.json");
+  const evidenceLedgerPath = join(root, "project", "evidence", "evidence-ledger.json");
+  await writeJson(referenceManifestPath, {
+    schemaVersion: "2.0.0",
+    projectId: "sanitized-r08-regression",
+    documentMode: "public_procurement",
+    modePolicyVersion: "1.0.0",
+    references: [],
+  });
+  await writeJson(evidenceLedgerPath, { schemaVersion: "1.0.0", claims: [], bindings: [] });
   const buildManifest = JSON.parse(await readFile(buildManifestPath, "utf8")) as Record<string, unknown>;
   buildManifest.inputs = {
     ...((buildManifest.inputs as Record<string, unknown> | undefined) ?? {}),
     pageArchitectureSha256: await sha256File(pageArchitecturePath),
+    referenceManifestSha256: await sha256File(referenceManifestPath),
   };
   await writeJson(buildManifestPath, buildManifest);
   const render = await renderDocx(copied, docxPath);
@@ -169,8 +181,10 @@ async function materialize(relativeFixture: string, prefix: string): Promise<Pro
     [buildManifestPath, docxPath],
     [render.renderManifestPath, render.pdfPath, render.pagePath],
     authoringResponsePath,
+    pageArchitecturePath,
+    referenceManifestPath,
   );
-  return { root, docxPath, buildManifestPath, geometryReportPath, pageArchitecturePath, ...render, figure, authoringResponsePath };
+  return { root, docxPath, buildManifestPath, geometryReportPath, pageArchitecturePath, referenceManifestPath, ...render, figure, authoringResponsePath };
 }
 
 async function buildDocx(copied: string, docxPath: string): Promise<void> {
@@ -282,6 +296,8 @@ async function makeRenderedProject(
   built: readonly string[],
   rendered: readonly string[],
   authoringResponsePath: string,
+  pageArchitecturePath: string,
+  referenceManifestPath: string,
 ): Promise<void> {
   const project = join(root, "project");
   await initializeProject(project, { projectId: "sanitized-r08-regression" });
@@ -315,6 +331,8 @@ async function makeRenderedProject(
           ? rendered
           : stage === "CONTENT_APPROVED"
             ? [marker, authoringResponsePath]
+            : stage === "EVIDENCE_LOCKED"
+              ? [marker, pageArchitecturePath, referenceManifestPath]
             : [marker],
       inputReceiptHashes: predecessor === undefined ? [] : [predecessor],
       output: receipt,

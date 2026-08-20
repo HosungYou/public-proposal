@@ -68,7 +68,8 @@ export {
 } from "./source.js";
 
 import { basename, resolve } from "node:path";
-import { getDocumentModePolicy, readProject, validateReferenceManifest } from "@longtable/kpp-core";
+import { realpath } from "node:fs/promises";
+import { getDocumentModePolicy, readProject, validateReferenceManifest, verifyReceipt } from "@longtable/kpp-core";
 import { describeFigureSemanticValue, type FigureSpec } from "@longtable/kpp-renderers";
 import {
   AuthoringResponseSchema,
@@ -116,7 +117,7 @@ export async function auditProposal(input: ProposalAuditInput): Promise<Proposal
   const receiptBindings = await proposalReceiptBindings(input);
   const identity = await auditIdentity(input);
   const policy = getDocumentModePolicy(identity.documentMode);
-  const named = await Promise.all([
+  const baseSlices = await Promise.all([
     namedSlice("docx_integrity", auditDocxArtifacts(input.docx)),
     namedSlice("render_integrity", auditRenderArtifacts(input.renderManifestPath, { trustedPdftotextPath: input.trustedPdftotextPath })),
     namedSlice("figure_lineage", auditFigureArtifacts(input.figures)),
@@ -133,6 +134,10 @@ export async function auditProposal(input: ProposalAuditInput): Promise<Proposal
     namedSlice("reference_integrity", auditBoundReferenceIntegrity(input)),
     auditBoundKoreanProse(input),
   ]);
+  const named = await Promise.all(baseSlices.map(async (entry): Promise<NamedSlice> => ({
+    ...entry,
+    reviewedLocators: entry.reviewedLocators ?? await reviewedLocatorsForSlice(entry.id, input),
+  })));
   const modeTraceability = await auditModeTraceabilitySlices(input, policy);
   const byId = new Map([...named, ...modeTraceability].map((entry) => [entry.id, entry]));
   for (const required of policy.requiredAuditSlices) {
@@ -277,9 +282,12 @@ function toArtifactBinding(artifact: AuditArtifact): AuditArtifactBinding {
 
 function classifyArtifact(path: string): string {
   const name = basename(path);
+  if (name === "content-approval.json" && path.includes("/receipts/")) return "content_approval_receipt";
   if (path.includes("/receipts/")) return "stage_receipt";
   if (name === "page-architecture.json") return "page_architecture";
   if (name === "reference-manifest.json") return "reference_manifest";
+  if (name === "evidence-ledger.json") return "evidence_ledger";
+  if (name === "source-ledger.json") return "source_ledger";
   if (name === "docx-geometry.json" || name === "page-observations.json") return "render_observation";
   if (name === "authoring-response.json") return "authoring_response";
   if (name.endsWith(".docx")) return "docx";
@@ -308,6 +316,10 @@ function uniqueBindings(bindings: readonly AuditArtifactBinding[]) {
 async function auditBoundFigureSemanticValue(input: ProposalAuditInput) {
   const artifacts: AuditArtifact[] = [];
   try {
+    const authoring = input.authoringResponsePath === undefined
+      ? undefined
+      : await receiptBoundAuthoringResponse(input.root, input.authoringResponsePath);
+    if (authoring !== undefined) artifacts.push(...authoring.artifacts);
     const figures = await Promise.all(input.figures.map(async (figureInput) => {
       const [specArtifact, manifestArtifact, spec] = await Promise.all([
         inspectArtifact(figureInput.specPath),
@@ -320,7 +332,7 @@ async function auditBoundFigureSemanticValue(input: ProposalAuditInput) {
     if (figures.length === 0) return makeSlice([], artifacts);
     const blocks = input.authoringResponsePath === undefined
       ? input.neighboringBlocks
-      : await readAuthoringBlocks(input.authoringResponsePath, artifacts);
+      : authoring?.blocks;
     if (blocks === undefined) {
       return makeSlice([blocked("KPP_FIGURE_VALUE_CONTENT_UNBOUND", "semantic figure의 nonDuplicateOf 검사를 위한 receipt-bound authoring response가 없습니다.", {
         expected: "authoringResponsePath",
@@ -373,16 +385,6 @@ async function auditBoundSurfaceRepetition(input: ProposalAuditInput) {
   }
 }
 
-async function readAuthoringBlocks(
-  path: string,
-  artifacts: AuditArtifact[],
-): Promise<readonly NeighboringContentBlock[]> {
-  const [artifact, raw] = await Promise.all([inspectArtifact(path), readJsonObject(path)]);
-  artifacts.push(artifact);
-  const response = AuthoringResponseSchema.parse(raw);
-  return response.blocks.map((block) => ({ blockId: block.pageId, text: block.text }));
-}
-
 async function auditBoundReferenceIntegrity(input: ProposalAuditInput): Promise<AuditSlice> {
   if (input.pageArchitecturePath === undefined || input.referenceManifestPath === undefined) {
     return makeSlice([blocked("KPP_REFERENCE_MANIFEST_UNBOUND", "reference integrity audit에 architecture/reference manifest가 모두 필요합니다.")], []);
@@ -419,11 +421,8 @@ async function auditBoundKoreanProse(input: ProposalAuditInput): Promise<NamedSl
     return { id: "korean_prose_review", slice: makeSlice([blocked("KPP_KOREAN_PROSE_UNBOUND", "Korean prose review에 receipt-bound authoring response가 없습니다.")], []) };
   }
   try {
-    const [artifact, raw] = await Promise.all([
-      inspectArtifact(input.authoringResponsePath),
-      readJsonObject(input.authoringResponsePath),
-    ]);
-    const response = AuthoringResponseSchema.parse(raw);
+    const bound = await receiptBoundAuthoringResponse(input.root, input.authoringResponsePath);
+    const response = bound.response;
     const lint = lintAuthoringResponse(response, { schemaVersion: "1.0.0", entries: [] });
     const blockers = lint.blockers.map((finding) => blocked(finding.code, finding.message, {
       path: finding.blockId === undefined ? undefined : `page:${finding.blockId}/${finding.field ?? "text"}`,
@@ -438,7 +437,7 @@ async function auditBoundKoreanProse(input: ProposalAuditInput): Promise<NamedSl
     }));
     return {
       id: "korean_prose_review",
-      slice: makeSlice(blockers, [artifact]),
+      slice: makeSlice(blockers, bound.artifacts),
       structuredFindings,
       reviewerType: "machine",
       reviewedLocators: response.blocks.map(({ pageId }) => `page:${pageId}`),
@@ -449,6 +448,51 @@ async function auditBoundKoreanProse(input: ProposalAuditInput): Promise<NamedSl
       actual: error instanceof Error ? error.message : error,
     })], []) };
   }
+}
+
+async function receiptBoundAuthoringResponse(root: string, path: string): Promise<{
+  readonly response: ReturnType<typeof AuthoringResponseSchema.parse>;
+  readonly blocks: readonly NeighboringContentBlock[];
+  readonly artifacts: readonly AuditArtifact[];
+}> {
+  const receiptPath = resolve(root, "receipts", "content-approval.json");
+  const [artifact, receiptArtifact, raw, verification] = await Promise.all([
+    inspectArtifact(path),
+    inspectArtifact(receiptPath),
+    readJsonObject(path),
+    verifyReceipt(receiptPath),
+  ]);
+  const authoringCanonical = await realpath(path);
+  const matching = (await Promise.all(verification.receipt.files.map(async (file) => ({
+    ...file,
+    canonical: await realpath(file.path).catch(() => undefined),
+  })))).find((file) => file.canonical === authoringCanonical);
+  if (!verification.valid || verification.receipt.stage !== "CONTENT_APPROVED"
+    || verification.receipt.result !== "PASS" || matching?.sha256 !== artifact.sha256) {
+    throw new Error("authoring response is not bound to a current PASS CONTENT_APPROVED receipt");
+  }
+  const response = AuthoringResponseSchema.parse(raw);
+  return {
+    response,
+    blocks: response.blocks.map((block) => ({ blockId: block.pageId, text: block.text })),
+    artifacts: [artifact, receiptArtifact],
+  };
+}
+
+async function reviewedLocatorsForSlice(id: string, input: ProposalAuditInput): Promise<readonly string[]> {
+  if (id === "reference_integrity") return ["reference:manifest", "evidence:ledger"];
+  if (id === "figure_value") {
+    const ids = await Promise.all(input.figures.map(async ({ specPath }) => {
+      const value = await readJsonObject(specPath);
+      return typeof value.figureId === "string" ? value.figureId : basename(specPath);
+    }));
+    return ids.length === 0 ? ["figure:none"] : ids.map((figureId) => `figure:${figureId}`);
+  }
+  if ((id === "page_architecture" || id === "render_repetition") && input.pageArchitecturePath !== undefined) {
+    const architecture = PageArchitectureManifestSchema.parse(await readJsonObject(input.pageArchitecturePath));
+    return architecture.pages.map(({ pageId }) => `page:${pageId}`);
+  }
+  return [];
 }
 
 export async function resolveSurfaceRepetitionAuthority(
@@ -514,7 +558,10 @@ async function auditBoundRenderedPageArchitecture(input: ProposalAuditInput) {
     )], []);
   }
   try {
-    const artifact = await inspectArtifact(path);
+    const [artifact, geometryArtifact] = await Promise.all([
+      inspectArtifact(path),
+      inspectArtifact(input.docx.geometryReportPath),
+    ]);
     const buildManifest = await readJsonObject(input.docx.buildManifestPath);
     const buildInputs = objectAt(buildManifest, "inputs");
     if (buildInputs?.pageArchitectureSha256 !== artifact.sha256) {
@@ -565,7 +612,7 @@ async function auditBoundRenderedPageArchitecture(input: ProposalAuditInput) {
       observations,
       issuerOverrideAuthorityIds: authorityIds,
     });
-    return makeSlice(slice.findings, [...slice.artifacts, artifact, ...authorityArtifacts]);
+    return makeSlice(slice.findings, [...slice.artifacts, artifact, geometryArtifact, ...authorityArtifacts]);
   } catch (error) {
     return makeSlice([blocked(
       "KPP_PAGE_ARCHITECTURE_UNBOUND",

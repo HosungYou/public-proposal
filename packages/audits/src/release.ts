@@ -1,7 +1,7 @@
 import { lstat, realpath } from "node:fs/promises";
 import { isAbsolute, join, relative, resolve, sep } from "node:path";
 import { getDocumentModePolicy, PROJECT_STATES, readProject, verifyReceipt } from "@longtable/kpp-core";
-import { CompositeAuditReceiptSchema, type DocumentMode, type ProjectState } from "@longtable/kpp-schemas";
+import { CompositeAuditReceiptSchema, type AuditSliceReceipt, type DocumentMode, type ProjectState } from "@longtable/kpp-schemas";
 import {
   blocked,
   inspectArtifact,
@@ -63,7 +63,35 @@ const UNIVERSAL_ARTIFACT_CLASSES = new Set([
   "figure_manifest",
   "project_state",
   "stage_receipt",
+  "content_approval_receipt",
+  "evidence_ledger",
+  "source_ledger",
 ]);
+
+interface SliceCoverageContract {
+  readonly artifactClasses: readonly string[];
+  readonly locatorPrefixes?: readonly string[];
+  readonly roleLocators?: readonly string[];
+}
+
+const UNIVERSAL_SLICE_COVERAGE: Readonly<Record<string, SliceCoverageContract>> = {
+  page_architecture: { artifactClasses: ["page_architecture", "render_observation"], locatorPrefixes: ["page:"] },
+  reference_integrity: { artifactClasses: ["page_architecture", "reference_manifest", "evidence_ledger"], locatorPrefixes: ["reference:", "evidence:"] },
+  render_repetition: { artifactClasses: ["page_architecture", "render_observation"], locatorPrefixes: ["page:"] },
+  figure_value: { artifactClasses: ["authoring_response", "content_approval_receipt"], locatorPrefixes: ["figure:"] },
+  korean_prose_review: { artifactClasses: ["authoring_response", "content_approval_receipt"], locatorPrefixes: ["page:"] },
+};
+
+const MODE_SLICE_ROLE_COVERAGE: Readonly<Record<string, readonly string[]>> = {
+  procurement_evaluation_crosswalk: ["procurement_evaluation_crosswalk"],
+  research_method_traceability: ["research_method", "evidence_plan"],
+  operating_model_traceability: ["party_roles", "operating_model", "next_decision"],
+  decision_traceability: ["decision_request", "alternatives", "tradeoffs", "owner_approval"],
+  risk_owner_traceability: ["risk_register", "owner_approval"],
+  source_output_traceability: ["source_inventory", "content_ledger", "mutation_report"],
+  layout_accessibility: ["layout_accessibility", "acceptance_record"],
+  mutation_integrity: ["content_ledger", "mutation_report", "acceptance_record"],
+};
 
 /** Validate a machine-readable audit receipt against current bytes and one mode policy. */
 export async function validateCompositeAuditReceiptForRelease(
@@ -98,13 +126,23 @@ export async function validateCompositeAuditReceiptForRelease(
     }));
   }
   const sliceIds = new Set(receipt.slices.map(({ sliceId }) => sliceId));
-  for (const sliceId of new Set([...UNIVERSAL_AUDIT_SLICES, ...policy.requiredAuditSlices])) {
+  const requiredSliceIds = new Set([...UNIVERSAL_AUDIT_SLICES, ...policy.requiredAuditSlices]);
+  for (const sliceId of requiredSliceIds) {
     if (!sliceIds.has(sliceId)) {
       findings.push(blocked("KPP_RELEASE_AUDIT_SLICE_MISSING", "선택한 document mode에 필요한 audit slice가 없습니다.", {
         expected: sliceId,
         actual: [...sliceIds].sort(),
       }));
     }
+  }
+  for (const slice of receipt.slices) {
+    if (!requiredSliceIds.has(slice.sliceId)) continue;
+    const universal = UNIVERSAL_SLICE_COVERAGE[slice.sliceId];
+    const roles = MODE_SLICE_ROLE_COVERAGE[slice.sliceId];
+    const contract: SliceCoverageContract | undefined = universal ?? (roles === undefined
+      ? undefined
+      : { artifactClasses: ["page_architecture"], roleLocators: roles });
+    if (contract !== undefined) validateSliceCoverage(slice, contract, findings);
   }
   if (receipt.status !== "PASS") {
     findings.push(blocked("KPP_RELEASE_AUDIT_NOT_PASS", "BLOCKED composite audit는 release에 사용할 수 없습니다.", {
@@ -150,6 +188,9 @@ export async function validateCompositeAuditReceiptForRelease(
     }
   }
   for (const binding of receipt.artifactBindings) {
+    // Project state advances after audit, and generic stage receipts are
+    // re-verified as an ordered chain by releaseProject. Immutable slice
+    // inputs and the dedicated content-approval receipt remain byte-checked.
     if (binding.artifactClass === "project_state" || binding.artifactClass === "stage_receipt") continue;
     try {
       const canonical = await realpath(binding.path);
@@ -169,7 +210,64 @@ export async function validateCompositeAuditReceiptForRelease(
       }));
     }
   }
+  const contentReceipt = receipt.artifactBindings.find(({ artifactClass }) => artifactClass === "content_approval_receipt");
+  const authoring = receipt.artifactBindings.find(({ artifactClass }) => artifactClass === "authoring_response");
+  if (contentReceipt !== undefined && authoring !== undefined) {
+    try {
+      const verification = await verifyReceipt(contentReceipt.path);
+      const authoringCanonical = await realpath(authoring.path);
+      const matching = await Promise.all(verification.receipt.files.map(async (file) => ({
+        ...file,
+        canonical: await realpath(file.path).catch(() => undefined),
+      })));
+      if (!verification.valid || verification.receipt.stage !== "CONTENT_APPROVED"
+        || verification.receipt.result !== "PASS"
+        || !matching.some((file) => file.canonical === authoringCanonical && file.sha256 === authoring.sha256)) {
+        throw new Error("receipt does not bind the current authoring response bytes");
+      }
+    } catch (error) {
+      findings.push(blocked("KPP_RELEASE_AUTHORING_RECEIPT_INVALID", "Korean prose와 figure-value 입력이 현재 PASS CONTENT_APPROVED receipt에 결속되지 않았습니다.", {
+        path: contentReceipt.path,
+        actual: error instanceof Error ? error.message : error,
+      }));
+    }
+  }
   return makeSlice(findings, artifacts);
+}
+
+function validateSliceCoverage(
+  slice: AuditSliceReceipt,
+  contract: SliceCoverageContract,
+  findings: AuditFinding[],
+): void {
+  const artifactClasses = new Set(slice.artifactBindings.map(({ artifactClass }) => artifactClass));
+  for (const requiredClass of contract.artifactClasses) {
+    if (!artifactClasses.has(requiredClass)) {
+      findings.push(blocked("KPP_RELEASE_AUDIT_SLICE_COVERAGE", "audit slice가 검토 대상 artifact class에 결속되지 않았습니다.", {
+        path: `slice:${slice.sliceId}`,
+        expected: requiredClass,
+        actual: [...artifactClasses].sort(),
+      }));
+    }
+  }
+  for (const prefix of contract.locatorPrefixes ?? []) {
+    if (!slice.reviewerScope.reviewedLocators.some((locator) => locator.startsWith(prefix))) {
+      findings.push(blocked("KPP_RELEASE_AUDIT_SLICE_COVERAGE", "audit slice가 요구된 subject locator를 검토하지 않았습니다.", {
+        path: `slice:${slice.sliceId}`,
+        expected: `${prefix}*`,
+        actual: slice.reviewerScope.reviewedLocators,
+      }));
+    }
+  }
+  for (const role of contract.roleLocators ?? []) {
+    if (!slice.reviewerScope.reviewedLocators.some((locator) => locator.endsWith(`/role:${role}`))) {
+      findings.push(blocked("KPP_RELEASE_AUDIT_SLICE_COVERAGE", "mode traceability slice가 필수 canonical role을 검토하지 않았습니다.", {
+        path: `slice:${slice.sliceId}`,
+        expected: role,
+        actual: slice.reviewerScope.reviewedLocators,
+      }));
+    }
+  }
 }
 
 export async function auditReleaseReadiness(
