@@ -35,4 +35,6 @@ Store one machine-readable record per failure with these required fields:
 - Image relationships and media files are referenced; zero-size drawings and orphan media block release.
 - Font embedding and font allowlist conformance are separate gates.
 - Every build records the canonical surface-token path, version, SHA-256, and page-role coverage.
+- Every rendered build records a byte-bound surface-audit receipt. The receipt must parse the current DOCX table grammar and deterministic SVG bytes and verify the current render-manifest hashes; a producer-declared `PASS` field without those observations is invalid.
+- Surface incidents must preserve a sanitized complex-document fixture that contains at least two native table roles and three or more semantic figure families. The fixture must include one valid case and one mutation per escaped gate.
 - A validator may not report PASS when a required count is zero, a required artifact is missing, or a downstream human approval is absent.

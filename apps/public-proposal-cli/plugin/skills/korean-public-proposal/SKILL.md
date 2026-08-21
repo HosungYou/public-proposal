@@ -36,7 +36,7 @@ Never redesign an official annex's wording, field order, signature area, or requ
 13. Create a complete `PageArchitectureManifest` before build. Follow `references/vnext-contract.md`: a chapter opener may carry the 20.5 pt large title; ordinary continuation pages carry running chapter/section context and compact headings at `<=12 pt`. Never create a standalone `Page title` shell or force a page break per subsection.
 14. Assign each ordinary page a mode-permitted role and satisfy `references/page-contract.md`. Bind `requirement -> answer -> page -> claim/proof -> status`; do not create facts, performance claims, personnel claims, or numbers without a ledger entry.
 15. Use Word-native tables. Generate text-bearing figures from structured data with deterministic scripts. Every non-decorative figure declares `semanticValueIntent`, `decisionEffect`, `nonDuplicateOf`, `encodedVariables`, claim IDs, and evidence IDs. Product Design or Figma may define composition, hierarchy, density, and topology but may not become a second authority or produce final Korean labels, tables, scores, annexes, or evidence-bearing figures.
-16. Run prose, structure, geometry, font, figure, render, PDF, evaluator-navigation, submission, and inherited-requirement regression checks. Convert verified failures into fixtures and enforced invariants using `references/incident-learning-protocol.md`.
+16. Run prose, structure, geometry, font, figure, render, PDF, evaluator-navigation, submission, and inherited-requirement regression checks. Run `audit_surface_contract.py` against the produced DOCX, deterministic SVG directory, and hash-bound render manifest; a prose `PASS` field is not a surface audit. Convert verified failures into fixtures and enforced invariants using `references/incident-learning-protocol.md`.
 17. Render every page to PNG and inspect the evaluator task on every page at print size. Block three consecutive structurally equivalent pages unless a source-bound issuer/accessibility exception passes the repetition audit.
 18. Require a mode-aware `CompositeAuditReceipt` that binds architecture, references, render observations, audit artifacts, and all required audit slices. `TECHNICAL_GATE_ONLY` never means human approval.
 19. After completion, extract reusable candidates. Never promote project-only facts or patterns without explicit human approval.
@@ -95,10 +95,11 @@ python scripts/validate_surface_system.py surface-tokens.json --check-fonts
 python scripts/proposal_slop_lint.py proposal.docx --out slop.json
 python scripts/audit_public_proposal.py proposal.docx --profile project-profile.json --out audit.json
 python scripts/audit_docx_integrity.py proposal.docx --expected-min-figures MIN --figure-ledger figure-ledger.json --allowed-font "Noto Sans CJK KR" --allowed-font "Noto Serif CJK KR" --out docx-integrity.json
+python scripts/audit_surface_contract.py proposal.docx --contract surface-contract.json --svg-dir figures --figure-manifest-dir figures --render-manifest render-manifest.json --out surface-audit.json
 python scripts/validate_submission_gate.py package.json --out gate.json
 ```
 
-Then run the canonical DOCX renderer from the `documents` skill and inspect all pages. A package is not submission-ready until every gate in `references/qa-gates.md` passes and a submission owner approves it.
+Then run the canonical DOCX renderer from the `documents` skill and inspect all pages. Bind the `surface-audit.json` SHA-256 and current render manifest into the package QA record. A package is not submission-ready until every gate in `references/qa-gates.md` passes and a submission owner approves it.
 
 Do not publish an npm `latest` release, GitHub release, or final submission package from a technical PASS. The final rendered exemplar must be human-approved before publication or external release.
 
@@ -121,6 +122,7 @@ Do not publish an npm `latest` release, GitHub release, or final submission pack
 - `scripts/validate_visual_source_packet.py`: source classification, attachment, rights, and ImageGen-boundary gate.
 - `scripts/audit_public_proposal.py`: DOCX geometry/style/table audit.
 - `scripts/audit_docx_integrity.py`: drawing, caption, media relationship, ledger, extent, and font-allowlist blocker.
+- `scripts/audit_surface_contract.py`: byte-bound DOCX table, deterministic SVG, and render-manifest surface contract audit.
 - `scripts/render_flow_figure.py`: deterministic flow-figure renderer.
 - `scripts/proposal_slop_lint.py`: placeholder, repetition, and AI-writing-pattern lint.
 - `scripts/validate_submission_gate.py`: package-level gate evaluator.

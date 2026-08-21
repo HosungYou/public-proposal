@@ -5,8 +5,8 @@
   "files": [
     {
       "path": "SKILL.md",
-      "bytes": 13681,
-      "sha256": "64009d61e35912555bdac6b523ab74b2a5fda46747bbfa30670301c78b9070f2",
+      "bytes": 14265,
+      "sha256": "accd573d83bcabc8671f33fc6109ead6429648fc20a915a6e5ebc1d683d85a54",
       "classification": "skill"
     },
     {
@@ -71,8 +71,8 @@
     },
     {
       "path": "references/incident-learning-protocol.md",
-      "bytes": 1735,
-      "sha256": "4ec46e6d378d070d1f58de7265ab1854529f6f9141199db7107ff838b5725396",
+      "bytes": 2239,
+      "sha256": "59311fe4bbfea55ad75ecf99694c999ff0652bf26b9d90fb82becd88eef8d991",
       "classification": "reference"
     },
     {
@@ -107,8 +107,8 @@
     },
     {
       "path": "references/qa-gates.md",
-      "bytes": 4820,
-      "sha256": "335508584a8b0d65e73752a3157659a5bcb3a07ae9aa01418c8dc78cbee03420",
+      "bytes": 5969,
+      "sha256": "d0824b4a80201eb338a7149f9afcfa4bd21ddf9e45b3f37fbc205f4e0b9e564a",
       "classification": "reference"
     },
     {
@@ -142,6 +142,12 @@
       "classification": "script"
     },
     {
+      "path": "scripts/audit_surface_contract.py",
+      "bytes": 15852,
+      "sha256": "c8c625e4de288b373bac684d0e42b38476f2cd30fb6d667105242080aab3a052",
+      "classification": "script"
+    },
+    {
       "path": "scripts/proposal_learning.py",
       "bytes": 21014,
       "sha256": "89afeba865f60e34bb5232c1a6b22f76b36f7aa3dc4abe01b0253cdea3dedd72",
@@ -161,8 +167,8 @@
     },
     {
       "path": "scripts/validate_submission_gate.py",
-      "bytes": 2538,
-      "sha256": "9882d73424ea050bd9f35ad7a9aa0a243bf5de0225bcf900471fd9b5ec67f238",
+      "bytes": 4998,
+      "sha256": "0a44c9093eabfb5157fa79b5b864d97a99edc91703a29068b818f7e05254804d",
       "classification": "script"
     },
     {

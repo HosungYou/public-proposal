@@ -43,6 +43,10 @@
 - Run `audit_docx_integrity.py`. Caption count, DOCX drawing count, figure-ledger count, and visible rendered-figure count must agree. Required figures equal to zero, orphan image relationships, orphan media files, and zero-size drawings are blockers.
 - Scan all document, style, table, header, footer, footnote, and endnote font declarations against the approved allowlist. Embedded but undeclared Arial, Helvetica, or other fallback fonts remain blockers unless an issuer-form exception is explicitly registered.
 - Record the canonical surface-token path, version, SHA-256, and page-role coverage in the build manifest. A reference PDF without this binding does not prove that the surface system was applied.
+- Run `audit_surface_contract.py` on the current DOCX, deterministic SVG directory, per-figure render manifests, and render manifest. It must inspect table header/body fills, repeat-header markers, paragraph alignment/line spacing, SVG outer-canvas fills, semantic row fills, and current artifact hashes from bytes.
+- The surface audit must emit `surface-audit.json` with `schemaVersion: kpp-surface-audit-1.0`, `status: PASS`, non-empty `docxSha256`, `renderManifestSha256`, `observations.bound: true`, and `findings: []`. Bind its SHA-256 into the package QA record; a caller-provided `surface_audit_status` without the receipt is not sufficient.
+- The default surface contract blocks full-canvas figure fills, zebra-striped body rows, missing neutral table headers, missing repeat headers, and stale or missing page/figure hashes. Issuer exceptions must be explicit, source-bound, and recorded in the project profile.
+- Stable blocker codes include `KPP_SURFACE_TABLE_HEADER_FILL`, `KPP_SURFACE_SVG_OUTER_CANVAS_FILL`, `KPP_SURFACE_SVG_ZEBRA_FILL`, and `KPP_SURFACE_RENDER_HASH_MISMATCH` so incidents can be promoted into deterministic fixtures.
 - Record mode-aware architecture, reference, rendered-observation, Korean prose, figure-value, repetition, and composite audit receipts. Technical PASS remains `TECHNICAL_GATE_ONLY`.
 
 ## G6 Human approval

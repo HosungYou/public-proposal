@@ -60,6 +60,7 @@ test("the public proposal plugin ships a validated package copy and rewrites the
   const sourceFiles = await listFilesRecursive(sourcePluginRoot);
   const packagedFiles = await listFilesRecursive(packagedPluginRoot);
   expect(packagedFiles).toEqual(sourceFiles);
+  expect(sourceFiles).toContain("skills/korean-public-proposal/scripts/audit_surface_contract.py");
 
   for (const relativePath of sourceFiles) {
     const [sourcePayload, packagedPayload] = await Promise.all([
