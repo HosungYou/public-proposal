@@ -98,8 +98,26 @@ def audit_tables(document_xml: bytes, contract: dict[str, object]) -> tuple[list
     body_alignment = str(table_contract.get("bodyAlignment", "left"))
     body_line = table_contract.get("bodyLine")
     allow_zebra = bool(table_contract.get("allowZebraStriping", False))
+    expected_width = _optional_int(table_contract.get("widthDxa"))
+    expected_columns_by_table = table_contract.get("columnWidthsDxaByTable", [])
+    if not isinstance(expected_columns_by_table, list):
+        expected_columns_by_table = []
 
     for table_index, table in enumerate(tables, 1):
+        table_properties = table.find("./w:tblPr", NS)
+        width_node = table_properties.find("./w:tblW", NS) if table_properties is not None else None
+        layout_node = table_properties.find("./w:tblLayout", NS) if table_properties is not None else None
+        actual_width = width_node.get(qname(NS["w"], "w")) if width_node is not None else None
+        actual_width_type = width_node.get(qname(NS["w"], "type")) if width_node is not None else None
+        actual_layout = layout_node.get(qname(NS["w"], "type")) if layout_node is not None else None
+        if expected_width is not None and (actual_width != str(expected_width) or actual_width_type != "dxa"):
+            findings.append(_finding("KPP_SURFACE_TABLE_WIDTH", f"table:{table_index}", expected={"w": expected_width, "type": "dxa"}, actual={"w": actual_width, "type": actual_width_type}))
+        if expected_width is not None and actual_layout != "fixed":
+            findings.append(_finding("KPP_SURFACE_TABLE_LAYOUT", f"table:{table_index}", expected="fixed", actual=actual_layout))
+        expected_columns = expected_columns_by_table[table_index - 1] if len(expected_columns_by_table) >= table_index else None
+        grid_columns = [column.get(qname(NS["w"], "w")) for column in table.findall("./w:tblGrid/w:gridCol", NS)]
+        if isinstance(expected_columns, list) and grid_columns != [str(value) for value in expected_columns]:
+            findings.append(_finding("KPP_SURFACE_TABLE_GRID", f"table:{table_index}", expected=expected_columns, actual=grid_columns))
         rows = table.findall("./w:tr", NS)
         if not rows:
             findings.append(_finding("KPP_SURFACE_TABLE_EMPTY", f"table:{table_index}"))
@@ -111,6 +129,7 @@ def audit_tables(document_xml: bytes, contract: dict[str, object]) -> tuple[list
 
         for cell_index, cell in enumerate(header_row.findall("./w:tc", NS), 1):
             subject = f"table:{table_index}:header:{cell_index}"
+            _audit_cell_width(cell, subject, expected_columns, cell_index, findings)
             actual = _cell_fill(cell)
             if expected_header is not None and actual != expected_header:
                 findings.append(_finding("KPP_SURFACE_TABLE_HEADER_FILL", subject, expected=expected_header, actual=actual))
@@ -123,6 +142,7 @@ def audit_tables(document_xml: bytes, contract: dict[str, object]) -> tuple[list
         for row_index, row in enumerate(rows[1:], 1):
             for cell_index, cell in enumerate(row.findall("./w:tc", NS), 1):
                 subject = f"table:{table_index}:body:{row_index}:{cell_index}"
+                _audit_cell_width(cell, subject, expected_columns, cell_index, findings)
                 actual = _cell_fill(cell)
                 body_fills.add(actual)
                 if expected_body is not None and actual != expected_body:
@@ -145,6 +165,32 @@ def audit_tables(document_xml: bytes, contract: dict[str, object]) -> tuple[list
         if not allow_zebra and len(body_fills) > 1:
             findings.append(_finding("KPP_SURFACE_TABLE_ZEBRA_FILL", f"table:{table_index}", fills=sorted(value or "none" for value in body_fills)))
     return findings, len(tables)
+
+
+def _optional_int(value: object) -> int | None:
+    if isinstance(value, bool):
+        return None
+    try:
+        return int(value) if value is not None else None
+    except (TypeError, ValueError):
+        return None
+
+
+def _audit_cell_width(
+    cell: ET.Element,
+    subject: str,
+    expected_columns: object,
+    cell_index: int,
+    findings: list[dict[str, object]],
+) -> None:
+    if not isinstance(expected_columns, list) or cell_index > len(expected_columns):
+        return
+    width_node = cell.find("./w:tcPr/w:tcW", NS)
+    actual = width_node.get(qname(NS["w"], "w")) if width_node is not None else None
+    actual_type = width_node.get(qname(NS["w"], "type")) if width_node is not None else None
+    expected = str(expected_columns[cell_index - 1])
+    if actual != expected or actual_type != "dxa":
+        findings.append(_finding("KPP_SURFACE_TABLE_CELL_WIDTH", subject, expected={"w": expected, "type": "dxa"}, actual={"w": actual, "type": actual_type}))
 
 
 def audit_svgs(svg_dir: Path, contract: dict[str, object]) -> tuple[list[dict[str, object]], list[Path]]:

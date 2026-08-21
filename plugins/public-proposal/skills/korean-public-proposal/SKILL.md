@@ -37,7 +37,7 @@ Never redesign an official annex's wording, field order, signature area, or requ
 14. Assign each ordinary page a mode-permitted role and satisfy `references/page-contract.md`. Bind `requirement -> answer -> page -> claim/proof -> status`; do not create facts, performance claims, personnel claims, or numbers without a ledger entry.
 15. Use Word-native tables. Generate text-bearing figures from structured data with deterministic scripts. Every non-decorative figure declares `semanticValueIntent`, `decisionEffect`, `nonDuplicateOf`, `encodedVariables`, claim IDs, and evidence IDs. Product Design or Figma may define composition, hierarchy, density, and topology but may not become a second authority or produce final Korean labels, tables, scores, annexes, or evidence-bearing figures.
 16. Run prose, structure, geometry, font, figure, render, PDF, evaluator-navigation, submission, and inherited-requirement regression checks. Run `audit_surface_contract.py` against the produced DOCX, deterministic SVG directory, and hash-bound render manifest; a prose `PASS` field is not a surface audit. Convert verified failures into fixtures and enforced invariants using `references/incident-learning-protocol.md`.
-17. Render every page to PNG and inspect the evaluator task on every page at print size. Block three consecutive structurally equivalent pages unless a source-bound issuer/accessibility exception passes the repetition audit.
+17. Render every page to PNG and run the independent rendered-visual gate. Inspect one full-page view and a zoomed crop of every table and figure; check page edges, table reflow, figure-label legibility, connector/node collisions, and whether the evaluator task is answerable at print size. The visual gate must record page dimensions, text/image boxes, SVG text overflow/hidden-label checks, page-density observations, surface diversity, and a per-page human-review checklist. Block three consecutive structurally equivalent pages unless a source-bound issuer/accessibility exception passes the repetition audit.
 18. Require a mode-aware `CompositeAuditReceipt` that binds architecture, references, render observations, audit artifacts, and all required audit slices. `TECHNICAL_GATE_ONLY` never means human approval.
 19. After completion, extract reusable candidates. Never promote project-only facts or patterns without explicit human approval.
 
@@ -65,6 +65,10 @@ Default ordinary-page profile when the issuer is silent:
 - White, black, gray, and one restrained navy accent.
 - Square, shadowless boxes; zero radius; gradients prohibited by default.
 - Single-column body; 65-82% content-area use on ordinary pages.
+
+### Frontier/report-readiness rubric
+
+“Frontier” is a quality gate, not a decorative style. A candidate must have chapter-continuous navigation, a compact continuation hierarchy (only the opener may use 20.5 pt), a visible evaluator question and direct answer, evidence-bound tables/figures that change a decision, mixed reader-facing surfaces, and no accidental sparse or repeated page run. Tables are not considered fixed until the DOCX contains a fixed `tblLayout`, governed `tblW`/`tblGrid`, matching cell widths, repeated header semantics, and a surface-audit receipt that independently verifies them. A deterministic figure is not considered safe until every text box stays inside the SVG viewBox and every connector label is outside node fills; producer claims or a structural PASS do not waive rendered visual QA. The final status remains `review_candidate` until a named human reviewer signs the rendered-page checklist.
 
 Treat these as one governed profile. Do not mix the old sans-only office profile into ordinary analytical pages. Preserve issuer annexes exactly, even when they use a different font or geometry.
 
@@ -96,10 +100,11 @@ python scripts/proposal_slop_lint.py proposal.docx --out slop.json
 python scripts/audit_public_proposal.py proposal.docx --profile project-profile.json --out audit.json
 python scripts/audit_docx_integrity.py proposal.docx --expected-min-figures MIN --figure-ledger figure-ledger.json --allowed-font "Noto Sans CJK KR" --allowed-font "Noto Serif CJK KR" --out docx-integrity.json
 python scripts/audit_surface_contract.py proposal.docx --contract surface-contract.json --svg-dir figures --figure-manifest-dir figures --render-manifest render-manifest.json --out surface-audit.json
+python scripts/audit_rendered_visual.py proposal.pdf --pages-dir rendered/current --svg-dir figures --contract visual-contract.json --architecture content/page-architecture.json --figure-manifest figures/build-figure-manifest.json --out visual-audit.json
 python scripts/validate_submission_gate.py package.json --out gate.json
 ```
 
-Then run the canonical DOCX renderer from the `documents` skill and inspect all pages. Bind the `surface-audit.json` SHA-256 and current render manifest into the package QA record. A package is not submission-ready until every gate in `references/qa-gates.md` passes and a submission owner approves it.
+Then run the canonical DOCX renderer from the `documents` skill and inspect all pages. Bind the `surface-audit.json`, `visual-audit.json`, and current render manifest SHA-256 values into the package QA record. `visual-audit.json` must retain `humanReviewRequired=true`; a technical PASS is not a human visual approval. A package is not submission-ready until every gate in `references/qa-gates.md` passes and a submission owner approves it.
 
 Do not publish an npm `latest` release, GitHub release, or final submission package from a technical PASS. The final rendered exemplar must be human-approved before publication or external release.
 
@@ -114,6 +119,7 @@ Do not publish an npm `latest` release, GitHub release, or final submission pack
 - `references/qa-gates.md`: compliance and submission gates.
 - `references/learning-protocol.md`: shared library, numbered rounds, promotion, and regression rules.
 - `references/incident-learning-protocol.md`: production-incident records, fixtures, invariants, and human-governed promotion.
+- `references/visual-qa-protocol.md`: independent rendered-page, table-geometry, SVG text-safety, density, and human-review protocol.
 - `references/product-design-bridge.md`: Korean visual-reference packet and Product Design/ImageGen boundary.
 - `references/page-contract.md`: evaluator-centered page completion and navigation rules.
 - `references/vnext-contract.md`: document modes, title roles, machine fields, receipts, release checklist, and review-agent boundaries.
@@ -123,6 +129,7 @@ Do not publish an npm `latest` release, GitHub release, or final submission pack
 - `scripts/audit_public_proposal.py`: DOCX geometry/style/table audit.
 - `scripts/audit_docx_integrity.py`: drawing, caption, media relationship, ledger, extent, and font-allowlist blocker.
 - `scripts/audit_surface_contract.py`: byte-bound DOCX table, deterministic SVG, and render-manifest surface contract audit.
+- `scripts/audit_rendered_visual.py`: independent PDF/PNG/SVG visual gate; catches page clipping, text/image overlap, table/figure boundary drift, connector-label hiding, topology repetition, and missing surface diversity.
 - `scripts/render_flow_figure.py`: deterministic flow-figure renderer.
 - `scripts/proposal_slop_lint.py`: placeholder, repetition, and AI-writing-pattern lint.
 - `scripts/validate_submission_gate.py`: package-level gate evaluator.

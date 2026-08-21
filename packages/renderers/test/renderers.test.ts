@@ -328,6 +328,21 @@ describe("deterministic proposal figure renderers", () => {
     expect(svg).not.toMatch(/\bx="-/);
   });
 
+  it("routes a connector around an intervening node so its label remains visible", async () => {
+    const skippedNode = {
+      ...framework,
+      data: {
+        ...framework.data,
+        edges: [{ from: "input", to: "output", label: "직접 비교" }],
+      },
+    };
+    const svg = await renderFigure(skippedNode as FigureSpec);
+
+    expect(svg).toContain('data-kpp-route="above-row"');
+    expect(svg).toMatch(/data-kpp-role="connector-label"[\s\S]*?x="[\d.]+" y="48"/);
+    expect(svg).toMatch(/data-kpp-role="connector"[\s\S]*?V 54 H/);
+  });
+
   it("uses figure-scoped SVG IDs and references across multiple figures", async () => {
     const first = await renderFigure(framework);
     const second = await renderFigure({ ...framework, figureId: "FIG-FRAMEWORK-002" });

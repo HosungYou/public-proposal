@@ -5,8 +5,8 @@
   "files": [
     {
       "path": "SKILL.md",
-      "bytes": 14265,
-      "sha256": "accd573d83bcabc8671f33fc6109ead6429648fc20a915a6e5ebc1d683d85a54",
+      "bytes": 16339,
+      "sha256": "d5522bf7feff6dfdfef6bd588fa8218fcf296469b2b4df1f30913a5694118e5a",
       "classification": "skill"
     },
     {
@@ -124,6 +124,12 @@
       "classification": "reference"
     },
     {
+      "path": "references/visual-qa-protocol.md",
+      "bytes": 2287,
+      "sha256": "ab69ed97783ff16442f976e16a0117abff69223c0fead54328999d09ec30a43c",
+      "classification": "reference"
+    },
+    {
       "path": "references/vnext-contract.md",
       "bytes": 7028,
       "sha256": "1c2298e7e8c05bbaf88e6c8b669823978ac66300ada511a2945a690694dfb0dc",
@@ -142,9 +148,15 @@
       "classification": "script"
     },
     {
+      "path": "scripts/audit_rendered_visual.py",
+      "bytes": 18652,
+      "sha256": "f0a5fb8e447b3913d51ea18b64651660ae6a0debbb3a447e1c7da8738456379f",
+      "classification": "script"
+    },
+    {
       "path": "scripts/audit_surface_contract.py",
-      "bytes": 15852,
-      "sha256": "c8c625e4de288b373bac684d0e42b38476f2cd30fb6d667105242080aab3a052",
+      "bytes": 18800,
+      "sha256": "36e3102a0375b116d64ea10a3759ae5a9c4b7569ed14f7ec847bd4d7b71c0cc4",
       "classification": "script"
     },
     {
