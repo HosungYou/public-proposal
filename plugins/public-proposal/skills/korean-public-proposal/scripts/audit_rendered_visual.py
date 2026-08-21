@@ -256,6 +256,205 @@ def audit_page_images(pages_dir: Path, page_count: int, page_width: float, page_
     return findings, observations
 
 
+def audit_render_manifest(
+    manifest_path: Path | None,
+    pdf_path: Path,
+    pages_dir: Path,
+    page_count: int,
+    contract: dict[str, Any],
+) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    """Bind the inspected PDF and page PNGs to the renderer's output receipt.
+
+    A page-count/aspect check alone can be defeated by copying one valid PNG to
+    every page slot.  The render receipt is the independent byte-level source
+    of truth for the PDF and each numbered page image.
+    """
+    visual = contract.get("visual", {}) if isinstance(contract.get("visual"), dict) else {}
+    require_manifest = bool(contract.get("requireRenderManifest", visual.get("requireRenderManifest", True)))
+    findings: list[dict[str, Any]] = []
+    observations: dict[str, Any] = {"renderManifestBound": False, "renderManifestPageCount": None}
+    if manifest_path is None:
+        if require_manifest:
+            findings.append(finding("KPP_VISUAL_RENDER_MANIFEST_REQUIRED", "renderManifest"))
+        return findings, observations
+    if not manifest_path.exists():
+        findings.append(finding("KPP_VISUAL_RENDER_MANIFEST_MISSING", str(manifest_path)))
+        return findings, observations
+    try:
+        payload = json.loads(manifest_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as error:
+        findings.append(finding("KPP_VISUAL_RENDER_MANIFEST_INVALID", str(manifest_path), reason=str(error)))
+        return findings, observations
+    output = payload.get("output") if isinstance(payload, dict) else None
+    output = output if isinstance(output, dict) else {}
+    expected_pdf = output.get("pdf") if isinstance(output.get("pdf"), dict) else None
+    expected_pages = output.get("pages") if isinstance(output.get("pages"), list) else None
+    if expected_pdf is None or expected_pages is None:
+        findings.append(finding("KPP_VISUAL_RENDER_MANIFEST_INVALID", str(manifest_path), reason="output.pdf and output.pages are required"))
+        return findings, observations
+    observations["renderManifestPageCount"] = len(expected_pages)
+    if len(expected_pages) != page_count:
+        findings.append(finding("KPP_VISUAL_RENDER_MANIFEST_PAGE_COUNT", str(manifest_path), expected=page_count, actual=len(expected_pages)))
+    if not pdf_path.is_file():
+        findings.append(finding("KPP_VISUAL_RENDER_MANIFEST_PDF_MISSING", str(pdf_path)))
+        return findings, observations
+    expected_pdf_hash = expected_pdf.get("sha256")
+    if not isinstance(expected_pdf_hash, str) or not expected_pdf_hash:
+        findings.append(finding("KPP_VISUAL_RENDER_MANIFEST_PDF_HASH_REQUIRED", str(manifest_path)))
+    elif sha256(pdf_path) != expected_pdf_hash:
+        findings.append(finding("KPP_VISUAL_RENDER_MANIFEST_PDF_HASH", str(pdf_path), expected=expected_pdf_hash, actual=sha256(pdf_path)))
+    expected_pdf_bytes = expected_pdf.get("bytes")
+    if not isinstance(expected_pdf_bytes, int) or isinstance(expected_pdf_bytes, bool):
+        findings.append(finding("KPP_VISUAL_RENDER_MANIFEST_PDF_BYTES_REQUIRED", str(manifest_path)))
+    elif pdf_path.stat().st_size != expected_pdf_bytes:
+        findings.append(finding("KPP_VISUAL_RENDER_MANIFEST_PDF_BYTES", str(pdf_path), expected=expected_pdf_bytes, actual=pdf_path.stat().st_size))
+    actual_paths = sorted(pages_dir.glob("page-*.png")) if pages_dir.is_dir() else []
+    actual_by_page: dict[int, Path] = {}
+    for actual_path in actual_paths:
+        match = re.fullmatch(r"page-(\d+)\.png", actual_path.name)
+        if match is None:
+            findings.append(finding("KPP_VISUAL_RENDER_MANIFEST_PAGE_INVALID", str(actual_path), reason="expected page-NNNN.png"))
+            continue
+        page_number = int(match.group(1))
+        if page_number in actual_by_page:
+            findings.append(finding("KPP_VISUAL_RENDER_MANIFEST_PAGE_DUPLICATE", f"page:{page_number}", path=str(actual_path)))
+        actual_by_page[page_number] = actual_path
+    expected_by_page: dict[int, dict[str, Any]] = {}
+    for entry in expected_pages:
+        if not isinstance(entry, dict):
+            findings.append(finding("KPP_VISUAL_RENDER_MANIFEST_PAGE_INVALID", str(manifest_path), entry=entry))
+            continue
+        try:
+            page_number = int(entry.get("page"))
+        except (TypeError, ValueError):
+            findings.append(finding("KPP_VISUAL_RENDER_MANIFEST_PAGE_INVALID", str(manifest_path), entry=entry))
+            continue
+        if page_number < 1 or page_number > page_count:
+            findings.append(finding("KPP_VISUAL_RENDER_MANIFEST_PAGE_INVALID", f"page:{page_number}", expectedRange=[1, page_count]))
+        if page_number in expected_by_page:
+            findings.append(finding("KPP_VISUAL_RENDER_MANIFEST_PAGE_DUPLICATE", f"page:{page_number}"))
+        expected_by_page[page_number] = entry
+        if not isinstance(entry.get("sha256"), str) or not entry.get("sha256"):
+            findings.append(finding("KPP_VISUAL_RENDER_MANIFEST_PAGE_HASH_REQUIRED", f"page:{page_number}"))
+        expected_bytes = entry.get("bytes")
+        if not isinstance(expected_bytes, int) or isinstance(expected_bytes, bool):
+            findings.append(finding("KPP_VISUAL_RENDER_MANIFEST_PAGE_BYTES_REQUIRED", f"page:{page_number}"))
+    for page_number in range(1, page_count + 1):
+        if page_number not in expected_by_page:
+            findings.append(finding("KPP_VISUAL_RENDER_MANIFEST_PAGE_MISSING", f"page:{page_number}"))
+    for page_number in range(1, page_count + 1):
+        expected = expected_by_page.get(page_number)
+        actual_path = actual_by_page.get(page_number)
+        if expected is None:
+            findings.append(finding("KPP_VISUAL_RENDER_MANIFEST_PAGE_MISSING", f"page:{page_number}"))
+            continue
+        if actual_path is None:
+            findings.append(finding("KPP_VISUAL_RENDER_MANIFEST_PAGE_IMAGE_MISSING", f"page:{page_number}", path=str(pages_dir)))
+            continue
+        expected_hash = expected.get("sha256")
+        actual_hash = sha256(actual_path)
+        if isinstance(expected_hash, str) and actual_hash != expected_hash:
+            findings.append(finding("KPP_VISUAL_RENDER_MANIFEST_PAGE_HASH", f"page:{page_number}", path=str(actual_path), expected=expected_hash, actual=actual_hash))
+        expected_bytes = expected.get("bytes")
+        if isinstance(expected_bytes, int) and not isinstance(expected_bytes, bool) and actual_path.stat().st_size != expected_bytes:
+            findings.append(finding("KPP_VISUAL_RENDER_MANIFEST_PAGE_BYTES", f"page:{page_number}", expected=expected_bytes, actual=actual_path.stat().st_size))
+    observations["renderManifestBound"] = not any(item["code"].startswith("KPP_VISUAL_RENDER_MANIFEST_") for item in findings)
+    return findings, observations
+
+
+def audit_figure_manifest(
+    manifest_path: Path | None,
+    svg_dir: Path,
+    architecture_path: Path | None,
+) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    """Verify that embedded raster figures are the locked, inspected bytes."""
+    findings: list[dict[str, Any]] = []
+    observations: dict[str, Any] = {"figureRasterCount": 0, "figureRasterBound": False}
+    expected_figure_ids: set[str] = set()
+    architecture_pages: set[str] = set()
+    if architecture_path is not None and architecture_path.exists():
+        try:
+            architecture = json.loads(architecture_path.read_text(encoding="utf-8"))
+            for page in architecture.get("pages", []) if isinstance(architecture, dict) else []:
+                if not isinstance(page, dict):
+                    continue
+                page_id = str(page.get("pageId", ""))
+                if page_id:
+                    architecture_pages.add(page_id)
+                expected_figure_ids.update(str(figure_id) for figure_id in page.get("figureIds", []) if str(figure_id))
+        except (OSError, json.JSONDecodeError) as error:
+            findings.append(finding("KPP_VISUAL_FIGURE_ARCHITECTURE_INVALID", str(architecture_path), reason=str(error)))
+    if manifest_path is None:
+        if expected_figure_ids:
+            findings.append(finding("KPP_VISUAL_FIGURE_MANIFEST_REQUIRED", "figureManifest", expected=sorted(expected_figure_ids)))
+        observations["figureRasterBound"] = not expected_figure_ids
+        return findings, observations
+    if not manifest_path.exists():
+        findings.append(finding("KPP_VISUAL_FIGURE_MANIFEST_MISSING", str(manifest_path)))
+        return findings, observations
+    if not manifest_path.is_file():
+        findings.append(finding("KPP_VISUAL_FIGURE_MANIFEST_INVALID", str(manifest_path), reason="manifest path is not a file"))
+        return findings, observations
+    try:
+        payload = json.loads(manifest_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as error:
+        findings.append(finding("KPP_VISUAL_FIGURE_MANIFEST_INVALID", str(manifest_path), reason=str(error)))
+        return findings, observations
+    figures = payload.get("figures", []) if isinstance(payload, dict) else []
+    if not isinstance(figures, list):
+        findings.append(finding("KPP_VISUAL_FIGURE_MANIFEST_INVALID", str(manifest_path), reason="figures must be an array"))
+        return findings, observations
+    figure_ids: list[str] = []
+    for figure in figures:
+        if not isinstance(figure, dict):
+            findings.append(finding("KPP_VISUAL_FIGURE_MANIFEST_INVALID", str(manifest_path), entry=figure))
+            continue
+        figure_id = str(figure.get("figureId", ""))
+        figure_ids.append(figure_id)
+        if not figure_id:
+            findings.append(finding("KPP_VISUAL_FIGURE_MANIFEST_INVALID", str(manifest_path), reason="figureId is required"))
+            continue
+        path_value = figure.get("path")
+        figure_path = Path(str(path_value)) if isinstance(path_value, str) else None
+        if figure_path is not None and not figure_path.is_absolute():
+            figure_path = manifest_path.parent / figure_path
+        if figure_path is None or not figure_path.exists():
+            findings.append(finding("KPP_VISUAL_FIGURE_RASTER_MISSING", figure_id, path=path_value))
+            continue
+        observations["figureRasterCount"] += 1
+        expected_hash = figure.get("sha256")
+        actual_hash = sha256(figure_path)
+        if not isinstance(expected_hash, str) or actual_hash != expected_hash:
+            findings.append(finding("KPP_VISUAL_FIGURE_RASTER_HASH", figure_id, expected=expected_hash, actual=actual_hash, path=str(figure_path)))
+        if str(figure.get("format", "")).lower() not in {"png", "jpg", "jpeg"}:
+            findings.append(finding("KPP_VISUAL_FIGURE_RASTER_FORMAT", figure_id, expected="png/jpeg", actual=figure.get("format")))
+        page_id = str(figure.get("pageId", ""))
+        if architecture_pages and page_id not in architecture_pages:
+            findings.append(finding("KPP_VISUAL_FIGURE_PAGE_BINDING", figure_id, pageId=page_id))
+        source_svg = svg_dir / f"{figure_id}.svg"
+        if not source_svg.exists():
+            findings.append(finding("KPP_VISUAL_FIGURE_SOURCE_MISSING", figure_id, path=str(source_svg)))
+            continue
+        try:
+            root = ET.fromstring(source_svg.read_bytes())
+            view_box = root.get("viewBox", "").split()
+            png_size = read_png_size(figure_path)
+            if len(view_box) == 4 and png_size is not None and float(view_box[2]) > 0 and float(view_box[3]) > 0:
+                svg_ratio = float(view_box[2]) / float(view_box[3])
+                png_ratio = png_size[0] / png_size[1] if png_size[1] else 0.0
+                if abs(svg_ratio - png_ratio) / svg_ratio > 0.01:
+                    findings.append(finding("KPP_VISUAL_FIGURE_RASTER_CROP", figure_id, svgRatio=svg_ratio, pngRatio=png_ratio, pngSize=list(png_size)))
+        except (OSError, ET.ParseError, ValueError):
+            findings.append(finding("KPP_VISUAL_FIGURE_SOURCE_INVALID", figure_id, path=str(source_svg)))
+    actual_figure_ids = set(figure_ids)
+    for missing_id in sorted(expected_figure_ids - actual_figure_ids):
+        findings.append(finding("KPP_VISUAL_FIGURE_MANIFEST_ENTRY_MISSING", missing_id, path=str(manifest_path)))
+    for extra_id in sorted(actual_figure_ids - expected_figure_ids) if expected_figure_ids else []:
+        findings.append(finding("KPP_VISUAL_FIGURE_MANIFEST_ENTRY_EXTRA", extra_id, path=str(manifest_path)))
+    observations["figureRasterBound"] = not any(item["code"].startswith("KPP_VISUAL_FIGURE_") for item in findings)
+    return findings, observations
+
+
 def audit_pdf_pages(pages: list[dict[str, Any]], contract: dict[str, Any]) -> tuple[list[dict[str, Any]], dict[str, Any]]:
     visual = contract.get("visual", {}) if isinstance(contract.get("visual"), dict) else {}
     margins = visual.get("safeMarginsPt", {}) if isinstance(visual.get("safeMarginsPt"), dict) else {}
@@ -269,6 +468,7 @@ def audit_pdf_pages(pages: list[dict[str, Any]], contract: dict[str, Any]) -> tu
     findings: list[dict[str, Any]] = []
     observations: dict[str, Any] = {"pageCount": len(pages), "pageDensity": [], "textBlocks": 0, "imageBlocks": 0}
     required_text = visual.get("requiredText", []) if isinstance(visual.get("requiredText"), list) else []
+    forbidden_text = visual.get("forbiddenText", []) if isinstance(visual.get("forbiddenText"), list) else []
     for page in pages:
         page_no = int(page["page"])
         width = float(page["width"])
@@ -299,6 +499,18 @@ def audit_pdf_pages(pages: list[dict[str, Any]], contract: dict[str, Any]) -> tu
             expected = str(requirement.get("text", "")).strip()
             if expected and expected not in page_text:
                 findings.append(finding("KPP_VISUAL_REQUIRED_TEXT_MISSING", f"page:{page_no}", text=expected))
+        for prohibition in forbidden_text:
+            if not isinstance(prohibition, dict) or int(prohibition.get("page", -1)) != page_no:
+                continue
+            forbidden = str(prohibition.get("text", "")).strip()
+            region_text = page_text
+            if prohibition.get("region") == "top":
+                region_text = " ".join(
+                    item["text"] for item in text_blocks
+                    if item["box"].top <= height * 0.25
+                )
+            if forbidden and forbidden in region_text:
+                findings.append(finding("KPP_VISUAL_FORBIDDEN_TEXT_PRESENT", f"page:{page_no}", text=forbidden))
     return findings, observations
 
 
@@ -345,15 +557,17 @@ def audit(args: argparse.Namespace) -> dict[str, Any]:
     pages, layout_findings = parse_pdf_layout(args.pdf)
     page_findings, page_observations = audit_pdf_pages(pages, contract)
     image_findings, image_observations = audit_page_images(args.pages_dir, len(pages), pages[0]["width"] if pages else 0, pages[0]["height"] if pages else 0)
+    render_manifest_findings, render_manifest_observations = audit_render_manifest(args.render_manifest, args.pdf, args.pages_dir, len(pages), contract)
     svg_findings, svg_observations = audit_svg_geometry(args.svg_dir)
     architecture_findings, architecture_observations = audit_frontier_architecture(args.architecture, args.figure_manifest, contract)
-    findings = layout_findings + page_findings + image_findings + svg_findings + architecture_findings
+    figure_manifest_findings, figure_manifest_observations = audit_figure_manifest(args.figure_manifest, args.svg_dir, args.architecture)
+    findings = layout_findings + page_findings + image_findings + render_manifest_findings + svg_findings + architecture_findings + figure_manifest_findings
     return {
         "schemaVersion": "kpp-rendered-visual-audit-1.0",
         "status": "BLOCKED" if findings else "PASS",
         "humanReviewRequired": True,
         "pdfSha256": sha256(args.pdf),
-        "observations": {**page_observations, **image_observations, **svg_observations, **architecture_observations},
+        "observations": {**page_observations, **image_observations, **render_manifest_observations, **svg_observations, **architecture_observations, **figure_manifest_observations},
         "findings": findings,
         "humanReviewChecklist": [
             {"page": page_no, "status": "required", "task": "문서 크기에서 텍스트·표·도식의 의미와 가독성을 직접 확인"}
@@ -370,6 +584,7 @@ def main() -> None:
     parser.add_argument("--contract", type=Path, required=True)
     parser.add_argument("--architecture", type=Path)
     parser.add_argument("--figure-manifest", type=Path)
+    parser.add_argument("--render-manifest", type=Path)
     parser.add_argument("--out", type=Path)
     args = parser.parse_args()
     report = audit(args)

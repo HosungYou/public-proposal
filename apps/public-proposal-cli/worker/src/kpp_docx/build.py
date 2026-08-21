@@ -97,6 +97,7 @@ class PlannedFigureSpec(StrictModel):
     renderer: Literal[
         "svg-gantt",
         "word-native-raci-table",
+        "svg-raci-matrix",
         "svg-2x2-matrix",
         "svg-comparison-chart",
         "svg-evidence-chain",
@@ -598,20 +599,25 @@ def build_document(request: BuildRequest) -> BuildResult:
         if block_index:
             document.add_paragraph().add_run().add_break(WD_BREAK.PAGE)
 
-        heading = document.add_paragraph(style=style_ids["heading"])
-        heading_run = heading.add_run(block.heading)
         architecture_page = architecture_by_page_id.get(planned_page.page_id)
-        title_point_size = (
-            _architecture_title_point_size(architecture_page)
-            if architecture_page is not None
-            else 16
-        )
-        format_run(
-            heading_run,
-            font=typography.heading_font,
-            half_points=round(title_point_size * 2),
-            bold=True,
-        )
+        # A chapter opener may introduce the title.  Continuation pages can
+        # explicitly choose titleScope=none so the narrative continues without
+        # a repeated page-title shell; the compact section heading remains
+        # available for issuers that explicitly request titleScope=section.
+        if architecture_page is None or architecture_page.title_scope != "none":
+            heading = document.add_paragraph(style=style_ids["heading"])
+            heading_run = heading.add_run(block.heading)
+            title_point_size = (
+                _architecture_title_point_size(architecture_page)
+                if architecture_page is not None
+                else 16
+            )
+            format_run(
+                heading_run,
+                font=typography.heading_font,
+                half_points=round(title_point_size * 2),
+                bold=True,
+            )
         for paragraph_content in block.paragraphs:
             paragraph = document.add_paragraph()
             paragraph.add_run(paragraph_content.text)

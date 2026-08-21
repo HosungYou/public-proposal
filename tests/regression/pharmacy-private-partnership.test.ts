@@ -140,22 +140,29 @@ async function runVisualAudit(root: string, pdfPath: string, renderManifestPath:
   await writeFile(contractPath, JSON.stringify({
     schemaVersion: "kpp-rendered-visual-contract-1.0",
     visual: {
+      requireRenderManifest: true,
       safeMarginsPt: { left: 72, right: 72, top: 36, bottom: 36 },
       textImageOverlapArea: 4,
       minPageDensity: 0.03,
       maxPageDensity: 0.82,
       requiredText: [
         { page: 1, text: "익명 지역 약국 협력 파일럿" },
-        { page: 2, text: "역할과 승인 경계" },
-        { page: 3, text: "운영 흐름과 중단 기준" },
-        { page: 4, text: "협력 선택지와 판단 기준" },
-        { page: 5, text: "다음 회의에서 결정할 항목" },
+        { page: 2, text: "지역 약사회 A는" },
+        { page: 3, text: "운영은 협의" },
+        { page: 4, text: "양측은 검증 속도" },
+        { page: 5, text: "다음 회의에서는" },
+      ],
+      forbiddenText: [
+        { page: 2, region: "top", text: "역할과 승인 경계" },
+        { page: 3, region: "top", text: "운영 흐름과 중단 기준" },
+        { page: 4, region: "top", text: "협력 선택지와 판단 기준" },
+        { page: 5, region: "top", text: "다음 회의에서 결정할 항목" },
       ],
     },
     frontier: {
       maxConsecutiveSameSurface: 3,
       requiredSurfaceTypes: ["figure", "mixed", "table"],
-      requiredFigureFamilies: ["svg-academic-framework", "word-native-raci-table", "svg-gantt"],
+      requiredFigureFamilies: ["svg-academic-framework", "svg-raci-matrix", "svg-gantt"],
     },
   }, null, 2), "utf8");
   const architecturePath = join(root, "content", "page-architecture.json");
@@ -174,6 +181,8 @@ async function runVisualAudit(root: string, pdfPath: string, renderManifestPath:
       architecturePath,
       "--figure-manifest",
       figureManifestPath,
+      "--render-manifest",
+      renderManifestPath,
       "--out",
       outputPath,
     ]);

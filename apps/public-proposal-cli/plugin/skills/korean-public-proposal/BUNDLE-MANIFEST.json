@@ -5,8 +5,8 @@
   "files": [
     {
       "path": "SKILL.md",
-      "bytes": 16339,
-      "sha256": "d5522bf7feff6dfdfef6bd588fa8218fcf296469b2b4df1f30913a5694118e5a",
+      "bytes": 16871,
+      "sha256": "3dc1f7b59004dc35cae56f1bc87c6b2515083738af96dd76d9658ca59b222d48",
       "classification": "skill"
     },
     {
@@ -125,8 +125,8 @@
     },
     {
       "path": "references/visual-qa-protocol.md",
-      "bytes": 2287,
-      "sha256": "ab69ed97783ff16442f976e16a0117abff69223c0fead54328999d09ec30a43c",
+      "bytes": 2906,
+      "sha256": "e6ec4bd568e7e2871185fc2dce750f5209088fced47549ca03097b7adddc8a8a",
       "classification": "reference"
     },
     {
@@ -149,8 +149,8 @@
     },
     {
       "path": "scripts/audit_rendered_visual.py",
-      "bytes": 18652,
-      "sha256": "f0a5fb8e447b3913d51ea18b64651660ae6a0debbb3a447e1c7da8738456379f",
+      "bytes": 32469,
+      "sha256": "05e8ec1a5c5a66b6027f88770637a77e6f1526aed21b921bada24a1ba0d10060",
       "classification": "script"
     },
     {

@@ -55,6 +55,7 @@ export const RequestedFigureFamilySchema = z.union([
 export const DeterministicFigureRendererSchema = z.enum([
   "svg-gantt",
   "word-native-raci-table",
+  "svg-raci-matrix",
   "svg-2x2-matrix",
   "svg-comparison-chart",
   "svg-evidence-chain",
@@ -218,7 +219,8 @@ function validateSemanticFigureMapping(
       path: ["family"],
     });
   }
-  if (figure.renderer !== expectedRenderer) {
+  const rasterRaciException = figure.family === "raci" && figure.renderer === "svg-raci-matrix";
+  if (figure.renderer !== expectedRenderer && !rasterRaciException) {
     context.addIssue({
       code: "custom",
       message: "semantic figure family and deterministic renderer must agree",

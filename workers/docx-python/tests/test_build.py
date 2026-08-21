@@ -328,6 +328,23 @@ def test_rejects_large_explicit_continuation_heading_without_override(
         BuildRequest.model_validate(payload)
 
 
+def test_omits_repeated_heading_for_none_title_scope_continuation(
+    tmp_path: Path,
+) -> None:
+    payload = sample_request(tmp_path).model_dump(by_alias=True)
+    payload["pageArchitecture"] = _page_architecture(
+        continuation=True,
+        title_point_size=None,
+        title_scope="none",
+    )
+
+    result = build_document(BuildRequest.model_validate(payload))
+    document = Document(result.docx)
+
+    assert all(paragraph.text != "1. 연구 수행방법" for paragraph in document.paragraphs)
+    assert document.paragraphs[0].text.startswith("공식 자료와 현장 검증")
+
+
 def test_allows_large_explicit_continuation_heading_with_bound_override(
     tmp_path: Path,
 ) -> None:
@@ -373,7 +390,8 @@ def test_rejects_identity_bound_override_without_permitted_issuer_authority(
 def _page_architecture(
     *,
     continuation: bool,
-    title_point_size: float,
+    title_point_size: float | None,
+    title_scope: str = "section",
     issuer_override: dict[str, object] | None = None,
 ) -> dict[str, object]:
     page: dict[str, object] = {
@@ -382,8 +400,7 @@ def _page_architecture(
         "sectionId": "SEC-01",
         "pageRole": "research_method",
         "surfaceTemplateId": "r08-research-method-v1",
-        "titleScope": "section",
-        "titlePointSize": title_point_size,
+        "titleScope": title_scope,
         "continuation": continuation,
         "dominantSurface": "table",
         "surfaceVisibility": "internal",
@@ -392,6 +409,8 @@ def _page_architecture(
         "referenceIds": ["EV-01"],
         "figureIds": [],
     }
+    if title_point_size is not None:
+        page["titlePointSize"] = title_point_size
     if issuer_override is not None:
         page["issuerOverride"] = issuer_override
     return {

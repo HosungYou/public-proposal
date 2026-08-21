@@ -61,29 +61,39 @@ const visualContractPath = join(projectRoot, "visual-contract.json");
 const visualAuditPath = join(projectRoot, "visual-audit.json");
 await writeFile(visualContractPath, `${JSON.stringify({
   schemaVersion: "kpp-rendered-visual-contract-1.0",
+  requireRenderManifest: true,
   visual: {
     safeMarginsPt: { left: 72, right: 72, top: 36, bottom: 36 },
     textImageOverlapArea: 4,
     minPageDensity: 0.10,
     maxPageDensity: 0.82,
-    requiredText: [
-      { page: 1, text: "지역돌봄 데이터 연계 실증 제안" },
-      { page: 2, text: "요구사항과 검증근거의 교차표" },
-      { page: 3, text: "운영 모델과 책임 인계" },
-      { page: 4, text: "개인정보·안전 통제 설계" },
-      { page: 5, text: "100일 실행 로드맵" },
-      { page: 6, text: "대안 비교와 선정 논리" },
-      { page: 7, text: "성과평가와 중단 관문" },
-      { page: 8, text: "다음 협의에서 결정할 항목" },
-    ],
+      requiredText: [
+        { page: 1, text: "지역돌봄 데이터 연계 실증 제안" },
+        { page: 2, text: "요구사항은 현장 적용성" },
+        { page: 3, text: "운영은 범위 합의" },
+        { page: 4, text: "동의 목적을 분리" },
+        { page: 5, text: "100일 계획은" },
+        { page: 6, text: "선정 논리는" },
+        { page: 7, text: "성과지표는" },
+        { page: 8, text: "다음 회의에서는" },
+      ],
+      forbiddenText: [
+        { page: 2, region: "top", text: "요구사항과 검증근거의 교차표" },
+        { page: 3, region: "top", text: "운영 모델과 책임 인계" },
+        { page: 4, region: "top", text: "개인정보·안전 통제 설계" },
+        { page: 5, region: "top", text: "100일 실행 로드맵" },
+        { page: 6, region: "top", text: "대안 비교와 선정 논리" },
+        { page: 7, region: "top", text: "성과평가와 중단 관문" },
+        { page: 8, region: "top", text: "다음 협의에서 결정할 항목" },
+      ],
   },
   frontier: {
     maxConsecutiveSameSurface: 3,
     requiredSurfaceTypes: ["figure", "mixed", "table"],
-    requiredFigureFamilies: ["svg-academic-framework", "word-native-raci-table", "svg-gantt"],
+    requiredFigureFamilies: ["svg-academic-framework", "svg-raci-matrix", "svg-gantt"],
   },
 }, null, 2)}\n`, "utf8");
-await runPythonAudit(VISUAL_AUDITOR, [managedPdfPath, "--pages-dir", join(projectRoot, "rendered", "current"), "--svg-dir", join(projectRoot, "figures"), "--contract", visualContractPath, "--architecture", join(projectRoot, "content", "page-architecture.json"), "--figure-manifest", join(projectRoot, "figures", "build-figure-manifest.json"), "--out", visualAuditPath]);
+await runPythonAudit(VISUAL_AUDITOR, [managedPdfPath, "--pages-dir", join(projectRoot, "rendered", "current"), "--svg-dir", join(projectRoot, "figures"), "--contract", visualContractPath, "--architecture", join(projectRoot, "content", "page-architecture.json"), "--figure-manifest", join(projectRoot, "figures", "build-figure-manifest.json"), "--render-manifest", result.rendered.manifestPath, "--out", visualAuditPath]);
 const visualAudit = JSON.parse(await readFile(visualAuditPath, "utf8")) as { status: string; findings: unknown[]; humanReviewRequired: boolean };
 if (visualAudit.status !== "PASS") throw new Error(`complex proposal visual audit did not pass: ${JSON.stringify(visualAudit.findings)}`);
 

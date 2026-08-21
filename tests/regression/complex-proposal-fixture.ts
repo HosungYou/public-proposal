@@ -188,8 +188,8 @@ export async function materializeComplexPrivatePartnership(outputRoot?: string):
       sectionId: `SEC-CD-${String(index + 1).padStart(2, "0")}`,
       pageRole: role,
       surfaceTemplateId: SURFACES[index],
-      titleScope: index === 0 ? "chapter" : "section",
-      titlePointSize: index === 0 ? 20.5 : 12,
+      titleScope: index === 0 ? "chapter" : "none",
+      ...(index === 0 ? { titlePointSize: 20.5 } : {}),
       continuation: index > 0,
       dominantSurface: dominantSurface(index, tables, figuresByPage),
       surfaceVisibility: "reader",
@@ -510,7 +510,7 @@ function pageId(index: number): string {
 }
 
 function rendererFor(family: FigureSpec["family"]): string {
-  if (family === "raci") return "word-native-raci-table";
+  if (family === "raci") return "svg-raci-matrix";
   if (family === "framework") return "svg-academic-framework";
   return "svg-gantt";
 }
