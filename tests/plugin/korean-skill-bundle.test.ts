@@ -61,6 +61,7 @@ test("the public proposal plugin ships a validated package copy and rewrites the
   const packagedFiles = await listFilesRecursive(packagedPluginRoot);
   expect(packagedFiles).toEqual(sourceFiles);
   expect(sourceFiles).toContain("skills/korean-public-proposal/scripts/audit_surface_contract.py");
+  expect(sourceFiles.some((path) => path.includes("__pycache__") || path.endsWith(".pyc"))).toBe(false);
 
   for (const relativePath of sourceFiles) {
     const [sourcePayload, packagedPayload] = await Promise.all([
@@ -94,6 +95,7 @@ test("the canonical, source, and packaged Korean skill payloads share the vNext 
 
   const skill = await readFile(join(sourceSkillRoot, "SKILL.md"), "utf8");
   const contract = await readFile(join(sourceSkillRoot, "references", "vnext-contract.md"), "utf8");
+  const proofreading = await readFile(join(sourceSkillRoot, "references", "prose-proofreading-workflow.md"), "utf8");
   for (const mode of [
     "public_procurement",
     "research_service",
@@ -121,6 +123,17 @@ test("the canonical, source, and packaged Korean skill payloads share the vNext 
   expect(contract).toMatch(/continuation.*(?:<=|at most).*12\s*pt/is);
   expect(skill).not.toContain("- Title 20.5 pt");
   expect(contract).toContain("human-approved");
+  expect(skill).toContain("references/prose-proofreading-workflow.md");
+  for (const invariant of [
+    "SemanticInvariantSet",
+    "change ledger",
+    "proposal_slop_lint.py",
+    "audit_prose_contract.py",
+    "information sufficiency",
+    "effectivenessValidated=true",
+  ]) {
+    expect(proofreading).toContain(invariant);
+  }
 });
 
 test("canonical skill parity honors an override, rejects a missing override, and records the repository fallback", async () => {

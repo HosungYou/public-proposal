@@ -30,6 +30,7 @@ const knownPosixRoots = new Set([
   "/Volumes",
 ]);
 
+removeTransientArtifacts(sourcePluginRoot);
 refreshBundleManifest(sourcePluginRoot);
 runValidator(sourcePluginRoot);
 replaceDirectory(sourcePluginRoot, packagedPluginRoot);
@@ -43,6 +44,24 @@ assertRelativePluginSource(packagedMarketplacePath, "./plugin");
 
 console.log(`Packaged public-proposal plugin copied to ${packagedPluginRoot}`);
 console.log(`Packaged marketplace manifest written to ${packagedMarketplacePath}`);
+
+function removeTransientArtifacts(root) {
+  for (const entry of readdirSync(root)) {
+    const path = join(root, entry);
+    const stats = statSync(path);
+    if (entry === "__pycache__") {
+      rmSync(path, { force: true, recursive: true });
+      continue;
+    }
+    if (stats.isDirectory()) {
+      removeTransientArtifacts(path);
+      continue;
+    }
+    if (entry.endsWith(".pyc")) {
+      rmSync(path, { force: true });
+    }
+  }
+}
 
 function refreshBundleManifest(pluginRoot) {
   const bundleRoot = join(pluginRoot, "skills", "korean-public-proposal");

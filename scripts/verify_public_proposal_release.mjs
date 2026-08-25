@@ -22,7 +22,7 @@ const PUBLIC_PROPOSAL_BINARY = join(REPOSITORY_ROOT, "apps/public-proposal-cli/d
 const KPP_BINARY = join(REPOSITORY_ROOT, "apps/kpp-cli/dist/main.js");
 const FIXTURE_SOURCE = join(REPOSITORY_ROOT, "fixtures/valid/minimal-research-proposal");
 const INSTALLER_VERSION = JSON.parse(readFileSync(join(REPOSITORY_ROOT, "apps/public-proposal-cli/package.json"), "utf8")).version;
-const KPP_VERSION = "0.2.1";
+const KPP_VERSION = "0.3.0";
 const LONGTABLE_VERSION = "0.1.72";
 const WORKER_PROTOCOL = "1.0.0";
 const REQUIRED_RESEARCH_CLASSES = ["academic_research", "research_service", "policy_research"];
@@ -662,7 +662,7 @@ case "$name" in
   python3) printf 'Python 3.12.0\n' ;;
   soffice) printf 'LibreOffice 25.2.0\n' ;;
   fc-match) printf 'NotoSansCJKkr-Regular.otf: Noto Sans CJK KR\n' ;;
-  kpp) printf '@longtable/kpp-cli 0.2.1\n' ;;
+  kpp) printf '@longtable/kpp-cli 0.3.0\n' ;;
   longtable)
     if [ "$1" = "--version" ]; then printf '@longtable/cli 0.1.72\n'
     elif printf '%s' "$*" | grep -q doctor; then printf '{"ok":true,"code":"LONGTABLE_OK"}\n'

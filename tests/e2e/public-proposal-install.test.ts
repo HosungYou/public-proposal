@@ -20,7 +20,7 @@ describe("public proposal clean installation", () => {
     expect(result.report).toMatchObject({
       ok: true,
       manifest: {
-        kppVersion: "0.2.1",
+        kppVersion: "0.3.0",
         longtableVersion: "0.1.72",
         workerProtocol: "1.0.0",
       },

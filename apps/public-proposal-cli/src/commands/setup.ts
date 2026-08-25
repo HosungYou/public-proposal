@@ -41,7 +41,7 @@ export interface SetupDependencies {
 
 const PLAN = [
   "public-proposal plugin",
-  "@longtable/kpp-cli@0.2.1",
+  "@longtable/kpp-cli@0.3.0",
   "@longtable/cli@0.1.72",
   "managed worker protocol 1.0.0",
 ];
@@ -722,7 +722,7 @@ async function buildManifest(
     packageVersion,
     kppVersion: SUPPORTED_KPP_VERSION,
     longtableVersion: SUPPORTED_LONGTABLE_VERSION,
-    pluginVersion: plugin.version ?? "0.1.0",
+    pluginVersion: plugin.version ?? "0.2.0",
     workerProtocol: WORKER_PROTOCOL_VERSION,
     installRoot,
     pluginManifestSha256: await dependencies.sha256(pluginManifestPath),

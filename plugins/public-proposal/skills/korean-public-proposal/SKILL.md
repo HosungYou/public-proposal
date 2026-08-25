@@ -21,7 +21,7 @@ Never redesign an official annex's wording, field order, signature area, or requ
 
 ## Workflow
 
-1. Initialize or resolve the shared library and numbered project package using `references/learning-protocol.md`. Resolve exactly one `documentMode`: `public_procurement`, `research_service`, `private_partnership`, `internal_decision`, or `document_restyle`.
+1. Initialize or resolve the shared library and numbered project package using `references/learning-protocol.md`. Resolve exactly one `documentMode`: `public_procurement`, `research_service`, `private_partnership`, `internal_decision`, or `document_restyle`. Then resolve its default `proseProfile` from `references/prose-profile-registry.md`; an issuer rule or verified reader task may override the default, but record the reason and protected text scope.
 2. If the project is schema v1, stop and run `kpp migrate PROJECT --apply`; migration is explicit, receipt-bearing, and never an implicit side effect of read, plan, build, audit, or release.
 3. Acquire the authoritative notice, RFP, annexes, and clarifications. Record URLs, versions, dates, and SHA-256 values in `R00_SourceLock`.
 4. Recover any prior project package, corpus manifest, rendered sample, and accepted candidate before searching again. Treat previous outputs as evidence, not canon.
@@ -32,11 +32,11 @@ Never redesign an official annex's wording, field order, signature area, or requ
 9. Extract issuer visual grammar into `R01_IssuerVisualCanon`. Record page-level observations and use boundaries. Keep it as a candidate until source, rights, visual, content, and regression gates pass.
 10. Resolve the document profile from issuer rules first. If unspecified, use `references/surface-system-spec.md` and its machine authority `assets/vector-surface-system/surface-tokens.json`, then apply `references/public-document-grammar.md`, `references/table-grammar.md`, `references/figure-grammar.md`, and `references/korean-report-visual-system.md`.
 11. Before any Product Design or ImageGen exploration, build and validate the visual source packet described in `references/product-design-bridge.md`. Attach the actual rendered Korean reference pages to every generation; URLs and text descriptions alone do not count.
-12. Build one authoritative qualitative proposal. Derive the summary and presentation only from a human-approved proposal. Keep qualification documents separate.
+12. Build one authoritative qualitative proposal. Before drafting, create a section-level `ProseBudget` that binds the reader question, direct answer, evaluation weight or decision importance, claims, proof, qualifications, citations, and permitted prose/table/figure mix. Derive the summary and presentation only from a human-approved proposal. Keep qualification documents separate.
 13. Create a complete `PageArchitectureManifest` before build. Follow `references/vnext-contract.md`: a chapter opener may carry the 20.5 pt large title; ordinary continuation pages carry running chapter/section context and compact headings at `<=12 pt`. Never create a standalone `Page title` shell or force a page break per subsection.
 14. Assign each ordinary page a mode-permitted role and satisfy `references/page-contract.md`. Bind `requirement -> answer -> page -> claim/proof -> status`; do not create facts, performance claims, personnel claims, or numbers without a ledger entry.
 15. Use Word-native tables. Generate text-bearing figures from structured data with deterministic scripts. Every non-decorative figure declares `semanticValueIntent`, `decisionEffect`, `nonDuplicateOf`, `encodedVariables`, claim IDs, and evidence IDs. Product Design or Figma may define composition, hierarchy, density, and topology but may not become a second authority or produce final Korean labels, tables, scores, annexes, or evidence-bearing figures.
-16. Run prose, structure, geometry, font, figure, render, PDF, evaluator-navigation, submission, and inherited-requirement regression checks. Run `audit_surface_contract.py` against the produced DOCX, deterministic SVG directory, and hash-bound render manifest; a prose `PASS` field is not a surface audit. Convert verified failures into fixtures and enforced invariants using `references/incident-learning-protocol.md`.
+16. Before final prose approval, run the fact-preserving editorial workflow in `references/prose-proofreading-workflow.md`: freeze semantic invariants, revise against the selected prose profile, compare the change ledger, and reject compression that removes a qualification, responsibility boundary, evidence locator, or necessary reasoning. Then run prose, structure, geometry, font, figure, render, PDF, evaluator-navigation, submission, and inherited-requirement regression checks. Run both `proposal_slop_lint.py` and mode-aware `audit_prose_contract.py`; tables and figures do not satisfy prose depth by themselves. Run `audit_surface_contract.py` against the produced DOCX, deterministic SVG directory, and hash-bound render manifest; a prose `PASS` field is not a surface audit. Convert verified failures into fixtures and enforced invariants using `references/incident-learning-protocol.md`.
 17. Render every page to PNG and run the independent rendered-visual gate. The renderer's manifest is mandatory: bind the inspected PDF hash/byte count and every numbered page PNG hash/byte count, then reject missing, swapped, stale, or incomplete entries. Bind every embedded figure PNG hash and aspect ratio to its source SVG and architecture page; classify rasterized RACI as `svg-raci-matrix` and reserve `word-native-raci-table` for a genuine Word-native table. Inspect one full-page view and a zoomed crop of every table and figure; check page edges, table reflow, figure-label legibility, connector/node collisions, and whether the evaluator task is answerable at print size. The visual gate must record page dimensions, text/image boxes, SVG text overflow/hidden-label checks, page-density observations, surface diversity, and a per-page human-review checklist. Block three consecutive structurally equivalent pages unless a source-bound issuer/accessibility exception passes the repetition audit.
 18. Require a mode-aware `CompositeAuditReceipt` that binds architecture, references, render observations, audit artifacts, and all required audit slices. `TECHNICAL_GATE_ONLY` never means human approval.
 19. After completion, extract reusable candidates. Never promote project-only facts or patterns without explicit human approval.
@@ -86,6 +86,10 @@ Final figures must pass all conditions in `references/figure-grammar.md`. Tables
 
 For Korean prose review, preserve every fact, number, date, name, citation, locator, claim ID, proof ID, and status. Bind the reviewed authoring artifact to a `CONTENT_APPROVED` receipt. Machine lint, AI-assisted Korean editing, Korean prose review, and final human content/submission approval are separate gates; none may impersonate another.
 
+Read `references/prose-profile-registry.md` before drafting or revising substantive Korean prose. Its measured public-report grammar is the shared base, while compact `public_bullet`, longer-item `public_plan`, complete-sentence `press_release`, `evaluator_proposal`, `research_analytic`, `partnership_brief`, `executive_brief`, and `official_form_locked` adapt sentence completeness, evidence density, and text volume to the reader task. Do not force research analysis, evaluator reasoning, or a press release into nominal bullets merely to resemble a review memo.
+
+When the user asks to polish, shorten, humanize, normalize, or improve Korean prose, read `references/prose-proofreading-workflow.md`. Editorial improvement is a controlled semantic transformation, not free rewriting: preserve the frozen fact set and decision logic, produce a locator-level change ledger, run both prose audits, and keep AI revision, Korean prose review, content approval, visual approval, and submission approval as separate receipts.
+
 For a conceptual, theoretical, synthesized, or project-specific research framework, read `references/academic-framework-grammar.md` before Product Design or ImageGen. Lock the research logic first; stochastic output may explore composition but never define evidence-bearing relationships.
 
 ## Required gates
@@ -97,6 +101,7 @@ python scripts/proposal_learning.py regress --root PROJECT --round-id ROUND_ID
 python scripts/validate_visual_source_packet.py visual-source-packet.json --out visual-source-gate.json
 python scripts/validate_surface_system.py surface-tokens.json --check-fonts
 python scripts/proposal_slop_lint.py proposal.docx --out slop.json
+python scripts/audit_prose_contract.py proposal.docx --profile PROSE_PROFILE --out prose-audit.json
 python scripts/audit_public_proposal.py proposal.docx --profile project-profile.json --out audit.json
 python scripts/audit_docx_integrity.py proposal.docx --expected-min-figures MIN --figure-ledger figure-ledger.json --allowed-font "Noto Sans CJK KR" --allowed-font "Noto Serif CJK KR" --out docx-integrity.json
 python scripts/audit_surface_contract.py proposal.docx --contract surface-contract.json --svg-dir figures --figure-manifest-dir figures --render-manifest render-manifest.json --out surface-audit.json
@@ -111,6 +116,8 @@ Do not publish an npm `latest` release, GitHub release, or final submission pack
 ## Resources
 
 - `references/public-document-grammar.md`: Korean public-document layout and typography.
+- `references/prose-profile-registry.md`: measured public-report prose base, mode-specific adaptations, text budgets, and review boundaries.
+- `references/prose-proofreading-workflow.md`: fact-preserving Korean editorial pass, compression checks, change ledger, dual audits, and approval receipts.
 - `references/surface-system-spec.md`: exact A4 geometry, typography, tracking, paragraph, table, chart, box, surface-recipe, Figma, and drift rules.
 - `references/table-grammar.md`: native Word table rules and allowed table types.
 - `references/figure-grammar.md`: structured-data figure types and final-use conditions.
@@ -132,6 +139,7 @@ Do not publish an npm `latest` release, GitHub release, or final submission pack
 - `scripts/audit_rendered_visual.py`: independent PDF/PNG/SVG visual gate; catches page clipping, text/image overlap, table/figure boundary drift, connector-label hiding, topology repetition, and missing surface diversity.
 - `scripts/render_flow_figure.py`: deterministic flow-figure renderer.
 - `scripts/proposal_slop_lint.py`: placeholder, repetition, and AI-writing-pattern lint.
+- `scripts/audit_prose_contract.py`: mode-aware Korean ending, rhetoric, line-length, evidence-visibility, and prose-depth audit.
 - `scripts/validate_submission_gate.py`: package-level gate evaluator.
 - `scripts/validate_surface_system.py`: canonical surface-token drift validator.
 - `assets/vector-surface-system/surface-tokens.json`: machine authority for the approved vector surface.

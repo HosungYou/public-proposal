@@ -1,6 +1,6 @@
 {
   "name": "@longtable/kpp-audits",
-  "version": "0.2.1",
+  "version": "0.3.0",
   "description": "Technical audit gates for Korean public proposal artifacts.",
   "repository": {
     "type": "git",
@@ -38,8 +38,8 @@
     "typecheck": "tsc --noEmit -p tsconfig.json"
   },
   "dependencies": {
-    "@longtable/kpp-core": "0.2.1",
-    "@longtable/kpp-renderers": "0.2.1",
-    "@longtable/kpp-schemas": "0.2.1"
+    "@longtable/kpp-core": "0.3.0",
+    "@longtable/kpp-renderers": "0.3.0",
+    "@longtable/kpp-schemas": "0.3.0"
   }
 }

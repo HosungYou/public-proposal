@@ -14,6 +14,8 @@ Use this reference as the searchable human contract for the schemas and mode pol
 | `internal_decision` | Which option should an accountable owner approve? | decision request, alternatives, tradeoffs, risks, owner approval |
 | `document_restyle` | Was presentation changed without silent content mutation? | source inventory, content ledger, accessibility, mutation report, acceptance |
 
+Each mode also resolves a `proseProfile` through `prose-profile-registry.md`. Mode selects the reader task; prose profile selects the register and density contract. Store both values in the project profile and prose audit receipt. Issuer-protected text remains outside normalization scope.
+
 A schema-v1 project is read-only until an operator crosses the explicit `kpp migrate --apply` boundary with `kpp migrate PROJECT --apply`. Migration creates a backup and receipt. Plan, build, audit, and release must not auto-migrate or silently infer a mode.
 
 ## PageArchitectureManifest
@@ -56,6 +58,8 @@ A non-decorative figure declares `semanticValueIntent`, `decisionEffect`, `nonDu
 `decorative` is an explicit exception: it carries no decision effect, encoded variable, claim, or evidence binding and cannot be used as proof. Figure family, renderer, and topology never substitute for semantic value.
 
 ## Korean prose and approval boundaries
+
+The authoring plan includes a section-level `ProseBudget`: reader question, direct answer, importance or evaluation weight, required claim/proof/qualification/citation coverage, permitted surface mix, and observed rendered density. Character and page estimates are calibrated from the issuer geometry and approved exemplars after an initial render; they are not universal quotas.
 
 A Korean prose reviewer preserves facts, numbers, dates, names, citations, locators, claim/proof IDs, and statuses. The reviewed authoring artifact is SHA-256-bound to a current `CONTENT_APPROVED` receipt before the `korean_prose_review` audit slice can pass.
 

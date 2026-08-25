@@ -529,9 +529,9 @@ async function writeManagedManifest(
   await writeFile(path, `${JSON.stringify({
     schemaVersion: "1.0.0",
     packageVersion: "0.1.0",
-    kppVersion: "0.2.1",
+    kppVersion: "0.3.0",
     longtableVersion: "0.1.72",
-    pluginVersion: "0.1.0",
+    pluginVersion: "0.2.0",
     workerProtocol: "1.0.0",
     installRoot,
     pluginManifestSha256: "sha256:plugin",

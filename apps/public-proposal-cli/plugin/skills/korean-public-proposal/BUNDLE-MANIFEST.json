@@ -5,8 +5,8 @@
   "files": [
     {
       "path": "SKILL.md",
-      "bytes": 16871,
-      "sha256": "3dc1f7b59004dc35cae56f1bc87c6b2515083738af96dd76d9658ca59b222d48",
+      "bytes": 19320,
+      "sha256": "f6dc1cc00815134ef5e30685460c18aaec7ca5ffbaf7ee554d7560b63e47a3dd",
       "classification": "skill"
     },
     {
@@ -100,6 +100,18 @@
       "classification": "reference"
     },
     {
+      "path": "references/prose-profile-registry.md",
+      "bytes": 13218,
+      "sha256": "b4e2b86729cd19c802db0e8410072d5f3e2bf5ce2695eba3ec94e44b2fba5ff0",
+      "classification": "reference"
+    },
+    {
+      "path": "references/prose-proofreading-workflow.md",
+      "bytes": 5499,
+      "sha256": "2398af9954af612177ce984a78a8842197e403c4338c60adf686865357b3de5c",
+      "classification": "reference"
+    },
+    {
       "path": "references/public-document-grammar.md",
       "bytes": 3686,
       "sha256": "cc99bc86868c01e434e5d07179a88b590849d4de18dcead976fff8c717c916e2",
@@ -131,14 +143,20 @@
     },
     {
       "path": "references/vnext-contract.md",
-      "bytes": 7028,
-      "sha256": "1c2298e7e8c05bbaf88e6c8b669823978ac66300ada511a2945a690694dfb0dc",
+      "bytes": 7700,
+      "sha256": "01827c6bb7ce9ccc58b81f055ee07d5c3f9b5f4aced500f3c8f84f8d4495facb",
       "classification": "reference"
     },
     {
       "path": "scripts/audit_docx_integrity.py",
       "bytes": 8027,
       "sha256": "94df046d9e64ad8776d477dddc61d5c688611de68c26127a5c8209d3ca6c411b",
+      "classification": "script"
+    },
+    {
+      "path": "scripts/audit_prose_contract.py",
+      "bytes": 16908,
+      "sha256": "d31e87a8c1cb6e45eadaa2e248968d052543c00a031e72bd3b0da394aed49ab2",
       "classification": "script"
     },
     {
