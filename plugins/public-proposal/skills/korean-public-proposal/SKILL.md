@@ -76,6 +76,8 @@ For HWPX-native work, use the pinned engine above and its `geomto.py`, `yoyak.py
 
 Build HWPX and DOCX from the same governed content model. Record a derivative manifest that binds the source content, KPP profile, template, output hashes, and page-by-page review. If the host cannot render HWPX, report that visual parity as unavailable and keep the artifact at `review_candidate`; structural HWPX validation and a polished DOCX render do not impersonate HWPX visual approval.
 
+Run `scripts/audit_derivative_parity.py` against the locked design authority, HWPX-primary artifact manifest, and DOCX-derivative artifact manifest. A matching text hash or page count is not parity. The derivative audit must recompute artifact and page hashes, compare rendered pixels within the authority threshold, and enforce page geometry, fonts, tables, figures, and required furniture.
+
 When portable font normalization is required, render both the normalized HWPX and the DOCX derivative from the same governed source. Require normalized-text equality, page-count parity, and page-by-page visual review; a matching page count alone does not excuse an orphan page, clipped table, missing signature block, or unreadable fallback font.
 
 Default ordinary-page profile when the issuer is silent:
@@ -128,6 +130,7 @@ python scripts/audit_public_proposal.py proposal.docx --profile project-profile.
 python scripts/audit_docx_integrity.py proposal.docx --expected-min-figures MIN --figure-ledger figure-ledger.json --allowed-font "Noto Sans CJK KR" --allowed-font "Noto Serif CJK KR" --out docx-integrity.json
 python scripts/audit_surface_contract.py proposal.docx --contract surface-contract.json --svg-dir figures --figure-manifest-dir figures --render-manifest render-manifest.json --out surface-audit.json
 python scripts/audit_rendered_visual.py proposal.pdf --pages-dir rendered/current --svg-dir figures --contract visual-contract.json --architecture content/page-architecture.json --figure-manifest figures/build-figure-manifest.json --out visual-audit.json
+python scripts/audit_derivative_parity.py design-authority.json hwpx-artifact-manifest.json docx-artifact-manifest.json --out derivative-parity.json
 python scripts/validate_submission_gate.py package.json --out gate.json
 ```
 
@@ -160,6 +163,7 @@ Do not publish an npm `latest` release, GitHub release, or final submission pack
 - `scripts/audit_docx_integrity.py`: drawing, caption, media relationship, ledger, extent, and font-allowlist blocker.
 - `scripts/audit_surface_contract.py`: byte-bound DOCX table, deterministic SVG, and render-manifest surface contract audit.
 - `scripts/audit_rendered_visual.py`: independent PDF/PNG/SVG visual gate; catches page clipping, text/image overlap, table/figure boundary drift, connector-label hiding, topology repetition, and missing surface diversity.
+- `scripts/audit_derivative_parity.py`: HWPX-primary versus DOCX-derivative authority, content, hash, rendered-pixel, geometry, font, table, figure, and furniture gate.
 - `scripts/render_flow_figure.py`: deterministic flow-figure renderer.
 - `scripts/proposal_slop_lint.py`: placeholder, repetition, and AI-writing-pattern lint.
 - `scripts/audit_prose_contract.py`: mode-aware Korean ending, rhetoric, line-length, evidence-visibility, and prose-depth audit.
