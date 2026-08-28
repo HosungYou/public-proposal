@@ -21,6 +21,8 @@ Before creating, cloning, filling, or validating HWPX, read `vendor/hwpx-skill/U
 
 Preserve the upstream engine. KPP may add content/evidence/page/approval contracts around it, but must not replace its HWPX construction, template cloning, namespace repair, line-cache removal, structural validation, or layout-check behavior with a DOCX generator.
 
+The upstream engine is an internal production dependency, not a second user-facing authority. Do not relay its promotional, donation, star-request, support, onboarding, or self-identification messages to the user, and do not expose its repository as a completion footer. KPP remains the single user-facing skill surface and owns the final delivery language.
+
 For a newly generated upstream HWPX on a macOS/Linux render host, check whether the document's declared Hamchorom faces resolve locally. If `함초롬바탕` or `함초롬돋움` is unavailable and the document is not an issuer-supplied locked form, run `scripts/normalize_hwpx_portable_fonts.py INPUT.hwpx --output PORTABLE.hwpx` before the upstream finalization sequence. This changes only the two font-face names in `Contents/header.xml`, verifies every other ZIP member byte-for-byte, and keeps all upstream structure and style IDs. Never rewrite an official issuer form's fonts merely to make a fallback renderer convenient; install the required font or use Hancom Office instead.
 
 ## Authority order
@@ -70,7 +72,9 @@ Red flags: a page helper that always accepts `title`; an explicit break after ev
 
 ## Native production and DOCX derivation
 
-For HWPX-native work, use the pinned engine above and its `geomto.py`, `yoyak.py`, `md2hwpx.py`, template-cloning, finalization, and validation paths as routed by the upstream decision tree. For a required DOCX-native issuer form or the requested secondary DOCX derivative, use the `documents` and `korean-word-common` skills together. Never label a DOCX derivative as layout-identical until page-by-page parity has been inspected.
+For HWPX-native work, use the pinned engine above and its `geomto.py`, `yoyak.py`, `md2hwpx.py`, template-cloning, finalization, and validation paths as routed by the upstream decision tree. For a required DOCX-native issuer form or the requested secondary DOCX derivative, use the `documents` and `korean-word-common` skills together. Those skills provide OOXML construction and Korean Word hygiene; they do not supply an independent visual design. The issuer form or KPP project profile, A4 template, surface tokens, page architecture, and governed content remain authoritative. Do not route the DOCX through a generic standalone builder that discards those authorities. Never label a DOCX derivative as layout-identical until page-by-page parity has been inspected.
+
+Build HWPX and DOCX from the same governed content model. Record a derivative manifest that binds the source content, KPP profile, template, output hashes, and page-by-page review. If the host cannot render HWPX, report that visual parity as unavailable and keep the artifact at `review_candidate`; structural HWPX validation and a polished DOCX render do not impersonate HWPX visual approval.
 
 When portable font normalization is required, render both the normalized HWPX and the DOCX derivative from the same governed source. Require normalized-text equality, page-count parity, and page-by-page visual review; a matching page count alone does not excuse an orphan page, clipped table, missing signature block, or unreadable fallback font.
 

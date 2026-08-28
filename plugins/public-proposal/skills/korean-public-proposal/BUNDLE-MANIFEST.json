@@ -11,8 +11,8 @@
     },
     {
       "path": "SKILL.md",
-      "bytes": 22190,
-      "sha256": "126e7620d5a80cd9bf7d08ea94a8f26acb2a5a6433a5bb942d83c987b4509232",
+      "bytes": 23281,
+      "sha256": "284c682dee6f0432308121751bb299acd0f8fc579d70729d00cf690f1efe099a",
       "classification": "skill"
     },
     {
@@ -179,8 +179,8 @@
     },
     {
       "path": "scripts/audit_surface_contract.py",
-      "bytes": 18800,
-      "sha256": "36e3102a0375b116d64ea10a3759ae5a9c4b7569ed14f7ec847bd4d7b71c0cc4",
+      "bytes": 19034,
+      "sha256": "450c32b440aa893b550b536f454d312a70223b2124cb0bb6eedbd968b8c9d96b",
       "classification": "script"
     },
     {

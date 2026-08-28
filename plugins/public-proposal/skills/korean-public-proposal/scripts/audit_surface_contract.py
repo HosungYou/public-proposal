@@ -94,8 +94,8 @@ def audit_tables(document_xml: bytes, contract: dict[str, object]) -> tuple[list
     expected_header = normalize_fill(str(table_contract.get("headerFill", "")))
     expected_body = normalize_fill(str(table_contract.get("bodyFill", "")))
     require_repeat = bool(table_contract.get("repeatHeader", True))
-    header_alignment = str(table_contract.get("headerAlignment", "center"))
-    body_alignment = str(table_contract.get("bodyAlignment", "left"))
+    header_alignment = table_contract.get("headerAlignment")
+    body_alignment = table_contract.get("bodyAlignment")
     body_line = table_contract.get("bodyLine")
     allow_zebra = bool(table_contract.get("allowZebraStriping", False))
     expected_width = _optional_int(table_contract.get("widthDxa"))
@@ -135,7 +135,7 @@ def audit_tables(document_xml: bytes, contract: dict[str, object]) -> tuple[list
                 findings.append(_finding("KPP_SURFACE_TABLE_HEADER_FILL", subject, expected=expected_header, actual=actual))
             for paragraph in cell.findall("./w:p", NS):
                 actual_alignment = _paragraph_value(paragraph, "jc")
-                if actual_alignment != header_alignment:
+                if isinstance(header_alignment, str) and actual_alignment != header_alignment:
                     findings.append(_finding("KPP_SURFACE_TABLE_HEADER_ALIGNMENT", subject, expected=header_alignment, actual=actual_alignment))
 
         body_fills: set[str | None] = set()
@@ -149,7 +149,7 @@ def audit_tables(document_xml: bytes, contract: dict[str, object]) -> tuple[list
                     findings.append(_finding("KPP_SURFACE_TABLE_BODY_FILL", subject, expected=expected_body, actual=actual))
                 for paragraph in cell.findall("./w:p", NS):
                     actual_alignment = _paragraph_value(paragraph, "jc")
-                    if actual_alignment != body_alignment:
+                    if isinstance(body_alignment, str) and actual_alignment != body_alignment:
                         findings.append(_finding("KPP_SURFACE_TABLE_BODY_ALIGNMENT", subject, expected=body_alignment, actual=actual_alignment))
                     if isinstance(body_line, dict):
                         spacing = paragraph.find("./w:pPr/w:spacing", NS)
@@ -280,7 +280,9 @@ def audit_render_manifest(
                     expected_by_path[_artifact_key(path, manifest_path.parent)] = output["sha256"]
             except (OSError, json.JSONDecodeError):
                 findings.append(_finding("KPP_SURFACE_RENDER_FIGURE_MANIFEST_INVALID", str(manifest_for_figure)))
-    if not expected_by_path:
+    svg_contract = contract.get("svg", {}) if isinstance(contract.get("svg"), dict) else {}
+    figures_required = bool(svg_contract.get("required", bool(svg_paths)))
+    if figures_required and not expected_by_path:
         findings.append(_finding("KPP_SURFACE_RENDER_FIGURE_MANIFEST_MISSING", "figures"))
     if set(expected_by_path) != set(actual_by_path):
         findings.append(_finding("KPP_SURFACE_RENDER_FIGURE_SET_MISMATCH", "figures", expected=sorted(expected_by_path), actual=sorted(actual_by_path)))

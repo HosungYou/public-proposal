@@ -105,6 +105,10 @@ test("the Korean authority declares the pinned HWPX engine as its native default
   expect(skill).toContain("vendor/hwpx-skill/UPSTREAM-SKILL.md");
   expect(skill).toContain("source-native routing");
   expect(skill).toContain("normalize_hwpx_portable_fonts.py");
+  expect(skill).toContain("not a second user-facing authority");
+  expect(skill).toContain("Do not relay its promotional, donation, star-request");
+  expect(skill).toContain("do not supply an independent visual design");
+  expect(skill).toContain("Do not route the DOCX through a generic standalone builder");
 });
 
 test("portable HWPX font normalization preserves every unrelated ZIP member", async () => {
