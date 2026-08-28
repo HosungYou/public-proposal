@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { spawn } from "node:child_process";
-import { cp, mkdir, open, readFile, realpath, rename, rm, stat, writeFile } from "node:fs/promises";
+import { cp, mkdir, open, readFile, readdir, realpath, rename, rm, stat, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
 import type { ProcessResult } from "./contracts.js";
 
@@ -60,6 +60,10 @@ export const nodeFs = {
   mkdir: async (path: string) => {
     await mkdir(path, { recursive: true });
   },
+  listDir: async (path: string) => (await readdir(path, { withFileTypes: true }))
+    .filter((entry) => entry.isDirectory())
+    .map((entry) => entry.name)
+    .sort(),
   readFile: async (path: string) => readFile(path, "utf8"),
   realpath,
   remove: async (path: string) => {

@@ -5,6 +5,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from docx.document import Document as DocumentType
+from docx.enum.table import WD_CELL_VERTICAL_ALIGNMENT
+from docx.enum.text import WD_ALIGN_PARAGRAPH
 from docx.oxml import OxmlElement
 from docx.oxml.ns import qn
 from docx.table import Table, _Cell
@@ -45,6 +47,9 @@ def add_native_table(
     table = document.add_table(rows=1, cols=len(headers))
     table.autofit = False
     _apply_table_properties(table, contract, column_widths_dxa)
+    repeat_header = OxmlElement("w:tblHeader")
+    repeat_header.set(qn("w:val"), "true")
+    table.rows[0]._tr.get_or_add_trPr().append(repeat_header)
 
     for index, value in enumerate(headers):
         _set_cell_text(
@@ -136,6 +141,16 @@ def _set_cell_text(
     width.set(qn("w:type"), "dxa")
     cell_properties.insert(0, width)
 
+    existing_shading = cell_properties.find(qn("w:shd"))
+    if existing_shading is not None:
+        cell_properties.remove(existing_shading)
+    shading = OxmlElement("w:shd")
+    shading.set(qn("w:val"), "clear")
+    shading.set(qn("w:color"), "auto")
+    shading.set(qn("w:fill"), "E8EEF5" if header else "FFFFFF")
+    cell_properties.append(shading)
+    cell.vertical_alignment = WD_CELL_VERTICAL_ALIGNMENT.CENTER
+
     paragraph = cell.paragraphs[0]
     paragraph.clear()
     run = paragraph.add_run(value)
@@ -147,6 +162,9 @@ def _set_cell_text(
             half_points=18,
             bold=True,
         )
+        paragraph.alignment = WD_ALIGN_PARAGRAPH.CENTER
     else:
-        paragraph.style = "KPP Table Body"
         format_body_paragraph(paragraph, typography)
+        # Preserve the governed body rhythm without reclassifying table prose as body copy.
+        paragraph.style = "KPP Table Body"
+        paragraph.alignment = WD_ALIGN_PARAGRAPH.LEFT

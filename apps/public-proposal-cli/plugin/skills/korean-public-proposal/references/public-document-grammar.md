@@ -15,7 +15,7 @@ Use issuer-specified paper size, margins, fonts, section order, page limits, cov
 | Role | Size | Rhythm |
 |---|---:|---|
 | Cover title | 24-28 pt bold | 1.0 lines; 10 pt after |
-| Page title | 20.5 pt bold | 1.12 lines; -0.045 em |
+| Chapter-opener title | 20.5 pt bold | 1.12 lines; -0.045 em |
 | Section | 12 pt bold | 1.22 lines; 5 mm before, 2 mm after |
 | Subsection | 9.2 pt bold | 1.25 lines; 3.5 mm before, 1.4 mm after |
 | Body | 9.3 pt | 1.52 lines; -0.004 em; 2.3 mm after |
@@ -27,10 +27,11 @@ Use issuer-specified paper size, margins, fonts, section order, page limits, cov
 
 - Use `Ⅰ. -> 1. -> 가. -> 1) -> ①`.
 - Start a new page for a top-level chapter, not for every subsection.
+- Use the large title only on the cover or chapter opener. An ordinary continuation page keeps running chapter/section context and uses a section heading at 12 pt or smaller; it does not restart as a standalone page-title shell.
 - Default to one text column. Let full-width tables and figures occupy the column.
 - Use roughly 65-82% of the printable area on ordinary pages. Merge thin sections instead of leaving a large empty lower half.
 - Put an evaluator question, direct answer, and evidence IDs in a restrained navigation row when useful.
-- Avoid English all-cap kickers, rounded cards, gradients, decorative metric strips, and repeated five-box layouts.
+- Avoid English all-cap kickers, rounded cards, gradients, decorative metric strips, and repeated five-box layouts. Three consecutive pages with the same title/lead/body/judgment topology are a release blocker unless a verified issuer/accessibility exception is source-bound.
 
 ## Cover and chapter opener
 

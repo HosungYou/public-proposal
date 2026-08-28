@@ -26,7 +26,7 @@ test("documentation exposes a runnable ephemeral install and doctor path", async
   for (const document of [readme, install, packageReadme]) {
     expect(document).toContain(EPHEMERAL_SETUP);
     expect(document).toContain(EPHEMERAL_DOCTOR);
-    expect(document).toContain("@longtable/public-proposal@0.1.3");
+    expect(document).toContain("@longtable/public-proposal@0.2.2");
     expect(document).not.toContain("not yet available from the public npm registry");
   }
 
@@ -70,24 +70,24 @@ test("manual global fallback is distinct and the matrix records exact compatibil
   const { install, matrix } = await readInstallationDocs();
   const [, manualFallback] = install.split("## Manual fallback");
 
-  expect(manualFallback).toContain("npm install --global @longtable/public-proposal@0.1.3 @longtable/kpp-cli@0.2.1 @longtable/cli@0.1.72");
+  expect(manualFallback).toContain("npm install --global @longtable/public-proposal@0.2.2 @longtable/kpp-cli@0.3.0 @longtable/cli@0.1.72");
   expect(manualFallback).toMatch(GLOBAL_DOCTOR_LINE);
   expect(manualFallback).toContain("This section alone assumes the globally installed `public-proposal` executable.");
   expect(manualFallback).toContain("npx @longtable/public-proposal uninstall");
   expect(manualFallback).toContain("npx @longtable/public-proposal update");
   expect(matrix).toMatchObject({
     installerPackage: "@longtable/public-proposal",
-    installerVersion: "0.1.3",
+    installerVersion: "0.2.2",
     kppPackage: "@longtable/kpp-cli",
-    kppVersion: "0.2.1",
+    kppVersion: "0.3.0",
     longtablePackage: "@longtable/cli",
     longtableVersion: "0.1.72",
     workerProtocol: "1.0.0",
     pluginId: "public-proposal",
-    pluginVersion: "0.1.0",
+    pluginVersion: "0.2.2",
     node: ">=22 <27",
     python: ">=3.11 <3.15",
-    verifiedAt: "2026-08-18",
+    verifiedAt: "2026-08-28",
   });
   expect(matrix.runtimeRangeEnforcement).toContain("do not enforce Node or Python semver ranges");
 });

@@ -1,0 +1,104 @@
+{
+  "schemaVersion": "1.0.0",
+  "capturedAt": "2026-08-25T09:28:14Z",
+  "registry": "https://registry.npmjs.org/",
+  "releaseCommit": "92cd84d1b7c2eb7371e535de303bff2a2ed79d30",
+  "status": "PASS",
+  "packages": [
+    {
+      "name": "@longtable/kpp-schemas",
+      "version": "0.3.0",
+      "distTags": { "latest": "0.3.0", "beta": "0.2.2" },
+      "integrity": "sha512-CWuFnWgbkVBL28Pw1gWAyuGB6r/52cS5oTabEBcCy3z48lEhoo/GzRSuOJ652rxT4CYQvJMiebGqQAuU1tUZTQ==",
+      "tarball": "https://registry.npmjs.org/@longtable/kpp-schemas/-/kpp-schemas-0.3.0.tgz"
+    },
+    {
+      "name": "@longtable/kpp-core",
+      "version": "0.3.0",
+      "distTags": { "latest": "0.3.0", "beta": "0.2.2" },
+      "integrity": "sha512-ESuE0xGlU6CitO7Z/3HPbwnEVOPOYXzKQeA3i0Xl339Iak4m493Uezcusd3Ibe7q7tk0XyN85d6DNeLZghUdUg==",
+      "tarball": "https://registry.npmjs.org/@longtable/kpp-core/-/kpp-core-0.3.0.tgz"
+    },
+    {
+      "name": "@longtable/kpp-renderers",
+      "version": "0.3.0",
+      "distTags": { "latest": "0.3.0", "beta": "0.2.2" },
+      "integrity": "sha512-sNB/dpbMBLrcBLDP+A71jIp5thyfUUMcIv6G/T0j8r8PpbkjnRPZCPEDDnhy9m6hGAASBASlkIxasOU66JXN4Q==",
+      "tarball": "https://registry.npmjs.org/@longtable/kpp-renderers/-/kpp-renderers-0.3.0.tgz"
+    },
+    {
+      "name": "@longtable/kpp-audits",
+      "version": "0.3.0",
+      "distTags": { "latest": "0.3.0", "beta": "0.2.2" },
+      "integrity": "sha512-1lwMqK4EwSRUgM5bq6ETWjwPBgpzpmL5Ek6ODLYLjWCyRksKYHyCB+RCvOdXxaFfhKCrS2tkJ24Uty6RrO1R7g==",
+      "tarball": "https://registry.npmjs.org/@longtable/kpp-audits/-/kpp-audits-0.3.0.tgz"
+    },
+    {
+      "name": "@longtable/kpp-cli",
+      "version": "0.3.0",
+      "distTags": { "latest": "0.3.0", "beta": "0.2.2" },
+      "integrity": "sha512-9irajqt+HEO9V/J9oNzza6ZMXqByB7BV0qi3uwm8EzlhWdQR6UEUZySTsWV09GxvxVM2iuGeU1JLOD4YiYcwJw==",
+      "tarball": "https://registry.npmjs.org/@longtable/kpp-cli/-/kpp-cli-0.3.0.tgz"
+    },
+    {
+      "name": "@longtable/public-proposal",
+      "version": "0.2.0",
+      "distTags": { "latest": "0.2.0", "beta": "0.2.0-beta.0" },
+      "integrity": "sha512-u+COUG7VTBm90yPdUulL/zbOng1D8LPXWlSm6Zy88NvAj/2c+OzsxjRXLQxJ8fECeLpplsfhwLHX3jc4340FeA==",
+      "tarball": "https://registry.npmjs.org/@longtable/public-proposal/-/public-proposal-0.2.0.tgz"
+    }
+  ],
+  "verification": {
+    "releaseVerifier": {
+      "ok": true,
+      "localArtifactVerified": true,
+      "releaseReady": true,
+      "reportPath": "/var/folders/gw/qzbrhcv921z34q2twh9931tr0000gn/T/public-proposal-release-verification-zshLMX/verification-report.json",
+      "registryPackage": "@longtable/public-proposal@0.2.0",
+      "registryAvailable": true,
+      "tarballBytes": 28023778,
+      "tarballIntegrity": "sha512-u+COUG7VTBm90yPdUulL/zbOng1D8LPXWlSm6Zy88NvAj/2c+OzsxjRXLQxJ8fECeLpplsfhwLHX3jc4340FeA==",
+      "tarballSha256": "sha256:9de348ca166ef65aaa9ca42c8ae16092455f6e7afb31f9edff2a9f5257757a84",
+      "tarballFiles": 101
+    },
+    "registryCleanInstall": {
+      "root": "/tmp/public-proposal-registry-qa.xCWQ4i",
+      "setupExitCode": 0,
+      "setupCode": "PP_OK",
+      "doctorExitCode": 0,
+      "doctorCode": "PP_OK",
+      "packageVersion": "0.2.0",
+      "kppVersion": "0.3.0",
+      "longtableVersion": "0.1.72",
+      "pluginVersion": "0.2.0",
+      "workerProtocol": "1.0.0"
+    },
+    "humanProseEvaluation": {
+      "receipt": "docs/architecture/kpp-prose-human-ab-receipt.json",
+      "status": "PASS",
+      "vnextWins": 3,
+      "baselineWins": 0,
+      "effectivenessValidated": true
+    }
+  },
+  "boundaries": {
+    "npmPublished": true,
+    "githubPushed": false,
+    "gitTagsCreated": false,
+    "githubReleasesCreated": false,
+    "contentApproval": false,
+    "visualApproval": false,
+    "submissionApproval": false
+  },
+  "rollback": {
+    "strategy": "move latest dist-tags to the recorded pre-release versions; never unpublish",
+    "commands": [
+      "npm dist-tag add @longtable/public-proposal@0.1.3 latest",
+      "npm dist-tag add @longtable/kpp-cli@0.2.1 latest",
+      "npm dist-tag add @longtable/kpp-core@0.2.1 latest",
+      "npm dist-tag add @longtable/kpp-schemas@0.2.1 latest",
+      "npm dist-tag add @longtable/kpp-renderers@0.2.1 latest",
+      "npm dist-tag add @longtable/kpp-audits@0.2.1 latest"
+    ]
+  }
+}

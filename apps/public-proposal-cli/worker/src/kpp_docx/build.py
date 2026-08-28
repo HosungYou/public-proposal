@@ -73,8 +73,18 @@ class PlannedFigureSpec(StrictModel):
         "process_flow",
     ] = Field(alias="dataShape")
     decision_task: str = Field(alias="decisionTask", min_length=1)
-    claim_ids: list[str] = Field(alias="claimIds", min_length=1)
-    evidence_ids: list[str] = Field(alias="evidenceIds", min_length=1)
+    semantic_value_intent: Literal[
+        "data_evidence",
+        "causal_mechanism",
+        "decision_tradeoff",
+        "operational_control",
+        "decorative",
+    ] = Field(alias="semanticValueIntent")
+    decision_effect: str = Field(alias="decisionEffect")
+    non_duplicate_of: list[str] = Field(alias="nonDuplicateOf")
+    encoded_variables: list[str] = Field(alias="encodedVariables")
+    claim_ids: list[str] = Field(alias="claimIds")
+    evidence_ids: list[str] = Field(alias="evidenceIds")
     family: Literal[
         "gantt",
         "raci",
@@ -87,6 +97,7 @@ class PlannedFigureSpec(StrictModel):
     renderer: Literal[
         "svg-gantt",
         "word-native-raci-table",
+        "svg-raci-matrix",
         "svg-2x2-matrix",
         "svg-comparison-chart",
         "svg-evidence-chain",
@@ -94,12 +105,50 @@ class PlannedFigureSpec(StrictModel):
         "svg-flow",
     ]
 
+    @model_validator(mode="after")
+    def validate_semantic_value_bindings(self) -> "PlannedFigureSpec":
+        if self.semantic_value_intent == "decorative":
+            if any((self.decision_effect, self.non_duplicate_of, self.encoded_variables, self.claim_ids, self.evidence_ids)):
+                raise ValueError("decorative figures must not carry evidentiary bindings")
+            return self
+        if (not self.decision_effect.strip() or not self.non_duplicate_of or not self.encoded_variables
+                or not self.claim_ids or not self.evidence_ids):
+            raise ValueError("non-decorative figures require semantic value and evidentiary bindings")
+        return self
+
+
+class IssuerOverride(StrictModel):
+    document_mode: Literal[
+        "public_procurement",
+        "research_service",
+        "private_partnership",
+        "internal_decision",
+        "document_restyle",
+    ] = Field(alias="documentMode")
+    mode_policy_version: str = Field(alias="modePolicyVersion", min_length=1)
+    rule_id: str | None = Field(alias="ruleId", min_length=1, default=None)
+    source_id: str | None = Field(alias="sourceId", min_length=1, default=None)
+    reason: str = Field(min_length=1)
+
+    @model_validator(mode="after")
+    def validate_locator(self) -> "IssuerOverride":
+        if (self.rule_id is None) == (self.source_id is None):
+            raise ValueError("issuerOverride must identify exactly one ruleId or sourceId")
+        return self
+
+
+class SurfaceRepetitionException(StrictModel):
+    rule_id: Literal["issuer_mandatory_form", "accessibility_repeated_instruction"] = Field(alias="ruleId")
+    source_id: str = Field(alias="sourceId", min_length=1)
+    source_sha256: str = Field(alias="sourceSha256", pattern=SHA256_PATTERN)
+    rationale: str = Field(min_length=1)
+
 
 class FigureSpec(StrictModel):
     figure_id: str = Field(alias="figureId", min_length=1)
     requirement_id: str = Field(alias="requirementId", min_length=1)
     page_id: str = Field(alias="pageId", min_length=1)
-    claim_ids: list[str] = Field(alias="claimIds", min_length=1)
+    claim_ids: list[str] = Field(alias="claimIds")
     renderer: str = Field(min_length=1)
     path: str = Field(min_length=1)
     sha256: str = Field(pattern=SHA256_PATTERN)
@@ -121,6 +170,50 @@ class PagePlanItem(StrictModel):
     surface_template_id: str = Field(alias="surfaceTemplateId", min_length=1)
     claim_ids: list[str] = Field(alias="claimIds")
     figure_specs: list[PlannedFigureSpec] = Field(alias="figureSpecs")
+
+
+class PageArchitectureItem(StrictModel):
+    page_id: str = Field(alias="pageId", min_length=1)
+    chapter_id: str = Field(alias="chapterId", min_length=1)
+    section_id: str = Field(alias="sectionId", min_length=1)
+    page_role: str = Field(alias="pageRole", min_length=1)
+    surface_template_id: str = Field(alias="surfaceTemplateId", min_length=1)
+    title_scope: Literal["cover", "chapter", "section", "surface", "none"] = Field(
+        alias="titleScope"
+    )
+    title_point_size: float | None = Field(alias="titlePointSize", gt=0, le=72, default=None)
+    continuation: bool
+    dominant_surface: Literal["narrative", "table", "figure", "mixed", "form"] = Field(
+        alias="dominantSurface"
+    )
+    surface_visibility: Literal["internal", "reader"] = Field(alias="surfaceVisibility")
+    evaluation_question: str | None = Field(alias="evaluationQuestion", min_length=1, default=None)
+    direct_answer: str | None = Field(alias="directAnswer", min_length=1, default=None)
+    claim_ids: list[str] = Field(alias="claimIds")
+    proof_ids: list[str] = Field(alias="proofIds")
+    reference_ids: list[str] = Field(alias="referenceIds")
+    figure_ids: list[str] = Field(alias="figureIds")
+    continuity_from_page_id: str | None = Field(alias="continuityFromPageId", min_length=1, default=None)
+    continuity_to_page_id: str | None = Field(alias="continuityToPageId", min_length=1, default=None)
+    issuer_override: IssuerOverride | None = Field(alias="issuerOverride", default=None)
+    surface_repetition_exception: SurfaceRepetitionException | None = Field(alias="surfaceRepetitionException", default=None)
+
+
+class PageArchitecture(StrictModel):
+    schema_version: str = Field(alias="schemaVersion", min_length=1)
+    project_id: str = Field(alias="projectId", min_length=1)
+    document_mode: Literal[
+        "public_procurement",
+        "research_service",
+        "private_partnership",
+        "internal_decision",
+        "document_restyle",
+    ] = Field(alias="documentMode")
+    mode_policy_version: str = Field(alias="modePolicyVersion", min_length=1)
+    architecture_status: Literal["staged", "complete"] = Field(alias="architectureStatus")
+    chapters: list[dict[str, object]]
+    sections: list[dict[str, object]]
+    pages: list[PageArchitectureItem] = Field(min_length=1)
 
 
 class PagePlan(StrictModel):
@@ -230,6 +323,10 @@ class BuildRequest(StrictModel):
     project_id: str = Field(alias="projectId", min_length=1)
     template: TemplateRef
     page_plan: PagePlan = Field(alias="pagePlan")
+    page_architecture: PageArchitecture | None = Field(alias="pageArchitecture", default=None)
+    issuer_override_authority_ids: list[str] = Field(
+        alias="issuerOverrideAuthorityIds", default_factory=list
+    )
     evidence_ledger: EvidenceLedger = Field(alias="evidenceLedger")
     content_blocks: list[ContentBlock] = Field(alias="contentBlocks", min_length=1)
     figure_manifest: FigureManifest = Field(alias="figureManifest")
@@ -246,6 +343,41 @@ class BuildRequest(StrictModel):
             raise ValueError("content block pageId values must be unique")
         if set(content_page_ids) != set(page_ids):
             raise ValueError("content blocks must map exactly to pagePlan pages")
+
+        if self.page_architecture is not None:
+            architecture = self.page_architecture
+            architecture_page_ids = [page.page_id for page in architecture.pages]
+            if architecture.project_id != self.project_id:
+                raise KppBuildError(
+                    "KPP_PAGE_ARCHITECTURE_IDENTITY",
+                    "pageArchitecture projectId must match BuildRequest",
+                )
+            if architecture_page_ids != page_ids:
+                raise KppBuildError(
+                    "KPP_PAGE_ARCHITECTURE_PAGES",
+                    "pageArchitecture pages must match pagePlan order exactly",
+                )
+            for page in architecture.pages:
+                override = page.issuer_override
+                override_bound = (
+                    override is not None
+                    and override.document_mode == architecture.document_mode
+                    and override.mode_policy_version == architecture.mode_policy_version
+                    and _issuer_override_authority_id(override)
+                    in self.issuer_override_authority_ids
+                )
+                if override is not None and not override_bound:
+                    raise KppBuildError(
+                        "KPP_PAGE_ISSUER_OVERRIDE_UNBOUND",
+                        "issuerOverride must match pageArchitecture mode identity",
+                    )
+                point_size = _architecture_title_point_size(page)
+                if page.continuation and point_size > 12 and not override_bound:
+                    raise KppBuildError(
+                        "KPP_PAGE_TITLE_CONTINUATION_LARGE",
+                        f"{page.page_id} continuation heading is "
+                        f"{point_size}pt; maximum is 12pt",
+                    )
 
         figures = {figure.figure_id: figure for figure in self.figure_manifest.figures}
         if len(figures) != len(self.figure_manifest.figures):
@@ -443,13 +575,22 @@ def build_document(request: BuildRequest) -> BuildResult:
 
     typography = _typography_contract(request.surface_profile.typography)
     style_ids = install_governed_styles(document, typography)
+    furniture = _document_furniture(request)
     for section in document.sections:
+        if section.header.paragraphs and section.header.paragraphs[0].runs:
+            section.header.paragraphs[0].runs[0].text = furniture["header"]
+        if section.footer.paragraphs and section.footer.paragraphs[0].runs:
+            # Replace only the label run so the PAGE field remains intact.
+            section.footer.paragraphs[0].runs[0].text = furniture["footer"]
         for paragraph in section.header.paragraphs:
             format_navigation_paragraph(paragraph, typography)
         for paragraph in section.footer.paragraphs:
             format_navigation_paragraph(paragraph, typography)
     table_contract = _table_contract(request.surface_profile.table)
     content_by_page_id = {block.page_id: block for block in request.content_blocks}
+    architecture_by_page_id = {
+        page.page_id: page for page in request.page_architecture.pages
+    } if request.page_architecture is not None else {}
     figure_by_id = {figure.figure_id: figure for figure in request.figure_manifest.figures}
     table_records: list[dict[str, object]] = []
 
@@ -458,14 +599,25 @@ def build_document(request: BuildRequest) -> BuildResult:
         if block_index:
             document.add_paragraph().add_run().add_break(WD_BREAK.PAGE)
 
-        heading = document.add_paragraph(style=style_ids["heading"])
-        heading_run = heading.add_run(block.heading)
-        format_run(
-            heading_run,
-            font=typography.heading_font,
-            half_points=32,
-            bold=True,
-        )
+        architecture_page = architecture_by_page_id.get(planned_page.page_id)
+        # A chapter opener may introduce the title.  Continuation pages can
+        # explicitly choose titleScope=none so the narrative continues without
+        # a repeated page-title shell; the compact section heading remains
+        # available for issuers that explicitly request titleScope=section.
+        if architecture_page is None or architecture_page.title_scope != "none":
+            heading = document.add_paragraph(style=style_ids["heading"])
+            heading_run = heading.add_run(block.heading)
+            title_point_size = (
+                _architecture_title_point_size(architecture_page)
+                if architecture_page is not None
+                else 16
+            )
+            format_run(
+                heading_run,
+                font=typography.heading_font,
+                half_points=round(title_point_size * 2),
+                bold=True,
+            )
         for paragraph_content in block.paragraphs:
             paragraph = document.add_paragraph()
             paragraph.add_run(paragraph_content.text)
@@ -635,6 +787,45 @@ def _typography_contract(profile: TypographyProfile) -> TypographyContract:
         line_height=profile.line_height,
         character_spacing_pt=profile.character_spacing_pt,
     )
+
+
+def _architecture_title_point_size(page: PageArchitectureItem) -> float:
+    if page.title_point_size is not None:
+        return page.title_point_size
+    return 20.5 if page.title_scope in ("cover", "chapter") else 12
+
+
+def _document_furniture(request: BuildRequest) -> dict[str, str]:
+    mode = request.page_architecture.document_mode if request.page_architecture is not None else None
+    if mode is None:
+        first_role = request.page_plan.pages[0].page_role
+        if first_role in {"research_method", "research_question", "evidence_plan", "limitations", "utilization_plan"}:
+            mode = "research_service"
+        elif first_role in {"mutual_value", "party_roles", "operating_model", "collaboration_options", "next_decision"}:
+            mode = "private_partnership"
+        elif first_role in {"decision_request", "alternatives", "tradeoffs", "risk_register", "owner_approval"}:
+            mode = "internal_decision"
+        elif first_role in {"source_inventory", "content_ledger", "mutation_report", "layout_accessibility", "acceptance_record"}:
+            mode = "document_restyle"
+        else:
+            mode = "public_procurement"
+    mode_label = {
+        "public_procurement": "공공조달 제안서",
+        "research_service": "연구용역 제안서",
+        "private_partnership": "민간협력 제안서",
+        "internal_decision": "내부 의사결정 문서",
+        "document_restyle": "문서 재구성 검증본",
+    }[mode]
+    return {
+        "header": f"{mode_label} | 형식·구조 검증본",
+        "footer": f"{request.content_blocks[0].heading} | ",
+    }
+
+
+def _issuer_override_authority_id(override: IssuerOverride) -> str:
+    if override.source_id is not None:
+        return f"source:{override.source_id}"
+    return f"rule:{override.rule_id}"
 
 
 def _table_contract(profile: TableProfile) -> TableContract:

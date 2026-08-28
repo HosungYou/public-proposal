@@ -1,4 +1,36 @@
 export {
+  DOCUMENT_MODES,
+  DocumentModeSchema,
+  type DocumentMode,
+} from "./document-mode.js";
+export {
+  IssuerOverrideSchema,
+  ArchitectureStatusSchema,
+  PageArchitectureManifestSchema,
+  PageArchitecturePageSchema,
+  PageSurfaceVisibilitySchema,
+  PageTitleScopeSchema,
+  SurfaceRepetitionExceptionRuleSchema,
+  SurfaceRepetitionExceptionSchema,
+  type IssuerOverride,
+  type ArchitectureStatus,
+  type PageArchitectureManifest,
+  type PageArchitecturePage,
+  type PageSurfaceVisibility,
+  type SurfaceRepetitionException,
+  type PageTitleScope,
+} from "./page-architecture.js";
+export {
+  ReferenceClassSchema,
+  ReferenceManifestSchema,
+  ReferenceRecordSchema,
+  ReferenceTargetSchema,
+  type ReferenceClass,
+  type ReferenceManifest,
+  type ReferenceRecord,
+  type ReferenceTarget,
+} from "./reference-manifest.js";
+export {
   EvidenceBindingSchema,
   EvidenceItemSchema,
   EvidenceLedgerSchema,
@@ -82,6 +114,7 @@ export {
   DeterministicFigureRendererSchema,
   FigureDataShapeSchema,
   FigureIntentSchema,
+  FigureSemanticValueIntentSchema,
   LockedResearchLogicSchema,
   RequestedFigureFamilySchema,
   RequirementFigureSpecSchema,
@@ -96,6 +129,7 @@ export {
   type DeterministicFigureRenderer,
   type FigureDataShape,
   type FigureIntent,
+  type FigureSemanticValueIntent,
   type LockedResearchLogic,
   type RequestedFigureFamily,
   type RequirementFigureSpec,
@@ -112,9 +146,13 @@ export {
   ApprovalPolicySchema,
   ProposalClassSchema,
   ProjectSchema,
+  ProjectV1Schema,
+  ProjectV2Schema,
   ProjectStateSchema,
   type ProposalClass,
   type ProjectRecord,
+  type ProjectV1Record,
+  type ProjectV2Record,
   type ProjectState,
 } from "./project.js";
 export {
@@ -125,6 +163,26 @@ export {
   type ReceiptFile,
   type ReceiptResult,
 } from "./receipt.js";
+export {
+  AuditStatusSchema,
+  AuditFindingSeveritySchema,
+  AuditReviewerTypeSchema,
+  AuditInputHashSchema,
+  AuditArtifactBindingSchema,
+  AuditRuleFindingSchema,
+  AuditReviewerScopeSchema,
+  AuditSliceReceiptSchema,
+  CompositeAuditReceiptSchema,
+  type AuditStatus,
+  type AuditFindingSeverity,
+  type AuditReviewerType,
+  type AuditInputHash,
+  type AuditArtifactBinding,
+  type AuditRuleFinding,
+  type AuditReviewerScope,
+  type AuditSliceReceipt,
+  type CompositeAuditReceipt,
+} from "./audit-receipt.js";
 export {
   ResearchLockSchema,
   type ResearchLock,

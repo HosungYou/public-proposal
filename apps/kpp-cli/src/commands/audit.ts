@@ -1,11 +1,12 @@
 import { lstat, mkdir, open, readFile, rm, stat } from "node:fs/promises";
-import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
+import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
   KppError,
   advanceProject,
   executeFile,
   sha256File,
+  verifyReceipt,
   verifyProjectState,
   writeReceipt,
 } from "@longtable/kpp-core";
@@ -67,6 +68,9 @@ export async function auditProject(rootInput: string, options: AuditProjectOptio
   ]);
   const auditPath = join(root, "audit", "audit.json");
   const geometryPath = join(root, "audit", "docx-geometry.json");
+  const pageArchitecturePath = await regularFile(root, join(root, "content", "page-architecture.json"), "KPP_AUDIT_ARCHITECTURE_INVALID");
+  const referenceManifestPath = await regularFile(root, join(root, "evidence", "reference-manifest.json"), "KPP_AUDIT_REFERENCE_MANIFEST_INVALID");
+  const authoringResponsePath = await receiptBoundAuthoringResponse(root);
   if (await lstat(auditPath).catch(() => undefined) !== undefined) {
     throw new KppError("KPP_AUDIT_EXISTS", "기존 audit 결과를 덮어쓸 수 없습니다.", { path: auditPath, stage: "RENDERED" });
   }
@@ -76,6 +80,9 @@ export async function auditProject(rootInput: string, options: AuditProjectOptio
     const report = await auditProposal({
       root,
       docx: { docxPath, buildManifestPath, geometryReportPath: geometryPath },
+      pageArchitecturePath,
+      referenceManifestPath,
+      authoringResponsePath,
       renderManifestPath,
       trustedPdftotextPath: options.trustedPdftotextPath,
       figures: await Promise.all(options.figures.map(async (figure) => ({
@@ -91,7 +98,7 @@ export async function auditProject(rootInput: string, options: AuditProjectOptio
     const receiptPath = join(root, "receipts", "audit.json");
     await writeReceipt({
       stage: "AUDITED",
-      files: [auditPath, geometryPath],
+      files: [auditPath, geometryPath, pageArchitecturePath, referenceManifestPath, authoringResponsePath],
       inputReceiptHashes: [await sha256File(join(root, "receipts", "render.json"))],
       output: receiptPath,
     });
@@ -105,6 +112,19 @@ export async function auditProject(rootInput: string, options: AuditProjectOptio
     }
     throw error;
   }
+}
+
+async function receiptBoundAuthoringResponse(root: string): Promise<string> {
+  const receiptPath = join(root, "receipts", "content-approval.json");
+  const verification = await verifyReceipt(receiptPath);
+  const record = verification.receipt.files.find((file) => basename(file.path) === "authoring-response.json");
+  if (!verification.valid || record === undefined) {
+    throw new KppError("KPP_AUDIT_CONTENT_UNBOUND", "audit은 CONTENT_APPROVED receipt에 결속된 authoring response가 필요합니다.", {
+      path: receiptPath,
+      stage: "RENDERED",
+    });
+  }
+  return regularFile(root, record.path, "KPP_AUDIT_CONTENT_UNBOUND");
 }
 
 function parseFigureOption(value: string): FigureAuditInput {

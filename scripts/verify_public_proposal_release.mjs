@@ -22,7 +22,7 @@ const PUBLIC_PROPOSAL_BINARY = join(REPOSITORY_ROOT, "apps/public-proposal-cli/d
 const KPP_BINARY = join(REPOSITORY_ROOT, "apps/kpp-cli/dist/main.js");
 const FIXTURE_SOURCE = join(REPOSITORY_ROOT, "fixtures/valid/minimal-research-proposal");
 const INSTALLER_VERSION = JSON.parse(readFileSync(join(REPOSITORY_ROOT, "apps/public-proposal-cli/package.json"), "utf8")).version;
-const KPP_VERSION = "0.2.1";
+const KPP_VERSION = "0.3.0";
 const LONGTABLE_VERSION = "0.1.72";
 const WORKER_PROTOCOL = "1.0.0";
 const REQUIRED_RESEARCH_CLASSES = ["academic_research", "research_service", "policy_research"];
@@ -52,10 +52,21 @@ export async function runCleanEnvironmentFixture() {
   const manifest = await readJson(installationPath).catch(() => null);
   const pluginManifestPath = join(installRoot, "plugin", ".codex-plugin", "plugin.json");
   const marketplacePath = join(installRoot, "marketplace", ".agents", "plugins", "marketplace.json");
-  const registeredSkills = {
-    longtable: await readFile(join(installRoot, "marketplace", "plugin", "skills", "longtable", "SKILL.md"), "utf8").then(() => true).catch(() => false),
-    longtableResearch: await readFile(join(installRoot, "marketplace", "plugin", "skills", "longtable-research", "SKILL.md"), "utf8").then(() => true).catch(() => false),
-  };
+  const registeredSkills = (await readdir(join(installRoot, "marketplace", "plugin", "skills"), { withFileTypes: true }).catch(() => []))
+    .filter((entry) => entry.isDirectory())
+    .filter((entry) => existsSync(join(installRoot, "marketplace", "plugin", "skills", entry.name, "SKILL.md")))
+    .map((entry) => entry.name)
+    .sort();
+  const hwpxEngine = await readJson(join(
+    installRoot,
+    "marketplace",
+    "plugin",
+    "skills",
+    "korean-public-proposal",
+    "vendor",
+    "hwpx-skill",
+    "INSTALLATION.json",
+  )).catch(() => null);
   const pluginManifest = await readJson(pluginManifestPath).catch(() => null);
   const marketplace = await readJson(marketplacePath).catch(() => null);
   const marketplaceEntry = marketplace?.plugins?.find?.((entry) => entry?.name === "public-proposal");
@@ -79,8 +90,10 @@ export async function runCleanEnvironmentFixture() {
       && pluginManifest?.name === "public-proposal"
       && marketplaceEntry?.source?.source === "local"
       && marketplaceEntry?.source?.path === "./plugin"
-      && registeredSkills.longtable
-      && registeredSkills.longtableResearch
+      && registeredSkills.length === 1
+      && registeredSkills[0] === "korean-public-proposal"
+      && hwpxEngine?.commit === "96a2633f23a08f707679d7e212ebdc59948260e6"
+      && hwpxEngine?.verified === true
       && isolation.violations.length === 0
       && isolation.deniedWriteProbe.exitCode !== 0,
     fixtureRoot,
@@ -94,6 +107,7 @@ export async function runCleanEnvironmentFixture() {
       marketplaceSource: marketplaceEntry?.source?.path ?? null,
     },
     registeredSkills,
+    hwpxEngine,
     envelopes: { setup: setupEnvelope, publicDoctor: publicDoctorEnvelope, kppDoctor: kppDoctorEnvelope, longtableDoctor: longtableDoctorEnvelope },
     isolation,
     commands,
@@ -109,6 +123,11 @@ export async function runProposalClassFixture({ proposalClass, researchLock, aca
   const fixtureRoot = await mkdtemp(join(tmpdir(), `public-proposal-${proposalClass}-`));
   const fixture = join(fixtureRoot, "fixture");
   const projectRoot = join(fixtureRoot, "project");
+  const documentMode = REQUIRED_RESEARCH_CLASSES.includes(proposalClass)
+    ? "research_service"
+    : proposalClass === "document_restyle"
+      ? "document_restyle"
+      : "public_procurement";
   const isolated = await prepareIsolation(fixtureRoot, join(fixtureRoot, "install"));
   const commands = [];
   await cp(FIXTURE_SOURCE, fixture, { recursive: true, force: false });
@@ -124,7 +143,7 @@ export async function runProposalClassFixture({ proposalClass, researchLock, aca
     return proposalFixtureResult(fixtureRoot, parseEnvelope(longtableDoctor.stdout, longtableDoctor.stderr), null, isolated, commands);
   }
   const init = await runKpp(
-    ["init", projectRoot, "--project-id", projectId, "--proposal-class", proposalClass, "--json"],
+    ["init", projectRoot, "--project-id", projectId, "--proposal-class", proposalClass, "--document-mode", documentMode, "--json"],
     isolated,
   );
   commands.push(init);
@@ -158,15 +177,21 @@ export async function runProposalClassFixture({ proposalClass, researchLock, aca
   await materializeTemplate(join(fixture, "requirement-decisions-template.json"), decisionsPath, {
     __METHOD_EVIDENCE_PATH__: evidencePath,
   });
-  if (academicEvidence) {
+  if (documentMode === "public_procurement" || academicEvidence) {
     const decisions = await readJson(decisionsPath);
     const requirement = decisions.requirements?.requirements?.[0];
     const evidenceBinding = decisions.requirements?.evidenceBindings?.[0];
     if (requirement === undefined || evidenceBinding === undefined) {
       throw new Error("Academic evidence fixture is missing its locked requirement binding.");
     }
-    requirement.pageRole = "academic_evidence";
-    evidenceBinding.targetPageRole = "academic_evidence";
+    if (documentMode === "public_procurement") {
+      requirement.pageRole = "requirement_response";
+      evidenceBinding.targetPageRole = "requirement_response";
+    }
+    if (academicEvidence) {
+      requirement.pageRole = "academic_evidence";
+      evidenceBinding.targetPageRole = "academic_evidence";
+    }
     await writeFile(decisionsPath, `${JSON.stringify(decisions, null, 2)}\n`, "utf8");
   }
   await requireKpp([
@@ -596,6 +621,7 @@ function writeGuardArguments(fixtureRoot) {
   const readableRoots = [
     ...canonicalVariants(REPOSITORY_ROOT),
     ...canonicalVariants(fixtureRoot).map(temporaryTraversalRoot),
+    "/usr",
   ];
   const fixtureRoots = canonicalVariants(fixtureRoot);
   return [
@@ -651,7 +677,7 @@ case "$name" in
   python3) printf 'Python 3.12.0\n' ;;
   soffice) printf 'LibreOffice 25.2.0\n' ;;
   fc-match) printf 'NotoSansCJKkr-Regular.otf: Noto Sans CJK KR\n' ;;
-  kpp) printf '@longtable/kpp-cli 0.2.1\n' ;;
+  kpp) printf '@longtable/kpp-cli 0.3.0\n' ;;
   longtable)
     if [ "$1" = "--version" ]; then printf '@longtable/cli 0.1.72\n'
     elif printf '%s' "$*" | grep -q doctor; then printf '{"ok":true,"code":"LONGTABLE_OK"}\n'

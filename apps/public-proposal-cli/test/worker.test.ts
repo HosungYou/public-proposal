@@ -19,9 +19,9 @@ describe("managed DOCX worker", () => {
     await writeJson(manifestPath, {
       schemaVersion: "1.0.0",
       packageVersion: "0.1.0",
-      kppVersion: "0.2.1",
+      kppVersion: "0.3.0",
       longtableVersion: "0.1.72",
-      pluginVersion: "0.1.0",
+      pluginVersion: "0.2.2",
       workerProtocol: "1.0.0",
       installRoot: root,
       pluginManifestSha256: "sha256:plugin",
@@ -114,9 +114,9 @@ function manifestFor(root: string, worker: { executable: string; sha256: string;
   return {
     schemaVersion: "1.0.0",
     packageVersion: "0.1.0",
-    kppVersion: "0.2.1",
+    kppVersion: "0.3.0",
     longtableVersion: "0.1.72",
-    pluginVersion: "0.1.0",
+    pluginVersion: "0.2.2",
     workerProtocol: "1.0.0",
     installRoot: root,
     pluginManifestSha256: "sha256:plugin",

@@ -1,7 +1,7 @@
 import { z } from "zod";
 import { SemanticFigureSpecSchema } from "./figure-spec.js";
 
-const IdentifierSchema = z.string().min(1);
+const IdentifierSchema = z.string().trim().min(1);
 
 export const PagePlanItemSchema = z.object({
   pageId: IdentifierSchema,

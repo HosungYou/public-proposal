@@ -2,21 +2,33 @@ import { afterEach, expect, test } from "vitest";
 import { auditProposal } from "@longtable/kpp-audits";
 import { cleanupFixtures, materializeR08Reference, mutateTableMargin, projectPath, readEmbeddedDocxMedia, rebindDocxHash, rebindFigureOutputHash, runGeometry } from "./fixture-harness.js";
 import { readFile, stat, writeFile } from "node:fs/promises";
+import { verifyReceipt } from "@longtable/kpp-core";
 import { join } from "node:path";
 
 afterEach(cleanupFixtures);
 
-async function audit(fixture: Awaited<ReturnType<typeof materializeR08Reference>>, suffix: string) {
+async function audit(fixture: Awaited<ReturnType<typeof materializeR08Reference>>, suffix: string, includeReferences = true) {
   const result = await auditProposal({
     root: await projectPath(fixture), docx: { docxPath: fixture.docxPath, buildManifestPath: fixture.buildManifestPath, geometryReportPath: fixture.geometryReportPath },
+    pageArchitecturePath: fixture.pageArchitecturePath,
+    ...(includeReferences ? { referenceManifestPath: fixture.referenceManifestPath } : {}),
+    authoringResponsePath: fixture.authoringResponsePath,
     renderManifestPath: fixture.renderManifestPath, trustedPdftotextPath: fixture.extractorPath, figures: [fixture.figure], outputPath: `${fixture.root}/audit/${suffix}.json`,
   });
   return result;
 }
 
-test("synthetic reference renders its fixture-backed visual surface", async () => {
+test("synthetic reference renders its fixture-backed visual surface as an accepted v2 reference", async () => {
   const fixture = await materializeR08Reference();
-  expect((await audit(fixture, "pass")).status).toBe("PASS");
+  const contentReceipt = await verifyReceipt(join(await projectPath(fixture), "receipts", "content-approval.json"));
+  expect(contentReceipt.valid).toBe(true);
+  expect(contentReceipt.receipt.files.map(({ path }) => path))
+    .toContain(fixture.authoringResponsePath);
+  const auditResult = await audit(fixture, "pass");
+  expect(auditResult.findings).toEqual([]);
+  expect(auditResult.status).toBe("PASS");
+  expect(auditResult.slices.find(({ sliceId }) => sliceId === "reference_integrity")?.artifactBindings)
+    .toEqual(expect.arrayContaining([expect.objectContaining({ artifactClass: "evidence_ledger" })]));
 
   const visualReference = await readFile(join(fixture.root, "fixture", "ooxml", "word", "media", "visual-reference.png"));
   expect(visualReference.length).toBeGreaterThan(1_000_000);
@@ -28,6 +40,13 @@ test("synthetic reference renders its fixture-backed visual surface", async () =
   expect(pngSize(page)).toEqual({ width: 1275, height: 1650 });
   // LibreOffice's PNG encoder produces different but valid byte sizes across hosts.
   expect((await stat(fixture.pagePath)).size).toBeGreaterThan(10_000);
+}, 30_000);
+
+test("an incomplete v2 R08 fixture remains blocked without its reference manifest binding", async () => {
+  const fixture = await materializeR08Reference();
+  const result = await audit(fixture, "incomplete-v2", false);
+  expect(result.status).toBe("BLOCKED");
+  expect(result.findings.map(({ code }) => code)).toContain("KPP_REFERENCE_MANIFEST_UNBOUND");
 }, 30_000);
 
 test("R08 mutations remain blocked by their structural audit boundaries", async () => {

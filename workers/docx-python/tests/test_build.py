@@ -11,6 +11,9 @@ from pathlib import Path
 
 import pytest
 from docx import Document
+from docx.enum.table import WD_CELL_VERTICAL_ALIGNMENT
+from docx.enum.text import WD_ALIGN_PARAGRAPH
+from docx.oxml.ns import qn
 from pydantic import ValidationError
 
 import kpp_docx.build as build_module
@@ -165,6 +168,41 @@ def test_build_applies_body_and_table_contract(tmp_path: Path) -> None:
     reopened = Document(result.docx)
     assert reopened.paragraphs[0].text == "1. 연구 수행방법"
     assert len(reopened.tables) == 1
+    assert reopened.sections[0].header.paragraphs[0].text == "연구용역 제안서 | 형식·구조 검증본"
+    assert reopened.sections[0].footer.paragraphs[0].text.startswith("1. 연구 수행방법 |")
+
+
+def test_native_table_applies_governed_header_and_body_cell_grammar(tmp_path: Path) -> None:
+    result = build_document(sample_request(tmp_path))
+    table = Document(result.docx).tables[0]
+
+    margins = table._tbl.tblPr.find(qn("w:tblCellMar"))
+    assert margins is not None
+    assert {
+        side: margins.find(qn(f"w:{side}")).get(qn("w:w"))
+        for side in ("top", "start", "bottom", "end")
+    } == {"top": "80", "start": "100", "bottom": "80", "end": "100"}
+
+    header_row = table.rows[0]
+    assert header_row._tr.get_or_add_trPr().find(qn("w:tblHeader")) is not None
+    for cell in header_row.cells:
+        shading = cell._tc.get_or_add_tcPr().find(qn("w:shd"))
+        assert shading is not None
+        assert shading.get(qn("w:fill")) == "E8EEF5"
+        assert cell.paragraphs[0].alignment == WD_ALIGN_PARAGRAPH.CENTER
+        assert cell.vertical_alignment == WD_CELL_VERTICAL_ALIGNMENT.CENTER
+
+    for row in table.rows[1:]:
+        for cell in row.cells:
+            shading = cell._tc.get_or_add_tcPr().find(qn("w:shd"))
+            assert shading is not None
+            assert shading.get(qn("w:fill")) == "FFFFFF"
+            assert cell.paragraphs[0].alignment == WD_ALIGN_PARAGRAPH.LEFT
+            assert cell.vertical_alignment == WD_CELL_VERTICAL_ALIGNMENT.CENTER
+            spacing = cell.paragraphs[0]._p.get_or_add_pPr().find(qn("w:spacing"))
+            assert spacing is not None
+            assert spacing.get(qn("w:line")) == "365"
+            assert spacing.get(qn("w:lineRule")) == "auto"
 
 
 def test_manifest_binds_template_inputs_pages_and_output_hashes(tmp_path: Path) -> None:
@@ -274,6 +312,117 @@ def test_missing_precision_policy_defaults_to_exact_and_blocks_9_3pt(
 
     with pytest.raises(ValidationError, match="KPP_TYPOGRAPHY_PRECISION"):
         BuildRequest.model_validate(payload)
+
+
+def test_rejects_large_explicit_continuation_heading_without_override(
+    tmp_path: Path,
+) -> None:
+    payload = sample_request(tmp_path).model_dump(by_alias=True)
+    payload["pageArchitecture"] = _page_architecture(
+        continuation=True,
+        title_point_size=20.5,
+    )
+    with pytest.raises(
+        ValidationError, match="KPP_PAGE_TITLE_CONTINUATION_LARGE"
+    ):
+        BuildRequest.model_validate(payload)
+
+
+def test_omits_repeated_heading_for_none_title_scope_continuation(
+    tmp_path: Path,
+) -> None:
+    payload = sample_request(tmp_path).model_dump(by_alias=True)
+    payload["pageArchitecture"] = _page_architecture(
+        continuation=True,
+        title_point_size=None,
+        title_scope="none",
+    )
+
+    result = build_document(BuildRequest.model_validate(payload))
+    document = Document(result.docx)
+
+    assert all(paragraph.text != "1. 연구 수행방법" for paragraph in document.paragraphs)
+    assert document.paragraphs[0].text.startswith("공식 자료와 현장 검증")
+
+
+def test_allows_large_explicit_continuation_heading_with_bound_override(
+    tmp_path: Path,
+) -> None:
+    payload = sample_request(tmp_path).model_dump(by_alias=True)
+    payload["pageArchitecture"] = _page_architecture(
+        continuation=True,
+        title_point_size=20.5,
+        issuer_override={
+                "documentMode": "private_partnership",
+                "modePolicyVersion": "1.0.0",
+                "sourceId": "SRC-ISSUER-01",
+                "reason": "파트너 지정 양식의 연속 면 제목 규칙",
+        }
+    )
+    payload["issuerOverrideAuthorityIds"] = ["source:SRC-ISSUER-01"]
+
+    request = BuildRequest.model_validate(payload)
+    result = build_document(request)
+    document_xml = _xml(result.docx, "word/document.xml")
+
+    assert 'w:sz w:val="41"' in document_xml
+
+
+def test_rejects_identity_bound_override_without_permitted_issuer_authority(
+    tmp_path: Path,
+) -> None:
+    payload = sample_request(tmp_path).model_dump(by_alias=True)
+    payload["pageArchitecture"] = _page_architecture(
+        continuation=True,
+        title_point_size=20.5,
+        issuer_override={
+            "documentMode": "private_partnership",
+            "modePolicyVersion": "1.0.0",
+            "sourceId": "SRC-ISSUER-01",
+            "reason": "권한 검증이 필요한 예외",
+        },
+    )
+
+    with pytest.raises(ValidationError, match="KPP_PAGE_ISSUER_OVERRIDE_UNBOUND"):
+        BuildRequest.model_validate(payload)
+
+
+def _page_architecture(
+    *,
+    continuation: bool,
+    title_point_size: float | None,
+    title_scope: str = "section",
+    issuer_override: dict[str, object] | None = None,
+) -> dict[str, object]:
+    page: dict[str, object] = {
+        "pageId": "P-01",
+        "chapterId": "CH-01",
+        "sectionId": "SEC-01",
+        "pageRole": "research_method",
+        "surfaceTemplateId": "r08-research-method-v1",
+        "titleScope": title_scope,
+        "continuation": continuation,
+        "dominantSurface": "table",
+        "surfaceVisibility": "internal",
+        "claimIds": ["CLM-01"],
+        "proofIds": [],
+        "referenceIds": ["EV-01"],
+        "figureIds": [],
+    }
+    if title_point_size is not None:
+        page["titlePointSize"] = title_point_size
+    if issuer_override is not None:
+        page["issuerOverride"] = issuer_override
+    return {
+        "schemaVersion": "2.0.0",
+        "projectId": "synthetic-research-proposal",
+        "documentMode": "private_partnership",
+        "modePolicyVersion": "1.0.0",
+        "architectureStatus": "complete",
+        "chapters": [{"chapterId": "CH-01"}],
+        "sections": [{"sectionId": "SEC-01", "chapterId": "CH-01"}],
+        "pages": [page],
+    }
 
 
 def test_manifest_publication_failure_rolls_back_docx_and_manifest(
@@ -531,6 +680,10 @@ def test_build_embeds_only_hash_bound_figure_on_its_planned_page(tmp_path: Path)
             "intent": "flow",
             "dataShape": "process_flow",
             "decisionTask": "연구 수행 구조를 확인한다.",
+            "semanticValueIntent": "causal_mechanism",
+            "decisionEffect": "연구 수행 단계의 인과관계를 판단한다.",
+            "nonDuplicateOf": ["BLK-RESEARCH-NARRATIVE"],
+            "encodedVariables": ["input", "process", "output"],
             "claimIds": ["CLM-01"],
             "evidenceIds": ["EV-01"],
             "family": "flow",
@@ -559,6 +712,54 @@ def test_build_embeds_only_hash_bound_figure_on_its_planned_page(tmp_path: Path)
             "sha256": _sha256(figure),
         }
     ]
+
+
+def test_build_request_accepts_decorative_figure_with_zero_evidentiary_bindings(
+    tmp_path: Path,
+) -> None:
+    figure = tmp_path / "decorative.png"
+    figure.write_bytes(
+        b64decode(
+            "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8A"
+            "AQUBAScY42YAAAAASUVORK5CYII="
+        )
+    )
+    payload = sample_request(tmp_path).model_dump(by_alias=True)
+    payload["figureManifest"]["figures"] = [{
+        "figureId": "FIG-DECORATIVE-01",
+        "requirementId": "REQ-01",
+        "pageId": "P-01",
+        "claimIds": [],
+        "renderer": "svg-flow",
+        "path": str(figure),
+        "sha256": _sha256(figure),
+        "format": "png",
+        "caption": "그림 1. 장식용 구분 표지",
+        "evidenceIds": [],
+        "widthDxa": 3600,
+    }]
+    payload["contentBlocks"][0]["figureIds"] = ["FIG-DECORATIVE-01"]
+    payload["pagePlan"]["pages"][0]["figureSpecs"] = [{
+        "figureId": "FIG-DECORATIVE-01",
+        "requirementId": "REQ-01",
+        "pageId": "P-01",
+        "title": "장식용 구분 표지",
+        "intent": "flow",
+        "dataShape": "process_flow",
+        "decisionTask": "장 구분을 보조한다.",
+        "semanticValueIntent": "decorative",
+        "decisionEffect": "",
+        "nonDuplicateOf": [],
+        "encodedVariables": [],
+        "claimIds": [],
+        "evidenceIds": [],
+        "family": "flow",
+        "renderer": "svg-flow",
+    }]
+
+    result = build_document(BuildRequest.model_validate(payload))
+
+    assert result.docx.exists()
 
 
 def test_build_request_rejects_unknown_schema_version(tmp_path: Path) -> None:
@@ -677,6 +878,10 @@ def test_rejects_cross_claim_figure_evidence_pairing(tmp_path: Path) -> None:
             "intent": "flow",
             "dataShape": "process_flow",
             "decisionTask": "연구 수행 구조를 확인한다.",
+            "semanticValueIntent": "causal_mechanism",
+            "decisionEffect": "연구 수행 단계의 인과관계를 판단한다.",
+            "nonDuplicateOf": ["BLK-RESEARCH-NARRATIVE"],
+            "encodedVariables": ["input", "process", "output"],
             "claimIds": ["CLM-01"],
             "evidenceIds": ["EV-02"],
             "family": "flow",
@@ -733,6 +938,10 @@ def test_rejects_figure_evidence_bound_to_another_page(tmp_path: Path) -> None:
             "intent": "flow",
             "dataShape": "process_flow",
             "decisionTask": "기대효과를 확인한다.",
+            "semanticValueIntent": "decision_tradeoff",
+            "decisionEffect": "기대효과의 선택 기준과 결과를 판단한다.",
+            "nonDuplicateOf": ["BLK-EFFECT-NARRATIVE"],
+            "encodedVariables": ["option", "criterion", "effect"],
             "claimIds": ["CLM-01"],
             "evidenceIds": ["EV-01"],
             "family": "flow",

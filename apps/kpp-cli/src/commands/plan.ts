@@ -2,20 +2,28 @@ import { stat } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import {
   advanceProject,
+  getDocumentModePolicy,
   KppError,
   planFigure,
   sha256File,
+  validatePageArchitecture,
+  validateReferenceManifest,
   verifyProjectState,
   writeReceipt,
 } from "@longtable/kpp-core";
 import {
   ConfirmedRequirementsSchema,
   EvidenceLedgerSchema,
+  PageArchitectureManifestSchema,
   PagePlanSchema,
+  ReferenceManifestSchema,
   RequirementsFileSchema,
   type ConfirmedRequirements,
   type EvidenceBinding,
+  type EvidenceLedger,
+  type PageArchitectureManifest,
   type PagePlan,
+  type ReferenceManifest,
 } from "@longtable/kpp-schemas";
 import { success, type CliEnvelope } from "../output.js";
 import { readJsonFile, writeJsonAtomically } from "./ingest.js";
@@ -57,7 +65,9 @@ export async function planCommand(
   const requirements = normalizeRequirements(parsed.data, dirname(requirementsPath));
   const persistedRequirementsPath = join(root, "requirements", "requirements.json");
   const pagePlanPath = join(root, "content", "page-plan.json");
+  const pageArchitecturePath = join(root, "content", "page-architecture.json");
   const evidenceLedgerPath = join(root, "evidence", "evidence-ledger.json");
+  const referenceManifestPath = join(root, "evidence", "reference-manifest.json");
   const sourceReceiptPath = join(root, "receipts", "source-lock.json");
   const requirementsReceiptPath = join(root, "receipts", "requirements-lock.json");
   const evidenceReceiptPath = join(root, "receipts", "evidence-lock.json");
@@ -101,13 +111,30 @@ export async function planCommand(
   });
 
   await validateEvidenceBindings(requirements, pagePlan);
+  if (project.schemaVersion !== "2.0.0") {
+    throw new KppError("KPP_MIGRATION_REQUIRED", "문서 아키텍처 계획에는 v2 프로젝트가 필요합니다.", {
+      expected: "2.0.0",
+      actual: project.schemaVersion,
+    });
+  }
+  const policy = getDocumentModePolicy(project.documentMode);
+  const pageArchitecture = createPageArchitecture(project, pagePlan, ledger, policy);
+  const referenceManifest = createReferenceManifest(project, pagePlan, ledger);
+  const architectureValidation = validatePageArchitecture(pageArchitecture, pagePlan, policy);
+  const referenceValidation = validateReferenceManifest(referenceManifest, pageArchitecture, ledger);
+  if (architectureValidation.status !== "PASS" || referenceValidation.status !== "PASS") {
+    throw new KppError("KPP_PLAN_MANIFEST_INVALID", "페이지 아키텍처 또는 참조 원장이 모드 정책을 충족하지 않습니다.", {
+      actual: [...architectureValidation.findings, ...referenceValidation.findings],
+    });
+  }
 
   if (project.state === "SOURCE_LOCKED") {
     await writeJsonAtomically(persistedRequirementsPath, requirements);
     await writeJsonAtomically(pagePlanPath, pagePlan);
+    await writeJsonAtomically(pageArchitecturePath, pageArchitecture);
     await writeReceipt({
       stage: "REQUIREMENTS_LOCKED",
-      files: [persistedRequirementsPath, pagePlanPath],
+      files: [persistedRequirementsPath, pagePlanPath, pageArchitecturePath],
       inputReceiptHashes: [await sha256File(sourceReceiptPath)],
       output: requirementsReceiptPath,
     });
@@ -116,16 +143,22 @@ export async function planCommand(
     await assertRequirementsLockedRecovery(
       persistedRequirementsPath,
       pagePlanPath,
+      pageArchitecturePath,
       requirements,
       pagePlan,
+      pageArchitecture,
     );
   }
 
   await writeJsonAtomically(evidenceLedgerPath, ledger);
+  await writeJsonAtomically(referenceManifestPath, referenceManifest);
   await writeReceipt({
     stage: "EVIDENCE_LOCKED",
     files: [
       evidenceLedgerPath,
+      pagePlanPath,
+      pageArchitecturePath,
+      referenceManifestPath,
       ...new Set(requirements.evidenceBindings.map(({ sourcePath }) => sourcePath)),
     ],
     inputReceiptHashes: [await sha256File(requirementsReceiptPath)],
@@ -137,8 +170,99 @@ export async function planCommand(
     state: advanced.state,
     requirementsPath: persistedRequirementsPath,
     pagePlanPath,
+    pageArchitecturePath,
     evidenceLedgerPath,
+    referenceManifestPath,
   });
+}
+
+function createPageArchitecture(
+  project: { readonly projectId: string; readonly documentMode: PageArchitectureManifest["documentMode"]; readonly modePolicyVersion: string },
+  pagePlan: PagePlan,
+  ledger: EvidenceLedger,
+  policy: ReturnType<typeof getDocumentModePolicy>,
+): PageArchitectureManifest {
+  const chapterId = "CHAPTER-001";
+  const bindingsByPage = new Map<string, string[]>();
+  for (const binding of ledger.bindings) {
+    const pageBindings = bindingsByPage.get(binding.targetPageId) ?? [];
+    if (!pageBindings.includes(binding.evidenceId)) pageBindings.push(binding.evidenceId);
+    bindingsByPage.set(binding.targetPageId, pageBindings);
+  }
+  const canonicalRoles = new Set(pagePlan.pages.map((page) =>
+    policy.pageRoleAliases[page.pageRole] ?? page.pageRole));
+  const architectureStatus = policy.requiredPageRoles.every((role) => canonicalRoles.has(role))
+    ? "complete"
+    : "staged";
+  return PageArchitectureManifestSchema.parse({
+    schemaVersion: "2.0.0",
+    projectId: project.projectId,
+    documentMode: project.documentMode,
+    modePolicyVersion: project.modePolicyVersion,
+    architectureStatus,
+    chapters: [{ chapterId, order: 0 }],
+    sections: pagePlan.pages.map((page, index) => ({
+      sectionId: `SECTION-${String(index + 1).padStart(3, "0")}`,
+      chapterId,
+      order: index,
+    })),
+    pages: pagePlan.pages.map((page, index) => ({
+      pageId: page.pageId,
+      chapterId,
+      sectionId: `SECTION-${String(index + 1).padStart(3, "0")}`,
+      pageRole: page.pageRole,
+      surfaceTemplateId: page.surfaceTemplateId,
+      titleScope: index === 0 ? "chapter" : "section",
+      continuation: false,
+      dominantSurface: page.figureSpecs.length > 0 && page.claimIds.length > 0
+        ? "mixed"
+        : page.figureSpecs.length > 0 ? "figure" : "narrative",
+      surfaceVisibility: "internal",
+      claimIds: page.claimIds,
+      proofIds: unique(page.figureSpecs.flatMap(({ evidenceIds }) => evidenceIds)),
+      referenceIds: bindingsByPage.get(page.pageId) ?? [],
+      figureIds: page.figureSpecs.map(({ figureId }) => figureId),
+    })),
+  });
+}
+
+function createReferenceManifest(
+  project: { readonly projectId: string; readonly documentMode: ReferenceManifest["documentMode"]; readonly modePolicyVersion: string },
+  pagePlan: PagePlan,
+  ledger: EvidenceLedger,
+): ReferenceManifest {
+  const pageById = new Map(pagePlan.pages.map((page) => [page.pageId, page]));
+  return ReferenceManifestSchema.parse({
+    schemaVersion: "2.0.0",
+    projectId: project.projectId,
+    documentMode: project.documentMode,
+    modePolicyVersion: project.modePolicyVersion,
+    references: ledger.bindings.map((binding) => {
+      const page = pageById.get(binding.targetPageId);
+      const targets = [
+        ...binding.claimIds.map((id) => ({ kind: "claim" as const, id })),
+        { kind: "page" as const, id: binding.targetPageId },
+        ...(page?.figureSpecs
+          .filter(({ evidenceIds }) => evidenceIds.includes(binding.evidenceId))
+          .map(({ figureId: id }) => ({ kind: "figure" as const, id })) ?? []),
+      ];
+      return {
+        referenceId: binding.evidenceId,
+        referenceClass: "evidence",
+        sourcePath: binding.sourcePath,
+        sourceSha256: binding.sourceSha256,
+        locator: binding.scope,
+        targets: targets.filter((target, index) =>
+          targets.findIndex((candidate) => candidate.kind === target.kind && candidate.id === target.id) === index),
+        verificationStatus: "verified",
+        availability: "available",
+      };
+    }),
+  });
+}
+
+function unique(values: readonly string[]): string[] {
+  return values.filter((value, index) => values.indexOf(value) === index);
 }
 
 function normalizeRequirements(
@@ -307,8 +431,10 @@ function unresolvedFigureEvidence(
 async function assertRequirementsLockedRecovery(
   persistedRequirementsPath: string,
   pagePlanPath: string,
+  pageArchitecturePath: string,
   requirements: ConfirmedRequirements,
   pagePlan: PagePlan,
+  pageArchitecture: PageArchitectureManifest,
 ): Promise<void> {
   let persistedRequirements: unknown;
   try {
@@ -337,24 +463,46 @@ async function assertRequirementsLockedRecovery(
     );
   }
 
+  let pagePlanWasMissing = false;
   try {
     await stat(pagePlanPath);
   } catch (error) {
     if (isMissingFile(error)) {
       await writeJsonAtomically(pagePlanPath, pagePlan);
-      return;
+      pagePlanWasMissing = true;
+    } else {
+      throw recoveryMismatch("locked_page_plan_unreadable", error);
     }
-    throw recoveryMismatch("locked_page_plan_unreadable", error);
   }
 
-  let persistedPagePlan: PagePlan;
-  try {
-    persistedPagePlan = PagePlanSchema.parse(await readJsonFile(pagePlanPath));
-  } catch (error) {
-    throw recoveryMismatch("locked_page_plan_invalid", error);
+  if (!pagePlanWasMissing) {
+    let persistedPagePlan: PagePlan;
+    try {
+      persistedPagePlan = PagePlanSchema.parse(await readJsonFile(pagePlanPath));
+    } catch (error) {
+      throw recoveryMismatch("locked_page_plan_invalid", error);
+    }
+    if (JSON.stringify(persistedPagePlan) !== JSON.stringify(pagePlan)) {
+      throw recoveryMismatch("locked_input_changed", "retry input differs from locked artifacts");
+    }
   }
-  if (JSON.stringify(persistedPagePlan) !== JSON.stringify(pagePlan)) {
-    throw recoveryMismatch("locked_input_changed", "retry input differs from locked artifacts");
+  try {
+    await stat(pageArchitecturePath);
+  } catch (error) {
+    if (isMissingFile(error)) {
+      await writeJsonAtomically(pageArchitecturePath, pageArchitecture);
+      return;
+    }
+    throw recoveryMismatch("locked_page_architecture_unreadable", error);
+  }
+  let persistedArchitecture: PageArchitectureManifest;
+  try {
+    persistedArchitecture = PageArchitectureManifestSchema.parse(await readJsonFile(pageArchitecturePath));
+  } catch (error) {
+    throw recoveryMismatch("locked_page_architecture_invalid", error);
+  }
+  if (JSON.stringify(persistedArchitecture) !== JSON.stringify(pageArchitecture)) {
+    throw recoveryMismatch("locked_input_changed", "retry architecture differs from locked artifacts");
   }
 }
 

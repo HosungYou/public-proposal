@@ -1,0 +1,7 @@
+{
+  "schemaVersion": "1.0.0",
+  "baseFixture": "../../valid/pharmacy-private-partnership",
+  "classification": "known_bad",
+  "failureBoundaries": ["oversized_continuation_title", "three_consecutive_identical_surface_topologies"],
+  "expectedCodes": ["KPP_BUILD_MANIFEST_UNBOUND", "KPP_RENDER_SURFACE_TOPOLOGY_REPETITION"]
+}

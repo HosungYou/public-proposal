@@ -1,7 +1,8 @@
 import { createHash } from "node:crypto";
 import { execFile as execFileCallback } from "node:child_process";
+import { existsSync } from "node:fs";
 import { cp, mkdir, mkdtemp, readFile, readdir, rename, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
 import { afterEach, expect, test } from "vitest";
@@ -59,6 +60,10 @@ test("the public proposal plugin ships a validated package copy and rewrites the
   const sourceFiles = await listFilesRecursive(sourcePluginRoot);
   const packagedFiles = await listFilesRecursive(packagedPluginRoot);
   expect(packagedFiles).toEqual(sourceFiles);
+  expect(await topLevelSkillSurfaces(sourcePluginRoot)).toEqual(["korean-public-proposal"]);
+  expect(await topLevelSkillSurfaces(packagedPluginRoot)).toEqual(["korean-public-proposal"]);
+  expect(sourceFiles).toContain("skills/korean-public-proposal/scripts/audit_surface_contract.py");
+  expect(sourceFiles.some((path) => path.includes("__pycache__") || path.endsWith(".pyc"))).toBe(false);
 
   for (const relativePath of sourceFiles) {
     const [sourcePayload, packagedPayload] = await Promise.all([
@@ -76,6 +81,133 @@ test("the public proposal plugin ships a validated package copy and rewrites the
   }
 });
 
+test("the Korean authority declares the pinned HWPX engine as its native default", async () => {
+  const skillRoot = join(sourcePluginRoot, "skills", "korean-public-proposal");
+  const skill = await readFile(join(skillRoot, "SKILL.md"), "utf8");
+  const engine = parseJson(await readFile(join(skillRoot, "HWPX-ENGINE.json"), "utf8")) as {
+    repository?: string;
+    commit?: string;
+    destinationRoot?: string;
+    files?: Array<{ source?: string; destination?: string; sha256?: string }>;
+  };
+
+  expect(engine).toMatchObject({
+    repository: "https://github.com/jkf87/hwpx-skill.git",
+    commit: "96a2633f23a08f707679d7e212ebdc59948260e6",
+    destinationRoot: "vendor/hwpx-skill",
+  });
+  expect(engine.files?.length).toBeGreaterThan(50);
+  expect(engine.files?.some(({ source, destination }) => source === "SKILL.md" && destination === "UPSTREAM-SKILL.md")).toBe(true);
+  expect(engine.files?.some(({ destination }) => destination?.endsWith("/SKILL.md") || destination === "SKILL.md")).toBe(false);
+  expect(engine.files?.every(({ sha256 }) => /^[a-f0-9]{64}$/u.test(sha256 ?? ""))).toBe(true);
+  expect(skill).toContain("HWPX-first");
+  expect(skill).toContain("vendor/hwpx-skill/UPSTREAM-SKILL.md");
+  expect(skill).toContain("source-native routing");
+});
+
+test("the canonical, source, and packaged Korean skill payloads share the vNext contract", async () => {
+  const sourceSkillRoot = join(sourcePluginRoot, "skills", "korean-public-proposal");
+  const packagedSkillRoot = join(packagedPluginRoot, "skills", "korean-public-proposal");
+  const manifest = await readBundleManifest(sourcePluginRoot);
+  const resolution = resolveCanonicalSkillRoot({ sourceSkillRoot });
+  console.info(`[kpp skill parity] ${resolution.report}`);
+
+  await assertSkillPayloadParity({
+    canonicalSkillRoot: resolution.root,
+    manifest,
+    packagedSkillRoot,
+    sourceSkillRoot,
+  });
+
+  const skill = await readFile(join(sourceSkillRoot, "SKILL.md"), "utf8");
+  const contract = await readFile(join(sourceSkillRoot, "references", "vnext-contract.md"), "utf8");
+  const proofreading = await readFile(join(sourceSkillRoot, "references", "prose-proofreading-workflow.md"), "utf8");
+  for (const mode of [
+    "public_procurement",
+    "research_service",
+    "private_partnership",
+    "internal_decision",
+    "document_restyle",
+  ]) {
+    expect(`${skill}\n${contract}`).toContain(mode);
+  }
+  for (const token of [
+    "kpp migrate --apply",
+    "titleScope",
+    "continuation",
+    "surfaceTemplateId",
+    "semanticValueIntent",
+    "decisionEffect",
+    "nonDuplicateOf",
+    "encodedVariables",
+    "CompositeAuditReceipt",
+    "TECHNICAL_GATE_ONLY",
+  ]) {
+    expect(`${skill}\n${contract}`).toContain(token);
+  }
+  expect(contract).toMatch(/three consecutive structurally equivalent pages/i);
+  expect(contract).toMatch(/continuation.*(?:<=|at most).*12\s*pt/is);
+  expect(skill).not.toContain("- Title 20.5 pt");
+  expect(contract).toContain("human-approved");
+  expect(skill).toContain("references/prose-proofreading-workflow.md");
+  for (const invariant of [
+    "SemanticInvariantSet",
+    "change ledger",
+    "proposal_slop_lint.py",
+    "audit_prose_contract.py",
+    "information sufficiency",
+    "effectivenessValidated=true",
+  ]) {
+    expect(proofreading).toContain(invariant);
+  }
+});
+
+test("canonical skill parity honors an override, rejects a missing override, and records the repository fallback", async () => {
+  const sourceSkillRoot = join(sourcePluginRoot, "skills", "korean-public-proposal");
+  const packagedSkillRoot = join(packagedPluginRoot, "skills", "korean-public-proposal");
+  const manifest = await readBundleManifest(sourcePluginRoot);
+  const fixtureRoot = await mkdtemp(join(tmpdir(), "public-proposal-canonical-skill-"));
+  tempDirectories.push(fixtureRoot);
+  const overrideRoot = join(fixtureRoot, "override");
+  await cp(sourceSkillRoot, overrideRoot, { recursive: true });
+
+  const overrideResolution = resolveCanonicalSkillRoot({
+    environment: { KPP_CANONICAL_SKILL_ROOT: overrideRoot },
+    installedSkillRoot: join(fixtureRoot, "not-used"),
+    sourceSkillRoot,
+  });
+  expect(overrideResolution.source).toBe("environment override");
+  await expect(assertSkillPayloadParity({
+    canonicalSkillRoot: overrideResolution.root,
+    manifest,
+    packagedSkillRoot,
+    sourceSkillRoot,
+  })).resolves.toBeUndefined();
+
+  await writeFile(join(overrideRoot, "SKILL.md"), "canonical mismatch\n", "utf8");
+  await expect(assertSkillPayloadParity({
+    canonicalSkillRoot: overrideResolution.root,
+    manifest,
+    packagedSkillRoot,
+    sourceSkillRoot,
+  })).rejects.toThrow(/canonical\/source mismatch for SKILL.md/i);
+
+  expect(() => resolveCanonicalSkillRoot({
+    environment: { KPP_CANONICAL_SKILL_ROOT: join(fixtureRoot, "missing") },
+    installedSkillRoot: join(fixtureRoot, "not-used"),
+    sourceSkillRoot,
+  })).toThrow(/KPP_CANONICAL_SKILL_ROOT does not exist/i);
+
+  const fallbackResolution = resolveCanonicalSkillRoot({
+    environment: {},
+    installedSkillRoot: join(fixtureRoot, "not-installed"),
+    sourceSkillRoot,
+  });
+  expect(fallbackResolution.source).toBe("repository canonical source fallback");
+  expect(fallbackResolution.root).toBe(sourceSkillRoot);
+  expect(fallbackResolution.report).toContain("repository canonical source fallback");
+});
+
 test("the bundle validator rejects generic absolute source path leaks in bundle payloads", async () => {
   const pluginRoot = await clonePluginRoot();
   const relativePath = "SKILL.md";
@@ -90,10 +222,10 @@ test("the bundle validator rejects generic absolute source path leaks in bundle 
 
 test("the package sync rejects generic absolute source path leaks outside the bundled Korean skill", async () => {
   const repoRoot = await cloneSyncFixtureRepo();
-  const publicSkillPath = join(repoRoot, "plugins", "public-proposal", "skills", "public-proposal", "SKILL.md");
-  const original = await readFile(publicSkillPath, "utf8");
+  const pluginManifestPath = join(repoRoot, "plugins", "public-proposal", ".codex-plugin", "plugin.json");
+  const original = await readFile(pluginManifestPath, "utf8");
   const leaked = [original.trimEnd(), "", ...absoluteLeakFixtures, ""].join("\n");
-  await writeFile(publicSkillPath, leaked, "utf8");
+  await writeFile(pluginManifestPath, leaked, "utf8");
 
   await expect(runSync(repoRoot)).rejects.toThrow(/absolute source path/i);
 });
@@ -186,6 +318,62 @@ async function runSync(repoRoot: string): Promise<string> {
   }
 }
 
+function resolveCanonicalSkillRoot({
+  environment = process.env,
+  installedSkillRoot = join(homedir(), ".codex", "skills", "korean-public-proposal"),
+  sourceSkillRoot,
+}: {
+  environment?: NodeJS.ProcessEnv;
+  installedSkillRoot?: string;
+  sourceSkillRoot: string;
+}): CanonicalSkillResolution {
+  const configuredRoot = environment.KPP_CANONICAL_SKILL_ROOT;
+  if (configuredRoot !== undefined) {
+    if (!existsSync(configuredRoot)) {
+      throw new Error(`KPP_CANONICAL_SKILL_ROOT does not exist: ${configuredRoot}`);
+    }
+    return {
+      root: configuredRoot,
+      source: "environment override",
+      report: `canonical skill root: environment override (${configuredRoot})`,
+    };
+  }
+  if (existsSync(installedSkillRoot)) {
+    return {
+      root: installedSkillRoot,
+      source: "installed default",
+      report: `canonical skill root: installed default (${installedSkillRoot})`,
+    };
+  }
+  return {
+    root: sourceSkillRoot,
+    source: "repository canonical source fallback",
+    report: "canonical skill root: repository canonical source fallback (installed default unavailable)",
+  };
+}
+
+async function assertSkillPayloadParity({
+  canonicalSkillRoot,
+  manifest,
+  packagedSkillRoot,
+  sourceSkillRoot,
+}: {
+  canonicalSkillRoot: string;
+  manifest: BundleManifest;
+  packagedSkillRoot: string;
+  sourceSkillRoot: string;
+}): Promise<void> {
+  for (const entry of manifest.files) {
+    const [canonicalPayload, sourcePayload, packagedPayload] = await Promise.all([
+      readFile(join(canonicalSkillRoot, entry.path)),
+      readFile(join(sourceSkillRoot, entry.path)),
+      readFile(join(packagedSkillRoot, entry.path)),
+    ]);
+    expect(packagedPayload.equals(sourcePayload), `source/packaged mismatch for ${entry.path}`).toBe(true);
+    expect(sourcePayload.equals(canonicalPayload), `canonical/source mismatch for ${entry.path}`).toBe(true);
+  }
+}
+
 function parseJson(source: string): unknown {
   return JSON.parse(source) as unknown;
 }
@@ -211,6 +399,17 @@ async function listFilesRecursive(root: string, baseRoot: string = root): Promis
   return files.flat().sort();
 }
 
+async function topLevelSkillSurfaces(pluginRoot: string): Promise<string[]> {
+  const skillsRoot = join(pluginRoot, "skills");
+  const entries = await readdir(skillsRoot, { withFileTypes: true });
+  const surfaces: string[] = [];
+  for (const entry of entries) {
+    if (!entry.isDirectory()) continue;
+    if (existsSync(join(skillsRoot, entry.name, "SKILL.md"))) surfaces.push(entry.name);
+  }
+  return surfaces.sort();
+}
+
 interface BundleManifest {
   files: BundleEntry[];
 }
@@ -219,4 +418,10 @@ interface BundleEntry {
   path: string;
   bytes: number;
   sha256: string;
+}
+
+interface CanonicalSkillResolution {
+  root: string;
+  source: "environment override" | "installed default" | "repository canonical source fallback";
+  report: string;
 }

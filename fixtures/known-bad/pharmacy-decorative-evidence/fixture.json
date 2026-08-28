@@ -1,0 +1,7 @@
+{
+  "schemaVersion": "1.0.0",
+  "baseFixture": "../../valid/pharmacy-private-partnership",
+  "classification": "known_bad",
+  "failureBoundary": "decorative_surface_in_evidentiary_figure_channel",
+  "expectedCode": "KPP_FIGURE_VALUE_DECORATIVE"
+}

@@ -1,12 +1,18 @@
 {
   "schemaVersion": "1.0.0",
   "sourceSkillName": "korean-public-proposal",
-  "sourceSnapshotDate": "2026-08-18",
+  "sourceSnapshotDate": "2026-08-20",
   "files": [
     {
+      "path": "HWPX-ENGINE.json",
+      "bytes": 25609,
+      "sha256": "933758b7744f77e5dc88e77d2889aeb351be9962de8fe00ae13904caa3a1fe52",
+      "classification": "reference"
+    },
+    {
       "path": "SKILL.md",
-      "bytes": 10992,
-      "sha256": "143aa3bec2a1051055057b162a797cb530fddfd6cf39f6067ac800ace753a57b",
+      "bytes": 21022,
+      "sha256": "17a9e630b75a4e9a73bdd7995e92660edaf2ece279a75e9150d4c1b6c06f7e2c",
       "classification": "skill"
     },
     {
@@ -65,20 +71,20 @@
     },
     {
       "path": "references/figure-grammar.md",
-      "bytes": 2656,
-      "sha256": "e2afb23fcd8899c2cffd82df0df7002a513ccd67796d50dfdc38014832062927",
+      "bytes": 3116,
+      "sha256": "f16da99f2e719d8dd672a04637e7b43a9c8ff18f1a9c0f052b8551461336f9b3",
       "classification": "reference"
     },
     {
       "path": "references/incident-learning-protocol.md",
-      "bytes": 1735,
-      "sha256": "4ec46e6d378d070d1f58de7265ab1854529f6f9141199db7107ff838b5725396",
+      "bytes": 2239,
+      "sha256": "59311fe4bbfea55ad75ecf99694c999ff0652bf26b9d90fb82becd88eef8d991",
       "classification": "reference"
     },
     {
       "path": "references/korean-report-visual-system.md",
-      "bytes": 4543,
-      "sha256": "8ac9f9814d87ca7ea717f2c05c15d8150b52cc559afcbfe174d62c034d1b8d8c",
+      "bytes": 4914,
+      "sha256": "029609f364f09cd6efb5e580054c2f9b052775bc8f9f2a79bb05f51edd5327a3",
       "classification": "reference"
     },
     {
@@ -89,8 +95,8 @@
     },
     {
       "path": "references/page-contract.md",
-      "bytes": 1735,
-      "sha256": "d44b9c0e39e0bb3638e475d155f75abc9f60fb7ec5cb7d76295efbe81ca609a7",
+      "bytes": 2133,
+      "sha256": "651cf07c873e4aee860cd6143b3770beee40485a981c0f95dd2c0291ecad902a",
       "classification": "reference"
     },
     {
@@ -100,21 +106,33 @@
       "classification": "reference"
     },
     {
+      "path": "references/prose-profile-registry.md",
+      "bytes": 13218,
+      "sha256": "b4e2b86729cd19c802db0e8410072d5f3e2bf5ce2695eba3ec94e44b2fba5ff0",
+      "classification": "reference"
+    },
+    {
+      "path": "references/prose-proofreading-workflow.md",
+      "bytes": 5499,
+      "sha256": "2398af9954af612177ce984a78a8842197e403c4338c60adf686865357b3de5c",
+      "classification": "reference"
+    },
+    {
       "path": "references/public-document-grammar.md",
-      "bytes": 3287,
-      "sha256": "1c0aea52aa8d048433467ccdbf8903fa32a41ecc344d5abe0ad5ed1078411360",
+      "bytes": 3686,
+      "sha256": "cc99bc86868c01e434e5d07179a88b590849d4de18dcead976fff8c717c916e2",
       "classification": "reference"
     },
     {
       "path": "references/qa-gates.md",
-      "bytes": 4317,
-      "sha256": "88a3dc1a34933f9945a86c43bb01234257ee0ad09f761234e5ba37a1cd02a4ee",
+      "bytes": 5969,
+      "sha256": "d0824b4a80201eb338a7149f9afcfa4bd21ddf9e45b3f37fbc205f4e0b9e564a",
       "classification": "reference"
     },
     {
       "path": "references/surface-system-spec.md",
-      "bytes": 7545,
-      "sha256": "c7246c56f1c1521bcee96612784140909101a75faa1a48d9d663fd6fbd57976d",
+      "bytes": 8600,
+      "sha256": "b2322a972c457a2363154852a8ec748a7f5074e5d7221c85509db4cc51cdc781",
       "classification": "reference"
     },
     {
@@ -124,15 +142,45 @@
       "classification": "reference"
     },
     {
+      "path": "references/visual-qa-protocol.md",
+      "bytes": 2906,
+      "sha256": "e6ec4bd568e7e2871185fc2dce750f5209088fced47549ca03097b7adddc8a8a",
+      "classification": "reference"
+    },
+    {
+      "path": "references/vnext-contract.md",
+      "bytes": 7700,
+      "sha256": "01827c6bb7ce9ccc58b81f055ee07d5c3f9b5f4aced500f3c8f84f8d4495facb",
+      "classification": "reference"
+    },
+    {
       "path": "scripts/audit_docx_integrity.py",
       "bytes": 8027,
       "sha256": "94df046d9e64ad8776d477dddc61d5c688611de68c26127a5c8209d3ca6c411b",
       "classification": "script"
     },
     {
+      "path": "scripts/audit_prose_contract.py",
+      "bytes": 16908,
+      "sha256": "d31e87a8c1cb6e45eadaa2e248968d052543c00a031e72bd3b0da394aed49ab2",
+      "classification": "script"
+    },
+    {
       "path": "scripts/audit_public_proposal.py",
       "bytes": 3698,
       "sha256": "aeabeb44ac22a08c8a9af7a0548024df9955e3266c947f5879f35db7145cdce8",
+      "classification": "script"
+    },
+    {
+      "path": "scripts/audit_rendered_visual.py",
+      "bytes": 32469,
+      "sha256": "05e8ec1a5c5a66b6027f88770637a77e6f1526aed21b921bada24a1ba0d10060",
+      "classification": "script"
+    },
+    {
+      "path": "scripts/audit_surface_contract.py",
+      "bytes": 18800,
+      "sha256": "36e3102a0375b116d64ea10a3759ae5a9c4b7569ed14f7ec847bd4d7b71c0cc4",
       "classification": "script"
     },
     {
@@ -155,8 +203,8 @@
     },
     {
       "path": "scripts/validate_submission_gate.py",
-      "bytes": 2538,
-      "sha256": "9882d73424ea050bd9f35ad7a9aa0a243bf5de0225bcf900471fd9b5ec67f238",
+      "bytes": 4998,
+      "sha256": "0a44c9093eabfb5157fa79b5b864d97a99edc91703a29068b818f7e05254804d",
       "classification": "script"
     },
     {

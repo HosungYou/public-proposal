@@ -1,6 +1,6 @@
 # Public Proposal installation and recovery
 
-Verified compatibility date: **2026-08-18**. The exact supported versions are `@longtable/public-proposal@0.1.3`, `@longtable/kpp-cli@0.2.1`, `@longtable/cli@0.1.72`, and managed worker protocol `1.0.0`. See [compatibility-matrix.json](compatibility-matrix.json) for the machine-readable contract.
+Verified compatibility date: **2026-08-28**. The exact supported versions are `@longtable/public-proposal@0.2.2`, `@longtable/kpp-cli@0.3.0`, `@longtable/cli@0.1.72`, and managed worker protocol `1.0.0`. See [compatibility-matrix.json](compatibility-matrix.json) for the machine-readable contract.
 
 ## Prerequisites
 
@@ -10,7 +10,7 @@ Use a writable user or project installation location. Do not put customer RFPs, 
 
 ## Recommended one-command setup
 
-The package is published on npm as `@longtable/public-proposal@0.1.3`. Leaving off the version below resolves the current `latest` tag; pin `@0.1.3` when reproducibility is required.
+The package is published on npm as `@longtable/public-proposal@0.2.2`. Leaving off the version below resolves the current `latest` tag; pin `@0.2.2` when reproducibility is required.
 
 ```bash
 npx @longtable/public-proposal setup --provider codex
@@ -52,7 +52,7 @@ Those paths are installer-owned; do not substitute an unrelated marketplace dire
 | --- | --- | --- |
 | `$public-proposal` | Conversation context and work routing | Cannot write KPP state or receipts |
 | bundled `korean-public-proposal` | Korean public proposal rules, document grammar, visual and prose baseline | Does not supersede the issuer RFP or approve release |
-| `@longtable/kpp-cli@0.2.1` | State, receipts, build, audit, approval, and release | Does not resolve research decisions |
+| `@longtable/kpp-cli@0.3.0` | State, receipts, build, audit, approval, and release | Does not resolve research decisions |
 | LongTable / `@longtable/cli@0.1.72` | Conditional scholarly research, evidence recovery, citation slots, and checkpoints | Does not write DOCX, KPP receipts, or releases |
 
 KPP is the sole proposal-state and receipt writer. LongTable remains a research/evidence service and gives KPP a hash-bound handoff rather than authority to approve a proposal.
@@ -64,7 +64,7 @@ Installing a plugin provides the skills and packaged resources to Codex. **Plugi
 Use this only when `npx` is unavailable or a controlled environment requires global installation:
 
 ```bash
-npm install --global @longtable/public-proposal@0.1.3 @longtable/kpp-cli@0.2.1 @longtable/cli@0.1.72
+npm install --global @longtable/public-proposal@0.2.2 @longtable/kpp-cli@0.3.0 @longtable/cli@0.1.72
 public-proposal setup --provider codex
 public-proposal doctor --json
 ```

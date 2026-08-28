@@ -29,7 +29,7 @@ describe("public proposal setup", () => {
     expect(result.plan).toEqual(
       expect.arrayContaining([
         "public-proposal plugin",
-        "@longtable/kpp-cli@0.2.1",
+        "@longtable/kpp-cli@0.3.0",
         "@longtable/cli@0.1.72",
         "managed worker protocol 1.0.0",
       ]),
@@ -273,7 +273,7 @@ describe("public proposal setup", () => {
     expect(result.error?.message).toContain("remove failed");
   });
 
-  it("installs both LongTable skills into the plugin-discoverable skill surface", async () => {
+  it("keeps LongTable internal and exposes only the Korean public-proposal skill", async () => {
     const fake = fakeSetupDependencies();
 
     const result = await runSetup(
@@ -282,25 +282,13 @@ describe("public proposal setup", () => {
     );
 
     expect(result.ok).toBe(true);
-    expect(fake.commands).toContain(
-      "longtable codex install-skills --surface compact --dir /home/ada/.config/public-proposal/plugin/skills",
-    );
-    expect(fake.files["/home/ada/.config/public-proposal/plugin/skills/longtable/SKILL.md"]).toContain("LongTable");
-    expect(fake.files["/home/ada/.config/public-proposal/plugin/skills/longtable-research/SKILL.md"]).toContain("LongTable Research");
-  });
-
-  it("normalizes the legacy scholar-research skill and mirrors it into the registered plugin", async () => {
-    const fake = fakeSetupDependencies({ legacyLongtableSkills: true });
-    const result = await runSetup(
-      { provider: "codex", installScope: "user", cwd: "/work", home: "/home/ada" },
-      fake,
-    );
-
-    expect(result.ok).toBe(true);
-    expect(fake.files["/home/ada/.config/public-proposal/plugin/skills/longtable-research/SKILL.md"])
-      .toContain("name: longtable-research");
-    expect(fake.files["/home/ada/.config/public-proposal/marketplace/plugin/skills/longtable-research/SKILL.md"])
-      .toContain("name: longtable-research");
+    expect(fake.commands.some((command) => command.startsWith("longtable codex install-skills"))).toBe(false);
+    expect(fake.files["/home/ada/.config/public-proposal/plugin/skills/korean-public-proposal/SKILL.md"]).toBeDefined();
+    expect(fake.files["/home/ada/.config/public-proposal/plugin/skills/longtable/SKILL.md"]).toBeUndefined();
+    expect(fake.files["/home/ada/.config/public-proposal/plugin/skills/longtable-research/SKILL.md"]).toBeUndefined();
+    expect(fake.files["/home/ada/.config/public-proposal/plugin/skills/public-proposal/SKILL.md"]).toBeUndefined();
+    expect(fake.files["/home/ada/.config/public-proposal/plugin/skills/korean-public-proposal/vendor/hwpx-skill/UPSTREAM-SKILL.md"])
+      .toContain("# HWPX");
   });
 
   it("allows setup when LongTable exposes no --version command but the pinned package metadata is present", async () => {
@@ -376,9 +364,9 @@ describe("public proposal setup", () => {
     fake.files["/home/ada/.config/public-proposal/installation.json"] = JSON.stringify({
       schemaVersion: "1.0.0",
       packageVersion: "0.1.0",
-      kppVersion: "0.2.1",
+      kppVersion: "0.3.0",
       longtableVersion: "0.1.72",
-      pluginVersion: "0.1.0",
+      pluginVersion: "0.2.2",
       workerProtocol: "1.0.0",
       installRoot: "/other/root",
       pluginManifestSha256: "sha256:/pkg/plugin/.codex-plugin/plugin.json",
@@ -589,12 +577,13 @@ function fakeSetupDependencies(input?: {
   preexistingMarketplaceRegistration?: boolean;
   preexistingMarketplacePath?: string;
   preexistingPluginRegistration?: boolean;
-  legacyLongtableSkills?: boolean;
 }): FakeSetupDependencies {
   const installRoot = input?.installRoot ?? "/home/ada/.config/public-proposal";
   const files: Record<string, string> = {
     "/pkg/plugin/.codex-plugin/plugin.json": JSON.stringify({ name: "public-proposal", version: "0.1.0" }),
     "/pkg/plugin/skills/korean-public-proposal/BUNDLE-MANIFEST.json": JSON.stringify({ schemaVersion: "1.0.0" }),
+    "/pkg/plugin/skills/korean-public-proposal/SKILL.md": "# Korean Public Proposal\n",
+    "/pkg/plugin/skills/korean-public-proposal/HWPX-ENGINE.json": JSON.stringify({ schemaVersion: "1.0.0" }),
     "/pkg/marketplace/marketplace.json": JSON.stringify({
       name: "public-proposal",
       plugins: [{ name: "public-proposal", source: { source: "local", path: "./plugin" } }],
@@ -700,6 +689,32 @@ function fakeSetupDependencies(input?: {
         sha256: `sha256:${"a".repeat(64)}`,
       };
     },
+    installHwpxEngine: async (skillRoot) => {
+      files[`${skillRoot}/vendor/hwpx-skill/UPSTREAM-SKILL.md`] = "# HWPX\n";
+      return {
+        commit: "96a2633f23a08f707679d7e212ebdc59948260e6",
+        root: `${skillRoot}/vendor/hwpx-skill`,
+        verified: true,
+        fileCount: 118,
+      };
+    },
+    verifyHwpxEngine: async (skillRoot) => ({
+      commit: "96a2633f23a08f707679d7e212ebdc59948260e6",
+      root: `${skillRoot}/vendor/hwpx-skill`,
+      verified: true,
+      fileCount: 118,
+    }),
+    listDir: async (path) => {
+      if (input?.realFilesystemWrites && path.startsWith(installRoot)) {
+        const { readdir } = await import("node:fs/promises");
+        return (await readdir(path, { withFileTypes: true })).filter((entry) => entry.isDirectory()).map((entry) => entry.name).sort();
+      }
+      const prefix = `${path}/`;
+      return [...new Set(Object.keys(files)
+        .filter((key) => key.startsWith(prefix))
+        .map((key) => key.slice(prefix.length).split("/")[0])
+        .filter(Boolean))].sort();
+    },
     copyDir: async (from, to) => {
       if (input?.realFilesystemWrites && to.startsWith(installRoot)) {
         const { mkdir, writeFile } = await import("node:fs/promises");
@@ -713,12 +728,8 @@ function fakeSetupDependencies(input?: {
             files["/pkg/plugin/skills/korean-public-proposal/BUNDLE-MANIFEST.json"],
             "utf8",
           );
-        }
-        if (to.endsWith("/plugin/skills")) {
-          await mkdir(join(to, "longtable"), { recursive: true });
-          await mkdir(join(to, "longtable-research"), { recursive: true });
-          await writeFile(join(to, "longtable", "SKILL.md"), files[`${from}/longtable/SKILL.md`] ?? "# LongTable\n", "utf8");
-          await writeFile(join(to, "longtable-research", "SKILL.md"), files[`${from}/longtable-research/SKILL.md`] ?? "# LongTable Research\n", "utf8");
+          await writeFile(join(to, "skills", "korean-public-proposal", "SKILL.md"), files["/pkg/plugin/skills/korean-public-proposal/SKILL.md"], "utf8");
+          await writeFile(join(to, "skills", "korean-public-proposal", "HWPX-ENGINE.json"), files["/pkg/plugin/skills/korean-public-proposal/HWPX-ENGINE.json"], "utf8");
         }
         if (to.endsWith("/marketplace")) {
           await writeFile(join(to, "marketplace.json"), files["/pkg/marketplace/marketplace.json"], "utf8");
@@ -726,9 +737,16 @@ function fakeSetupDependencies(input?: {
         writes.push(to);
         return;
       }
+      if (from === "/pkg/plugin") {
+        files[`${to}/.codex-plugin/plugin.json`] = files["/pkg/plugin/.codex-plugin/plugin.json"];
+        files[`${to}/skills/korean-public-proposal/BUNDLE-MANIFEST.json`] = files["/pkg/plugin/skills/korean-public-proposal/BUNDLE-MANIFEST.json"];
+        files[`${to}/skills/korean-public-proposal/SKILL.md`] = files["/pkg/plugin/skills/korean-public-proposal/SKILL.md"];
+        files[`${to}/skills/korean-public-proposal/HWPX-ENGINE.json`] = files["/pkg/plugin/skills/korean-public-proposal/HWPX-ENGINE.json"];
+      }
       if (to.endsWith("/plugin/skills")) {
-        files[`${to}/longtable/SKILL.md`] = files[`${from}/longtable/SKILL.md`] ?? "# LongTable\n";
-        files[`${to}/longtable-research/SKILL.md`] = files[`${from}/longtable-research/SKILL.md`] ?? "# LongTable Research\n";
+        for (const [path, contents] of Object.entries(files)) {
+          if (path.startsWith(`${from}/`)) files[`${to}/${path.slice(from.length + 1)}`] = contents;
+        }
       }
       files[`${to}/.copied-from`] = from;
       writes.push(to);
@@ -762,29 +780,6 @@ function fakeSetupDependencies(input?: {
       if (rendered === "longtable scholar-research doctor --json") return ok("{\"ok\":true}\n");
       if (rendered === "kpp worker doctor --json") return ok(`{"ok":true,"protocol":"${WORKER_PROTOCOL_VERSION}"}\n`);
       if (rendered.startsWith("fc-match ")) return ok("NotoSansCJKkr-Regular.otf\n");
-      if (rendered.startsWith("longtable codex install-skills ")) {
-        const skillRoot = args[args.indexOf("--dir") + 1];
-        const legacySkill = "---\nname: scholar-research\ndescription: legacy\n---\n\n# scholar-research\n";
-        if (input?.realFilesystemWrites && skillRoot.startsWith(installRoot)) {
-          const { mkdir, writeFile } = await import("node:fs/promises");
-          await mkdir(join(skillRoot, "longtable"), { recursive: true });
-          await writeFile(join(skillRoot, "longtable", "SKILL.md"), "# LongTable\n", "utf8");
-          if (input?.legacyLongtableSkills) {
-            await mkdir(join(skillRoot, "scholar-research"), { recursive: true });
-            await writeFile(join(skillRoot, "scholar-research", "SKILL.md"), legacySkill, "utf8");
-          } else {
-            await mkdir(join(skillRoot, "longtable-research"), { recursive: true });
-            await writeFile(join(skillRoot, "longtable-research", "SKILL.md"), "# LongTable Research\n", "utf8");
-          }
-        }
-        files[`${skillRoot}/longtable/SKILL.md`] = "# LongTable\n";
-        if (input?.legacyLongtableSkills) {
-          files[`${skillRoot}/scholar-research/SKILL.md`] = legacySkill;
-        } else {
-          files[`${skillRoot}/longtable-research/SKILL.md`] = "# LongTable Research\n";
-        }
-        return ok("");
-      }
       if (rendered.startsWith("codex plugin marketplace list")) return ok(state.marketplaceRegistered || files[`${installRoot}/installation.json`] !== undefined
         ? JSON.stringify({ marketplaces: [{ name: "public-proposal", path: state.marketplacePath }] })
         : "{\"marketplaces\":[]}\n");
@@ -810,9 +805,9 @@ function task3Manifest(installRoot: string): Record<string, unknown> {
   return {
     schemaVersion: "1.0.0",
     packageVersion: "0.1.0",
-    kppVersion: "0.2.1",
+    kppVersion: "0.3.0",
     longtableVersion: "0.1.72",
-    pluginVersion: "0.1.0",
+    pluginVersion: "0.2.2",
     workerProtocol: "1.0.0",
     installRoot,
     pluginManifestSha256: `sha256:${installRoot}/plugin/.codex-plugin/plugin.json`,
@@ -834,9 +829,9 @@ function fakeManifest(input?: Partial<{
   return {
     schemaVersion: "1.0.0",
     packageVersion: "0.1.0",
-    kppVersion: "0.2.1",
+    kppVersion: "0.3.0",
     longtableVersion: "0.1.72",
-    pluginVersion: "0.1.0",
+    pluginVersion: "0.2.2",
     workerProtocol: "1.0.0",
     installRoot,
     pluginManifestSha256: `sha256:${installRoot}/plugin/.codex-plugin/plugin.json`,

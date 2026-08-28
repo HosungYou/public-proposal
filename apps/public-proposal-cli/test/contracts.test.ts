@@ -16,9 +16,9 @@ describe("public proposal installer contracts", () => {
     const manifest: InstallManifest = {
       schemaVersion: "1.0.0",
       packageVersion: "0.1.0",
-      kppVersion: "0.2.1",
+      kppVersion: "0.3.0",
       longtableVersion: "0.1.72",
-      pluginVersion: "0.2.0",
+      pluginVersion: "0.2.2",
       workerProtocol: "1.0.0",
       installRoot: "/tmp/public-proposal",
       pluginManifestSha256: "sha256:plugin",
@@ -32,7 +32,7 @@ describe("public proposal installer contracts", () => {
       createdAt: "2026-08-18T00:00:00.000Z",
     };
 
-    expect(manifest.kppVersion).toBe("0.2.1");
+    expect(manifest.kppVersion).toBe("0.3.0");
     expect(manifest.longtableVersion).toBe("0.1.72");
   });
 

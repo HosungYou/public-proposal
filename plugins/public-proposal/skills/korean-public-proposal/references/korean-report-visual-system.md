@@ -18,7 +18,7 @@ Do not use a row of generic cards when the content expresses a process, hierarch
 
 An ordinary analytical page should contain:
 
-1. a running header and section title;
+1. a running chapter/section header and compact section heading, not a repeated large page title;
 2. one supported claim, not a slogan;
 3. an evaluation locator or requirement reference;
 4. one dominant table, framework, matrix, or chart;
@@ -38,6 +38,8 @@ Use a two-zone page when an evaluator must read evidence and its decision bounda
 | evaluator annotation rail | evaluation question, claim status, evidence ID, use boundary, unresolved verification question |
 
 Keep the rail narrow and visually subordinate. It may summarize an evidence state; it must not introduce a new fact. Build the table and text as Word-native components. Insert only charts and complex frameworks as deterministic rendered assets. If the page becomes too tall, split the analysis across pages instead of shrinking body text or allowing a table to spill alone.
+
+On a continuation page, keep every heading at 12 pt or smaller unless a verified issuer rule is recorded in the architecture manifest. Do not restart the page with a 20.5 pt title, generic subtitle, or repeated lead/judgment bands. A semantic surface may continue across pages with explicit continuity markers.
 
 Treat the selected screenshot as a geometry target. Render the final DOCX page, place it beside the reference in a same-geometry comparison, inspect title scale, content density, rail width, chart legibility, source placement, and page balance, then iterate. Preserve issuer rules and verified content even when that prevents pixel identity.
 

@@ -15,12 +15,34 @@ export {
 export {
   initializeProject,
   PROJECT_DIRECTORIES,
+  persistProjectState,
   projectPath,
   readProject,
   PROJECT_FILE_NAME,
   type ProjectInitialization,
 } from "./project-store.js";
-export { type ProposalClass } from "@longtable/kpp-schemas";
+export {
+  DOCUMENT_MODES,
+  type DocumentMode,
+  type ProposalClass,
+} from "@longtable/kpp-schemas";
+export {
+  getDocumentModePolicy,
+  MODE_POLICY_VERSION,
+  type DocumentModePolicy,
+} from "./mode-policy.js";
+export {
+  validatePageArchitecture,
+  type ValidationEvidence,
+  type ValidationFinding,
+  type ValidationResult,
+} from "./page-architecture.js";
+export { validateReferenceManifest } from "./reference-integrity.js";
+export {
+  migrateProject,
+  type MigrateProjectOptions,
+  type MigrationReport,
+} from "./migration.js";
 export {
   advanceProject,
   allowedNext,

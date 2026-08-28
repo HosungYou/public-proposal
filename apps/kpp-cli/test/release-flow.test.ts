@@ -1,23 +1,30 @@
-import { access, chmod, copyFile, mkdir, mkdtemp, readFile, readdir, rm, stat, symlink, writeFile } from "node:fs/promises";
+import { access, chmod, copyFile, mkdir, mkdtemp, readFile, readdir, realpath, rm, stat, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { resolveTool } from "../../../tests/support/tool-paths.js";
 import { advanceProject, executeFile, initializeProject, sha256File, verifyProjectState, writeReceipt } from "@longtable/kpp-core";
 import { R08_TOKEN_PROFILE_SHA256, renderFigureArtifact, type GanttFigureSpec } from "@longtable/kpp-renderers";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { buildProject } from "../src/commands/build.js";
 import { auditProject } from "../src/commands/audit.js";
 import { approveProject } from "../src/commands/approve.js";
 import { releaseProject } from "../src/commands/release.js";
 import { renderProject } from "../src/commands/render.js";
+import { validateCompositeAuditReceiptForRelease } from "@longtable/kpp-audits";
 
 const TEMPLATE = resolve("workers/docx-python/assets/Korean Public Proposal A4 v1.docx");
+const WORKER_PYTHON = resolve("workers/docx-python/.venv/bin/python");
 
 describe("verified proposal release flow", () => {
   const roots: string[] = [];
 
+  beforeEach(() => {
+    process.env.KPP_WORKER_PATH = WORKER_PYTHON;
+  });
+
   afterEach(async () => {
+    delete process.env.KPP_WORKER_PATH;
     await Promise.all(roots.splice(0).map(async (root) => {
       await makeWritable(root);
       await rm(root, { recursive: true, force: true });
@@ -45,6 +52,15 @@ describe("verified proposal release flow", () => {
     const fixture = await createContentApprovedProject(roots);
     const built = await buildProject(fixture.root, { requestPath: fixture.requestPath });
     expect(built.state).toBe("BUILT");
+    const buildManifest = JSON.parse(await readFile(built.manifestPath, "utf8")) as {
+      inputs: { pageArchitectureSha256: string; referenceManifestSha256: string };
+    };
+    expect(buildManifest.inputs.pageArchitectureSha256).toBe(
+      await sha256File(join(fixture.root, "content", "page-architecture.json")),
+    );
+    expect(buildManifest.inputs.referenceManifestSha256).toBe(
+      await sha256File(join(fixture.root, "evidence", "reference-manifest.json")),
+    );
     expect((await stat(built.docxPath)).size).toBeGreaterThan(1_000);
     const rendered = await renderProject(fixture.root, { docxPath: built.docxPath });
     const blocked = await auditProject(fixture.root, {
@@ -67,6 +83,90 @@ describe("verified proposal release flow", () => {
     await expect(access(releaseOutput)).rejects.toBeDefined();
   }, 60_000);
 
+  it("binds architecture and reference hashes into the canonical build manifest", async () => {
+    const fixture = await createContentApprovedProject(roots);
+    const built = await buildProject(fixture.root, { requestPath: fixture.requestPath });
+    const manifest = JSON.parse(await readFile(built.manifestPath, "utf8")) as {
+      inputs: { pageArchitectureSha256: string; referenceManifestSha256: string };
+    };
+    expect(manifest.inputs).toMatchObject({
+      pageArchitectureSha256: await sha256File(join(fixture.root, "content", "page-architecture.json")),
+      referenceManifestSha256: await sha256File(join(fixture.root, "evidence", "reference-manifest.json")),
+    });
+  }, 60_000);
+
+  it("injects the receipt-bound continuation architecture and renders its heading at 12pt", async () => {
+    const fixture = await createContentApprovedProject(roots, false, false, 1, false, 12);
+    const built = await buildProject(fixture.root, { requestPath: fixture.requestPath });
+    const unzipped = await executeFile("/usr/bin/unzip", ["-p", built.docxPath, "word/document.xml"]);
+
+    expect(unzipped.stdout).toContain('w:sz w:val="24"');
+    expect(unzipped.stdout).not.toContain('w:sz w:val="32"');
+  }, 60_000);
+
+  it("blocks a receipt-bound 20.5pt continuation architecture through the normal CLI path", async () => {
+    const fixture = await createContentApprovedProject(roots, false, false, 1, false, 20.5);
+
+    await expect(buildProject(fixture.root, { requestPath: fixture.requestPath }))
+      .rejects.toMatchObject({ code: "KPP_BUILD_MANIFEST_UNBOUND" });
+    await expect(access(join(fixture.root, "receipts", "build.json"))).rejects.toBeDefined();
+  });
+
+  it("rejects caller-supplied page architecture that conflicts with the receipt-bound manifest", async () => {
+    const fixture = await createContentApprovedProject(roots);
+    const request = JSON.parse(await readFile(fixture.requestPath, "utf8")) as Record<string, unknown>;
+    request.pageArchitecture = {
+      schemaVersion: "2.0.0",
+      projectId: "conflicting-project",
+      documentMode: "research_service",
+      modePolicyVersion: "1.0.0",
+      architectureStatus: "complete",
+      chapters: [], sections: [], pages: [],
+    };
+    await writeFile(fixture.requestPath, `${JSON.stringify(request)}\n`);
+
+    await expect(buildProject(fixture.root, { requestPath: fixture.requestPath }))
+      .rejects.toMatchObject({ code: "KPP_BUILD_ARCHITECTURE_CONFLICT" });
+  });
+
+  it("rejects a missing reference manifest before starting the build worker", async () => {
+    const fixture = await createContentApprovedProject(roots);
+    await rm(join(fixture.root, "evidence", "reference-manifest.json"));
+    await expect(buildProject(fixture.root, { requestPath: fixture.requestPath }))
+      .rejects.toMatchObject({ code: "KPP_INPUT_RECEIPT_INVALID" });
+    await expect(access(join(fixture.root, "receipts", "build.json"))).rejects.toBeDefined();
+  });
+
+  it("rejects a manifest changed after its evidence receipt", async () => {
+    const fixture = await createContentApprovedProject(roots);
+    const architecturePath = join(fixture.root, "content", "page-architecture.json");
+    const architecture = JSON.parse(await readFile(architecturePath, "utf8")) as {
+      pages: Array<{ claimIds: string[] }>;
+    };
+    architecture.pages[0]!.claimIds = ["CLM-404"];
+    await writeFile(architecturePath, `${JSON.stringify(architecture)}\n`);
+    await expect(buildProject(fixture.root, { requestPath: fixture.requestPath }))
+      .rejects.toMatchObject({ code: "KPP_INPUT_RECEIPT_INVALID" });
+    await expect(access(join(fixture.root, "receipts", "build.json"))).rejects.toBeDefined();
+  });
+
+  it("rejects receipt-bound cross-mode roles and templates before the worker", async () => {
+    const fixture = await createContentApprovedProject(roots, false, false, 1, true);
+    await expect(buildProject(fixture.root, { requestPath: fixture.requestPath }))
+      .rejects.toMatchObject({ code: "KPP_BUILD_MANIFEST_UNBOUND" });
+    await expect(access(join(fixture.root, "receipts", "build.json"))).rejects.toBeDefined();
+  });
+
+  it.each([1, 2, 3])("rejects a receipt-bound staged %i-page architecture before the worker", async (pageCount) => {
+    const fixture = await createStagedBuildProject(roots, pageCount);
+    await expect(buildProject(fixture.root, { requestPath: fixture.requestPath }))
+      .rejects.toMatchObject({
+        code: "KPP_BUILD_MANIFEST_UNBOUND",
+        details: { rule: "architecture_staged" },
+      });
+    await expect(access(join(fixture.root, "receipts", "build.json"))).rejects.toBeDefined();
+  });
+
   it("runs managed build, real render, file-backed PASS audit, human approval, and immutable release", async () => {
     const fixture = await createContentApprovedProject(roots, true);
     const built = await buildProject(fixture.root, { requestPath: fixture.requestPath });
@@ -80,6 +180,10 @@ describe("verified proposal release flow", () => {
       figures: fixture.auditFigures,
     });
     expect(audited.report).toMatchObject({ status: "PASS", humanBoundary: "TECHNICAL_GATE_ONLY" });
+    expect((await validateCompositeAuditReceiptForRelease(fixture.root, audited.report)).findings).toEqual([]);
+    expect(audited.report.artifacts.map((artifact) => artifact.path)).toContain(
+      await realpath(join(fixture.root, "content", "page-architecture.json")),
+    );
     expect(audited.state).toBe("AUDITED");
     expect((await verifyProjectState(fixture.root)).state).toBe("AUDITED");
     const approved = await approveProject(fixture.root, { approvedBy: "제출책임자", auditPath: audited.auditPath });
@@ -97,6 +201,22 @@ describe("verified proposal release flow", () => {
       "audit/audit.json",
       "release.json",
     ]));
+  }, 60_000);
+
+  it("blocks the CLI audit when receipt-bound authoring prose restates a figure decision effect", async () => {
+    const fixture = await createContentApprovedProject(roots, true, false, 1, false, undefined, true);
+    const built = await buildProject(fixture.root, { requestPath: fixture.requestPath });
+    const rendered = await renderProject(fixture.root, { docxPath: built.docxPath });
+
+    const audited = await auditProject(fixture.root, {
+      docxPath: built.docxPath,
+      buildManifestPath: built.manifestPath,
+      renderManifestPath: rendered.manifestPath,
+      figures: fixture.auditFigures,
+    });
+
+    expect(audited).toMatchObject({ state: "RENDERED", report: { status: "BLOCKED" } });
+    expect(audited.report.findings.map(({ code }) => code)).toContain("KPP_FIGURE_VALUE_PROSE_RESTATEMENT");
   }, 60_000);
 
   it("blocks a semantic SVG paired with unrelated locked raster bytes before approval", async () => {
@@ -193,9 +313,9 @@ describe("verified proposal release flow", () => {
     await writeFile(manifestPath, `${JSON.stringify({
       schemaVersion: "1.0.0",
       packageVersion: "0.1.0",
-      kppVersion: "0.2.1",
+      kppVersion: "0.3.0",
       longtableVersion: "0.1.72",
-      pluginVersion: "0.1.0",
+      pluginVersion: "0.2.0",
       workerProtocol: "1.0.0",
       installRoot,
       pluginManifestSha256: "sha256:plugin",
@@ -244,6 +364,8 @@ describe("verified proposal release flow", () => {
       "submission/proposal.pdf",
       "submission/render-manifest.json",
       "audit/audit.json",
+      "audit/page-architecture.json",
+      "audit/reference-manifest.json",
     ]));
     const members = await listedFiles(released.releasePath);
     expect(members).toContain("release.json");
@@ -312,6 +434,9 @@ async function createContentApprovedProject(
   withFigure = false,
   unrelatedFigure = false,
   figureCount = 1,
+  crossModeArchitecture = false,
+  continuationTitlePoint?: number,
+  restatesFigureDecisionEffect = false,
 ): Promise<{
   readonly root: string;
   readonly requestPath: string;
@@ -319,7 +444,7 @@ async function createContentApprovedProject(
 }> {
   const root = await mkdtemp(join(tmpdir(), "kpp-release-build-"));
   roots.push(root);
-  await initializeProject(root, { projectId: "release-build-fixture" });
+  await initializeProject(root, { projectId: "release-build-fixture", documentMode: "research_service" });
   const semanticFigures: GanttFigureSpec[] = [{
     figureId: "FIG-GANTT-01",
     family: "gantt",
@@ -329,6 +454,10 @@ async function createContentApprovedProject(
     claimIds: ["CLM-01"],
     inputKind: "semantic",
     tokenProfileHash: R08_TOKEN_PROFILE_SHA256,
+    semanticValueIntent: "operational_control",
+    decisionEffect: "연구 일정의 담당자와 승인 관문을 확정한다.",
+    nonDuplicateOf: ["P-01"],
+    encodedVariables: ["owner", "timing", "acceptance"],
     data: {
       kind: "time_axis",
       periods: ["D1", "D50", "D100"],
@@ -353,19 +482,36 @@ async function createContentApprovedProject(
     intent: "schedule",
     dataShape: "time_axis",
     decisionTask: index === 0 ? "연구 단계와 검토 관문을 확인한다." : "검증 게이트와 인수 기준을 확인한다.",
+    semanticValueIntent: "operational_control",
+    decisionEffect: index === 0 ? "연구 단계의 담당자와 검토 관문을 확정한다." : "검증 게이트의 담당자와 인수 기준을 확정한다.",
+    nonDuplicateOf: [index === 0 ? "P-01" : "P-02"],
+    encodedVariables: ["owner", "timing", "acceptance"],
     claimIds: ["CLM-01"],
     evidenceIds: ["EV-01"],
     family: "gantt",
     renderer: "svg-gantt",
   }));
+  const architecturePageRoles = crossModeArchitecture
+    ? ["mutual_value", "research_question", "evidence_plan", "limitations", "utilization_plan"]
+    : ["research_method", "research_question", "evidence_plan", "limitations", "utilization_plan"];
+  const architectureSurfaceTemplateIds = crossModeArchitecture
+    ? ["partnership_narrative", "research_narrative", "evidence_analysis", "limitations_register", "utilization_roadmap"]
+    : ["method_design", "research_narrative", "evidence_analysis", "limitations_register", "utilization_roadmap"];
   const pagePlan = {
     schemaVersion: "1.0.0",
-    pages: [{ pageId: "P-01", requirementId: "REQ-01", pageRole: "research_method", surfaceTemplateId: "r08-research-method-v1", claimIds: ["CLM-01"], figureSpecs: plannedFigures }],
+    pages: architecturePageRoles.map((pageRole, index) => ({
+      pageId: `P-${String(index + 1).padStart(2, "0")}`,
+      requirementId: `REQ-${String(index + 1).padStart(2, "0")}`,
+      pageRole,
+      surfaceTemplateId: architectureSurfaceTemplateIds[index]!,
+      claimIds: index === 0 ? ["CLM-01"] : [],
+      figureSpecs: index === 0 ? plannedFigures : [],
+    })),
   };
   const evidenceLedger = {
     schemaVersion: "1.0.0",
     claims: [{ claimId: "CLM-01", status: "verified", evidenceIds: ["EV-01"] }],
-    bindings: [{ evidenceId: "EV-01", sourcePath: join(root, "evidence", "source.txt"), sourceSha256: "a".repeat(64), scope: "합성 검증 근거", claimIds: ["CLM-01"], targetRequirementId: "REQ-01", targetPageId: "P-01", targetPageRole: "research_method" }],
+    bindings: [{ evidenceId: "EV-01", sourcePath: join(root, "evidence", "source.txt"), sourceSha256: "b2c70bba7bf0ef43959341e03b923efd23fed1a0b3ed1895736736d88a5b39b0", scope: "합성 검증 근거", claimIds: ["CLM-01"], targetRequirementId: "REQ-01", targetPageId: "P-01", targetPageRole: "research_method" }],
   };
   const profile = lockedProfile();
   await mkdir(join(root, "content"), { recursive: true });
@@ -374,6 +520,8 @@ async function createContentApprovedProject(
   await writeFile(join(root, "content", "page-plan.json"), `${JSON.stringify(pagePlan)}\n`);
   await writeFile(join(root, "evidence", "evidence-ledger.json"), `${JSON.stringify(evidenceLedger)}\n`);
   await writeFile(join(root, "evidence", "source.txt"), "synthetic source\n");
+  const pageArchitecturePath = join(root, "content", "page-architecture.json");
+  const referenceManifestPath = join(root, "evidence", "reference-manifest.json");
   await writeFile(join(root, "figures", "design-profile.json"), `${JSON.stringify(profile)}\n`);
   const auditFigures: { specPath: string; svgPath: string; manifestPath: string }[] = [];
   const embeddedFigures: Record<string, unknown>[] = [];
@@ -408,13 +556,87 @@ async function createContentApprovedProject(
   }
   const approvedText = "공식 근거와 현장 검증을 연결하여 연구 결과의 활용 가능성을 높인다.";
   const tables = [{ tableId: "TBL-01", caption: "표 1. 연구 단계별 산출물", headers: ["단계", "산출물"], rows: [["착수", "연구설계서"]], columnWidthsDxa: [2400, 6000] }];
+  const pageTables = pagePlan.pages.map((_, index) => {
+    if (index === 0) return tables;
+    if (index === 1) return [{ tableId: "TBL-02", caption: "표 2. 연구 질문별 검토 기준", headers: ["질문", "검토 기준"], rows: [["연구 질문", "근거 적합성"]], columnWidthsDxa: [2400, 6000] }];
+    if (index === 3) return [{ tableId: "TBL-04", caption: "표 3. 한계별 대응 기준", headers: ["한계", "대응 기준"], rows: [["자료 범위", "보완 검토"]], columnWidthsDxa: [2400, 6000] }];
+    return [];
+  });
   const responsePath = join(root, "content", "authoring-response.json");
   const structurePath = join(root, "content", "build-structure.json");
   const figureManifestPath = join(root, "figures", "build-figure-manifest.json");
   const figureManifest = { schemaVersion: "1.0.0", figures: embeddedFigures };
-  await writeFile(responsePath, `${JSON.stringify({ schemaVersion: "1.0.0", blocks: [{ pageId: "P-01", claimIds: ["CLM-01"], evidenceIds: ["EV-01"], status: "provisional", text: approvedText, evaluatorAnswer: "합성 평가자 답변", pendingBlankFieldIds: [] }] })}\n`);
+  const responseBlocks = pagePlan.pages.map((page, index) => ({
+    pageId: page.pageId,
+    claimIds: index === 0 ? ["CLM-01"] : [],
+    evidenceIds: index === 0 ? ["EV-01"] : [],
+    status: "provisional",
+    text: index === 0
+      ? (restatesFigureDecisionEffect ? semanticFigures[0]!.decisionEffect : approvedText)
+      : `연구 문서 역할 ${index + 1}의 승인된 합성 본문이다.`,
+    evaluatorAnswer: `합성 평가자 답변 ${index + 1}`,
+    pendingBlankFieldIds: [],
+  }));
+  await writeFile(responsePath, `${JSON.stringify({ schemaVersion: "1.0.0", blocks: responseBlocks })}\n`);
   const figureIds = figuresToBuild.map((figure) => figure.figureId);
-  await writeFile(structurePath, `${JSON.stringify({ schemaVersion: "1.0.0", blocks: [{ pageId: "P-01", heading: "1. 연구 수행방법", tables, figureIds }] })}\n`);
+  await writeFile(pageArchitecturePath, `${JSON.stringify({
+    schemaVersion: "2.0.0",
+    projectId: "release-build-fixture",
+    documentMode: "research_service",
+    modePolicyVersion: "1.0.0",
+    architectureStatus: "complete",
+    chapters: [{ chapterId: "CH-001", order: 0 }],
+    sections: pagePlan.pages.map((_, index) => ({ sectionId: `SEC-${String(index + 1).padStart(3, "0")}`, chapterId: "CH-001", order: index })),
+    pages: pagePlan.pages.map((page, index) => ({
+      pageId: page.pageId,
+      chapterId: "CH-001",
+      sectionId: `SEC-${String(index + 1).padStart(3, "0")}`,
+      pageRole: page.pageRole,
+      surfaceTemplateId: page.surfaceTemplateId,
+      titleScope: index === 0 ? "chapter" : "section",
+      continuation: continuationTitlePoint !== undefined && index === 1,
+      ...(continuationTitlePoint !== undefined && index === 1 ? {
+        titlePointSize: continuationTitlePoint,
+        continuityFromPageId: pagePlan.pages[0]!.pageId,
+      } : {}),
+      ...(continuationTitlePoint !== undefined && index === 0 ? {
+        continuityToPageId: pagePlan.pages[1]!.pageId,
+      } : {}),
+      dominantSurface: index === 0 && figureIds.length > 0 ? "mixed" : index === 1 || index === 3 ? "table" : "narrative",
+      surfaceVisibility: "reader",
+      claimIds: index === 0 ? ["CLM-01"] : [],
+      proofIds: index === 0 && figureIds.length > 0 ? ["EV-01"] : [],
+      referenceIds: index === 0 ? ["EV-01"] : [],
+      figureIds: index === 0 ? figureIds : [],
+    })),
+  }, null, 2)}\n`);
+  await writeFile(referenceManifestPath, `${JSON.stringify({
+    schemaVersion: "2.0.0",
+    projectId: "release-build-fixture",
+    documentMode: "research_service",
+    modePolicyVersion: "1.0.0",
+    references: [{
+      referenceId: "EV-01",
+      referenceClass: "evidence",
+      sourcePath: join(root, "evidence", "source.txt"),
+      sourceSha256: "b2c70bba7bf0ef43959341e03b923efd23fed1a0b3ed1895736736d88a5b39b0",
+      locator: "합성 검증 근거",
+      targets: [
+        { kind: "claim", id: "CLM-01" },
+        { kind: "page", id: "P-01" },
+        ...figureIds.map((id) => ({ kind: "figure", id })),
+      ],
+      verificationStatus: "verified",
+      availability: "available",
+    }],
+  }, null, 2)}\n`);
+  const structureBlocks = pagePlan.pages.map((page, index) => ({
+    pageId: page.pageId,
+    heading: `${index + 1}. ${page.pageRole}`,
+    tables: pageTables[index]!,
+    figureIds: index === 0 ? figureIds : [],
+  }));
+  await writeFile(structurePath, `${JSON.stringify({ schemaVersion: "1.0.0", blocks: structureBlocks })}\n`);
   await writeFile(figureManifestPath, `${JSON.stringify(figureManifest)}\n`);
   await advanceToContentApproved(
     root,
@@ -426,6 +648,11 @@ async function createContentApprovedProject(
           ...auditFigures.flatMap((figure) => [figure.specPath, figure.svgPath, figure.manifestPath]),
         ]
       : [figureManifestPath],
+    undefined,
+    {
+      requirements: [join(root, "content", "page-plan.json"), pageArchitecturePath],
+      evidence: [join(root, "evidence", "evidence-ledger.json"), pageArchitecturePath, referenceManifestPath, join(root, "evidence", "source.txt")],
+    },
   );
   const request = {
     schemaVersion: "1.0.0",
@@ -433,7 +660,17 @@ async function createContentApprovedProject(
     template: { assetId: "korean-public-proposal-a4-v1", path: TEMPLATE, sha256: await sha256File(TEMPLATE) },
     pagePlan,
     evidenceLedger,
-    contentBlocks: [{ pageId: "P-01", heading: "1. 연구 수행방법", paragraphs: [{ text: approvedText, claimIds: ["CLM-01"], evidenceIds: ["EV-01"] }], tables, figureIds }],
+    contentBlocks: pagePlan.pages.map((page, index) => ({
+      pageId: page.pageId,
+      heading: structureBlocks[index]!.heading,
+      paragraphs: [{
+        text: responseBlocks[index]!.text,
+        claimIds: index === 0 ? ["CLM-01"] : [],
+        evidenceIds: index === 0 ? ["EV-01"] : [],
+      }],
+      tables: pageTables[index]!,
+      figureIds: index === 0 ? figureIds : [],
+    })),
     figureManifest,
     surfaceProfile: profile,
     output: { docxPath: join(root, "build", "proposal.docx"), manifestPath: join(root, "build", "build-manifest.json") },
@@ -442,6 +679,82 @@ async function createContentApprovedProject(
   await mkdir(join(root, "build"), { recursive: true });
   await writeFile(requestPath, `${JSON.stringify(request)}\n`);
   return { root, requestPath, auditFigures };
+}
+
+async function createStagedBuildProject(
+  roots: string[],
+  pageCount: number,
+): Promise<{ readonly root: string; readonly requestPath: string }> {
+  const root = await mkdtemp(join(tmpdir(), "kpp-release-staged-"));
+  roots.push(root);
+  await initializeProject(root, { projectId: "staged-build-fixture", documentMode: "public_procurement" });
+  const pages = Array.from({ length: pageCount }, (_, index) => ({
+    pageId: `P-${String(index + 1).padStart(2, "0")}`,
+    requirementId: `REQ-${String(index + 1).padStart(2, "0")}`,
+    pageRole: "requirement_response",
+    surfaceTemplateId: "process_control",
+    claimIds: [],
+    figureSpecs: [],
+  }));
+  const pagePlan = { schemaVersion: "1.0.0", pages };
+  const evidenceLedger = { schemaVersion: "1.0.0", claims: [], bindings: [] };
+  const profile = lockedProfile();
+  const pagePlanPath = join(root, "content", "page-plan.json");
+  const evidenceLedgerPath = join(root, "evidence", "evidence-ledger.json");
+  const architecturePath = join(root, "content", "page-architecture.json");
+  const referencesPath = join(root, "evidence", "reference-manifest.json");
+  const profilePath = join(root, "figures", "design-profile.json");
+  await writeFile(pagePlanPath, `${JSON.stringify(pagePlan)}\n`);
+  await writeFile(evidenceLedgerPath, `${JSON.stringify(evidenceLedger)}\n`);
+  await writeFile(profilePath, `${JSON.stringify(profile)}\n`);
+  await writeFile(architecturePath, `${JSON.stringify({
+    schemaVersion: "2.0.0",
+    projectId: "staged-build-fixture",
+    documentMode: "public_procurement",
+    modePolicyVersion: "1.0.0",
+    architectureStatus: "staged",
+    chapters: [{ chapterId: "CH-01", order: 0 }],
+    sections: pages.map((_, index) => ({ sectionId: `SEC-${index + 1}`, chapterId: "CH-01", order: index })),
+    pages: pages.map((page, index) => ({
+      pageId: page.pageId,
+      chapterId: "CH-01",
+      sectionId: `SEC-${index + 1}`,
+      pageRole: page.pageRole,
+      surfaceTemplateId: page.surfaceTemplateId,
+      titleScope: index === 0 ? "chapter" : "section",
+      continuation: false,
+      dominantSurface: "narrative",
+      surfaceVisibility: "internal",
+      claimIds: [],
+      proofIds: [],
+      referenceIds: [],
+      figureIds: [],
+    })),
+  }, null, 2)}\n`);
+  await writeFile(referencesPath, `${JSON.stringify({
+    schemaVersion: "2.0.0",
+    projectId: "staged-build-fixture",
+    documentMode: "public_procurement",
+    modePolicyVersion: "1.0.0",
+    references: [],
+  }, null, 2)}\n`);
+  await advanceToContentApproved(root, [], [profilePath], undefined, {
+    requirements: [pagePlanPath, architecturePath],
+    evidence: [evidenceLedgerPath, architecturePath, referencesPath],
+  });
+  const requestPath = join(root, "build", "build-request.json");
+  await writeFile(requestPath, `${JSON.stringify({
+    schemaVersion: "1.0.0",
+    projectId: "staged-build-fixture",
+    pagePlan,
+    evidenceLedger,
+    surfaceProfile: profile,
+    output: {
+      docxPath: join(root, "build", "proposal.docx"),
+      manifestPath: join(root, "build", "build-manifest.json"),
+    },
+  }, null, 2)}\n`);
+  return { root, requestPath };
 }
 
 async function rasterizeSvg(svgPath: string, outputDirectory: string): Promise<void> {
@@ -471,9 +784,91 @@ async function createAuditedProject(
   await initializeProject(root, {
     projectId: "release-fixture",
     proposalClass: researchRequired ? "research_service" : "general_procurement",
+    documentMode: researchRequired ? "research_service" : "public_procurement",
   });
+  const architecturePath = join(root, "content", "page-architecture.json");
+  const referencePath = join(root, "evidence", "reference-manifest.json");
+  const authoringPath = join(root, "content", "authoring-response.json");
+  const evidenceLedgerPath = join(root, "evidence", "evidence-ledger.json");
+  const sourcePath = join(root, "evidence", "source.txt");
+  await mkdir(join(root, "content"), { recursive: true });
+  await mkdir(join(root, "evidence"), { recursive: true });
+  const documentMode = researchRequired ? "research_service" : "public_procurement";
+  const pageRoles = researchRequired
+    ? ["research_method", "evidence_plan", "research_question", "limitations", "utilization_plan"]
+    : ["procurement_evaluation_crosswalk", "executive_summary", "requirement_response", "delivery_control"];
+  const pages = pageRoles.map((pageRole, index) => ({
+    pageId: `P-${String(index + 1).padStart(2, "0")}`,
+    chapterId: "CH-01",
+    sectionId: `SEC-${String(index + 1).padStart(2, "0")}`,
+    pageRole,
+    surfaceTemplateId: `${pageRole}-fixture`,
+    titleScope: index === 0 ? "chapter" : "section",
+    titlePointSize: index === 0 ? 20.5 : 12,
+    continuation: index > 0,
+    dominantSurface: "narrative",
+    surfaceVisibility: "reader",
+    evaluationQuestion: `fixture question ${index + 1}`,
+    directAnswer: `fixture answer ${index + 1}`,
+    claimIds: index === 0 ? ["CLM-01"] : [],
+    proofIds: index === 0 ? ["EV-01"] : [],
+    referenceIds: index === 0 ? ["REF-01"] : [],
+    figureIds: [],
+    ...(index > 0 ? { continuityFromPageId: `P-${String(index).padStart(2, "0")}` } : {}),
+    ...(index + 1 < pageRoles.length ? { continuityToPageId: `P-${String(index + 2).padStart(2, "0")}` } : {}),
+  }));
+  await writeFile(architecturePath, `${JSON.stringify({
+    schemaVersion: "2.0.0",
+    projectId: "release-fixture",
+    documentMode,
+    modePolicyVersion: "1.0.0",
+    architectureStatus: "complete",
+    chapters: [{ chapterId: "CH-01", title: "fixture", order: 0 }],
+    sections: pages.map((page, index) => ({
+      sectionId: page.sectionId,
+      chapterId: page.chapterId,
+      title: `fixture section ${index + 1}`,
+      order: index,
+    })),
+    pages,
+  }, null, 2)}\n`);
+  await writeFile(sourcePath, "synthetic verified source\n");
+  const sourceSha256 = await sha256File(sourcePath);
+  await writeFile(referencePath, `${JSON.stringify({
+    schemaVersion: "2.0.0",
+    projectId: "release-fixture",
+    documentMode,
+    modePolicyVersion: "1.0.0",
+    references: [{
+      referenceId: "REF-01",
+      referenceClass: "official",
+      sourcePath,
+      sourceSha256,
+      targets: [{ kind: "page", id: "P-01" }],
+      verificationStatus: "verified",
+      availability: "available",
+    }],
+  }, null, 2)}\n`);
+  await writeFile(authoringPath, "synthetic approved prose\n");
+  await writeFile(evidenceLedgerPath, `${JSON.stringify({
+    schemaVersion: "1.0.0",
+    claims: [{ claimId: "CLM-01", status: "verified", evidenceIds: ["EV-01"] }],
+    bindings: [{
+      evidenceId: "EV-01",
+      sourcePath,
+      sourceSha256,
+      scope: "fixture release evidence",
+      claimIds: ["CLM-01"],
+      targetRequirementId: "REQ-01",
+      targetPageId: "P-01",
+      targetPageRole: pageRoles[0],
+    }],
+  }, null, 2)}\n`);
   const researchReceiptPath = researchRequired ? await createResearchLock(root) : undefined;
-  await advanceToContentApproved(root, [], [], researchReceiptPath);
+  await advanceToContentApproved(root, [authoringPath], [], researchReceiptPath, {
+    requirements: [architecturePath],
+    evidence: [architecturePath, referencePath, evidenceLedgerPath, sourcePath],
+  });
   const generation = join(root, ".kpp-build-0123456789abcdef", "generations", "fixture");
   await mkdir(generation, { recursive: true });
   const docxPath = join(generation, "document.docx");
@@ -493,10 +888,90 @@ async function createAuditedProject(
   const auditPath = join(root, "audit", "audit.json");
   const geometryPath = join(root, "audit", "docx-geometry.json");
   await mkdir(join(root, "audit"), { recursive: true });
-  await writeFile(auditPath, "{\"schemaVersion\":\"1\",\"status\":\"PASS\",\"findings\":[],\"artifacts\":[],\"humanBoundary\":\"TECHNICAL_GATE_ONLY\"}\n");
   await writeFile(geometryPath, "{\"synthetic\":true}\n");
-  await writeStage(root, "AUDITED", [auditPath, geometryPath]);
+  await writeSyntheticCompositeAudit(auditPath, {
+    projectId: "release-fixture",
+    documentMode,
+    architecturePath,
+    referencePath,
+    geometryPath,
+    evidenceLedgerPath,
+    authoringPath,
+    contentReceiptPath: join(root, "receipts", "content-approval.json"),
+  });
+  await writeStage(root, "AUDITED", [auditPath, geometryPath, architecturePath, referencePath]);
   return { root, auditPath, pdfPath };
+}
+
+async function writeSyntheticCompositeAudit(
+  auditPath: string,
+  input: {
+    readonly projectId: string;
+    readonly documentMode: "public_procurement" | "research_service";
+    readonly architecturePath: string;
+    readonly referencePath: string;
+    readonly geometryPath: string;
+    readonly evidenceLedgerPath: string;
+    readonly authoringPath: string;
+    readonly contentReceiptPath: string;
+  },
+): Promise<void> {
+  const artifacts = await Promise.all([
+    { artifactClass: "page_architecture", path: input.architecturePath },
+    { artifactClass: "reference_manifest", path: input.referencePath },
+    { artifactClass: "render_observation", path: input.geometryPath },
+    { artifactClass: "evidence_ledger", path: input.evidenceLedgerPath },
+    { artifactClass: "authoring_response", path: input.authoringPath },
+    { artifactClass: "content_approval_receipt", path: input.contentReceiptPath },
+  ].map(async (artifact) => ({
+    ...artifact,
+    sha256: await sha256File(artifact.path),
+    bytes: (await stat(artifact.path)).size,
+  })));
+  const byClass = new Map(artifacts.map((artifact) => [artifact.artifactClass, artifact]));
+  const modeSlice = input.documentMode === "research_service"
+    ? "research_method_traceability"
+    : "procurement_evaluation_crosswalk";
+  const roleLocators = input.documentMode === "research_service"
+    ? ["page:P-01/role:research_method", "page:P-02/role:evidence_plan"]
+    : ["page:P-01/role:procurement_evaluation_crosswalk"];
+  const definitions = [
+    { sliceId: "page_architecture", classes: ["page_architecture", "render_observation"], locators: ["page:P-01"] },
+    { sliceId: "reference_integrity", classes: ["page_architecture", "reference_manifest", "evidence_ledger"], locators: ["reference:REF-01", "evidence:EV-01"] },
+    { sliceId: "render_repetition", classes: ["page_architecture", "render_observation"], locators: ["page:P-01"] },
+    { sliceId: "figure_value", classes: ["authoring_response", "content_approval_receipt"], locators: ["figure:none"] },
+    { sliceId: "korean_prose_review", classes: ["authoring_response", "content_approval_receipt"], locators: ["page:P-01"] },
+    { sliceId: modeSlice, classes: ["page_architecture"], locators: roleLocators },
+  ];
+  const slices = definitions.map(({ sliceId, classes, locators }) => {
+    const artifactBindings = classes.map((artifactClass) => byClass.get(artifactClass)!);
+    return {
+      schemaVersion: "1.0.0",
+      sliceId,
+      projectId: input.projectId,
+      documentMode: input.documentMode,
+      modePolicyVersion: "1.0.0",
+      status: "PASS",
+      inputHashes: artifactBindings.map(({ path, sha256 }) => ({ path, sha256 })),
+      findings: [],
+      reviewerScope: { reviewerType: "machine", reviewedLocators: locators, excludedLocators: [] },
+      artifactBindings,
+    };
+  });
+  const inputHashes = artifacts.map(({ path, sha256 }) => ({ path, sha256 }));
+  await writeFile(auditPath, `${JSON.stringify({
+    schemaVersion: "1.0.0",
+    projectId: input.projectId,
+    documentMode: input.documentMode,
+    modePolicyVersion: "1.0.0",
+    status: "PASS",
+    inputHashes,
+    slices,
+    artifactBindings: artifacts,
+    findings: [],
+    artifacts: artifacts.map(({ path, sha256, bytes }) => ({ path, sha256, bytes })),
+    humanBoundary: "TECHNICAL_GATE_ONLY",
+  })}\n`);
 }
 
 async function advanceToContentApproved(
@@ -504,6 +979,7 @@ async function advanceToContentApproved(
   contentApprovalFiles: string[] = [],
   designLockFiles: string[] = [],
   researchReceiptPath?: string,
+  lockedFiles: { readonly requirements: readonly string[]; readonly evidence: readonly string[] } | undefined = undefined,
 ): Promise<void> {
   for (const stage of ["SOURCE_LOCKED", "REQUIREMENTS_LOCKED", "EVIDENCE_LOCKED", "DESIGN_LOCKED", "CONTENT_APPROVED"] as const) {
     const artifact = join(root, "receipt-fixtures", `${stage}.txt`);
@@ -513,6 +989,10 @@ async function advanceToContentApproved(
       ? [artifact, ...contentApprovalFiles]
       : stage === "DESIGN_LOCKED"
         ? [artifact, ...designLockFiles]
+        : stage === "REQUIREMENTS_LOCKED" && lockedFiles !== undefined
+          ? [artifact, ...lockedFiles.requirements]
+          : stage === "EVIDENCE_LOCKED" && lockedFiles !== undefined
+            ? [artifact, ...lockedFiles.evidence]
         : [artifact], stage === "CONTENT_APPROVED" && researchReceiptPath !== undefined
       ? [await sha256File(researchReceiptPath)]
       : []);

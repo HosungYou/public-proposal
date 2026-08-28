@@ -1,0 +1,52 @@
+{
+  "schemaVersion": "1.0.0",
+  "receiptKind": "human_prose_effectiveness_evaluation",
+  "evaluationId": "kpp-prose-human-ab-2026-08-25",
+  "evaluatedAt": "2026-08-25T08:38:24Z",
+  "reviewer": {
+    "role": "user-designated final evaluator",
+    "identityStored": false
+  },
+  "inputs": {
+    "evaluationSha256": "4ba4ed0acd611b1e31fa856e52ec941dae9eece3ba6073a4c8ec0e7df0b71de2",
+    "sealedKeySha256": "539e97e1fb60ccf07ac3547c39b88effb2d425a2e4dfa171ba05bb23cacbfe08"
+  },
+  "choices": [
+    {
+      "pair": 1,
+      "profile": "evaluator_proposal",
+      "choice": "A",
+      "candidate": "vnext",
+      "reason": "더 짧으면서도 필요한 문구가 포함됨"
+    },
+    {
+      "pair": 2,
+      "profile": "research_analytic",
+      "choice": "A",
+      "candidate": "vnext",
+      "reason": "더 짧으면서도 필요한 문구가 포함됨"
+    },
+    {
+      "pair": 3,
+      "profile": "partnership_brief",
+      "choice": "B",
+      "candidate": "vnext",
+      "reason": null
+    }
+  ],
+  "result": {
+    "vnextWins": 3,
+    "baselineWins": 0,
+    "ties": 0,
+    "materialFactPreservationObjection": false,
+    "effectivenessValidated": true,
+    "status": "PASS"
+  },
+  "boundaries": {
+    "technicalGate": "PASS",
+    "humanProsePreference": "PASS",
+    "contentApproval": "NOT_GRANTED_BY_THIS_RECEIPT",
+    "visualApproval": "NOT_GRANTED_BY_THIS_RECEIPT",
+    "submissionApproval": "NOT_GRANTED_BY_THIS_RECEIPT"
+  }
+}

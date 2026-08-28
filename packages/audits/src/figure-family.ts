@@ -68,7 +68,8 @@ export async function auditFigureArtifacts(inputs: readonly FigureAuditInput[]):
           { path: input.svgPath, expected: roles },
         ));
       }
-      if (manifest.bindings.evidenceIds.length === 0 || manifest.bindings.claimIds.length === 0) {
+      if (spec.semanticValueIntent !== "decorative"
+        && (manifest.bindings.evidenceIds.length === 0 || manifest.bindings.claimIds.length === 0)) {
         findings.push(blocked("KPP_DESIGN_SURFACE_LINEAGE", "figure evidence/claim binding이 비어 있습니다.", { path: input.manifestPath }));
       }
     } catch (error) {
@@ -138,18 +139,21 @@ export async function auditFigureDocumentBindings(input: FigureDocumentBindingIn
     for (const { figureInput, spec, rendererManifest, sourceArtifacts } of auditedFigures) {
       artifacts.push(...sourceArtifacts);
       const record = recordById.get(spec.figureId);
-      const expectedRenderer = `svg-${spec.family}`;
+      const expectedRenderer = expectedEmbeddedRenderer(spec.family);
+      const allowedRenderers = spec.family === "raci"
+        ? [expectedRenderer, "svg-raci-matrix"]
+        : [expectedRenderer];
       if (record === undefined || rendererManifest.figure.id !== spec.figureId
         || rendererManifest.figure.family !== spec.family
         || !sameOrderedStrings(rendererManifest.bindings.evidenceIds, spec.evidenceIds)
         || !sameOrderedStrings(rendererManifest.bindings.claimIds, spec.claimIds)
-        || record.renderer !== expectedRenderer || record.format !== "png" || record.embedded !== true
+        || !allowedRenderers.includes(record.renderer as string) || record.format !== "png" || record.embedded !== true
         || typeof record.path !== "string" || typeof record.sha256 !== "string"
         || !sameOrderedStrings(record.claimIds, spec.claimIds)
         || !sameOrderedStrings(record.evidenceIds, spec.evidenceIds)) {
         findings.push(blocked("KPP_DESIGN_FIGURE_MEDIA_LINEAGE", "build figure record가 audited semantic figure와 일치하지 않습니다.", {
           path: input.buildManifestPath,
-          expected: { figureId: spec.figureId, renderer: expectedRenderer, format: "png" },
+          expected: { figureId: spec.figureId, renderer: allowedRenderers, format: "png" },
           actual: record,
         }));
         continue;
@@ -181,6 +185,13 @@ export async function auditFigureDocumentBindings(input: FigureDocumentBindingIn
     }));
   }
   return makeSlice(findings, artifacts);
+}
+
+/** Keep DOCX build records aligned with the persisted semantic-figure schema. */
+export function expectedEmbeddedRenderer(family: FigureSpec["family"]): string {
+  if (family === "raci") return "word-native-raci-table";
+  if (family === "framework") return "svg-academic-framework";
+  return "svg-gantt";
 }
 
 async function rasterizedSvgSha256(svgPath: string, soffice: string): Promise<string> {

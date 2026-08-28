@@ -2,6 +2,8 @@ import { describe, expect, it } from "vitest";
 import {
   EvidenceBindingSchema,
   EvidenceItemSchema,
+  FigureSemanticValueIntentSchema,
+  SemanticFigureSpecSchema,
   ProposalClassSchema,
   ProjectSchema,
   ProjectStateSchema,
@@ -46,6 +48,44 @@ describe("canonical persisted schemas", () => {
         evidenceIds: [],
       }),
     ).toThrow();
+  });
+
+  it("requires an explicit, non-decorative figure value declaration and preserves decorative non-evidentiary boundaries", () => {
+    expect(FigureSemanticValueIntentSchema.options).toEqual([
+      "data_evidence",
+      "causal_mechanism",
+      "decision_tradeoff",
+      "operational_control",
+      "decorative",
+    ]);
+    const figure = {
+      figureId: "FIG-001",
+      requirementId: "REQ-001",
+      pageId: "PAGE-001",
+      title: "비용 비교",
+      intent: "comparison",
+      dataShape: "comparison_series",
+      decisionTask: "대안별 비용을 검토한다.",
+      semanticValueIntent: "data_evidence",
+      decisionEffect: "비용 대비 도입 우선순위를 결정한다.",
+      nonDuplicateOf: ["BLK-COMPARISON-NARRATIVE"],
+      encodedVariables: ["cost", "priority"],
+      claimIds: ["CLAIM-001"],
+      evidenceIds: ["EV-001"],
+      family: "comparison_chart",
+      renderer: "svg-comparison-chart",
+    } as const;
+    expect(SemanticFigureSpecSchema.parse(figure).semanticValueIntent).toBe("data_evidence");
+    expect(() => SemanticFigureSpecSchema.parse({ ...figure, semanticValueIntent: "decorative" })).toThrow();
+    expect(SemanticFigureSpecSchema.parse({
+      ...figure,
+      semanticValueIntent: "decorative",
+      decisionEffect: "",
+      nonDuplicateOf: [],
+      encodedVariables: [],
+      claimIds: [],
+      evidenceIds: [],
+    }).claimIds).toEqual([]);
   });
 
   it("permits empty evidence ids only for unresolved claim states", () => {
@@ -102,6 +142,53 @@ describe("canonical persisted schemas", () => {
     ).toBe("INIT");
   });
 
+  it("keeps legacy projects readable while requiring metadata for v2", () => {
+    const legacy = ProjectSchema.parse({
+      schemaVersion: "1.0.0",
+      projectId: "legacy",
+      proposalClass: "general_procurement",
+      state: "INIT",
+      issuerPack: null,
+      approvalPolicy: "single_owner",
+    });
+    expect("documentMode" in legacy).toBe(false);
+
+    expect(() => ProjectSchema.parse({
+      schemaVersion: "2.0.0",
+      projectId: "v2",
+      proposalClass: "general_procurement",
+      state: "INIT",
+      issuerPack: null,
+      approvalPolicy: "single_owner",
+      modePolicyVersion: "1.0.0",
+      migrationHistory: [],
+    })).toThrow();
+
+    const current = ProjectSchema.parse({
+      schemaVersion: "2.0.0",
+      projectId: "v2",
+      proposalClass: "general_procurement",
+      state: "INIT",
+      issuerPack: null,
+      approvalPolicy: "single_owner",
+      documentMode: "public_procurement",
+      modePolicyVersion: "1.0.0",
+      migrationHistory: [],
+    });
+    expect("documentMode" in current ? current.documentMode : undefined).toBe("public_procurement");
+  });
+
+  it("rejects unknown project schema versions instead of treating them as legacy", () => {
+    expect(() => ProjectSchema.parse({
+      schemaVersion: "3.0.0",
+      projectId: "unknown",
+      proposalClass: "general_procurement",
+      state: "INIT",
+      issuerPack: null,
+      approvalPolicy: "single_owner",
+    })).toThrow();
+  });
+
   it("accepts only the supported proposal classes", () => {
     const classes = [
       "academic_research",
@@ -133,10 +220,10 @@ describe("canonical persisted schemas", () => {
       files: [
         {
           path: "sources/rfp.pdf",
-          sha256: "a".repeat(64),
+          sha256: "A".repeat(64),
         },
       ],
-      inputReceiptHashes: [],
+      inputReceiptHashes: ["B".repeat(64)],
       result: "PASS",
     });
 

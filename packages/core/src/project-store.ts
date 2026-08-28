@@ -4,9 +4,11 @@ import { basename, dirname, join } from "node:path";
 import { parse, stringify } from "yaml";
 import {
   ProjectSchema,
+  type DocumentMode,
   type ProjectRecord,
   type ProposalClass,
 } from "@longtable/kpp-schemas";
+import { MODE_POLICY_VERSION } from "./mode-policy.js";
 import { KppError } from "./errors.js";
 
 export const PROJECT_FILE_NAME = "kpp.project.yaml";
@@ -29,7 +31,7 @@ export interface ProjectInitialization {
   readonly projectId: string;
   readonly issuerPack?: string | null;
   readonly proposalClass?: ProposalClass;
-  readonly schemaVersion?: string;
+  readonly documentMode?: DocumentMode;
 }
 
 export function projectPath(root: string): string {
@@ -41,12 +43,15 @@ export async function initializeProject(
   input: ProjectInitialization,
 ): Promise<ProjectRecord> {
   const project = parseProject({
-    schemaVersion: input.schemaVersion ?? "1.0.0",
+    schemaVersion: "2.0.0",
     projectId: input.projectId,
     proposalClass: input.proposalClass ?? "general_procurement",
     state: "INIT",
     issuerPack: input.issuerPack ?? null,
     approvalPolicy: "single_owner",
+    documentMode: input.documentMode ?? "public_procurement",
+    modePolicyVersion: MODE_POLICY_VERSION,
+    migrationHistory: [],
   }, projectPath(root));
 
   await Promise.all(PROJECT_DIRECTORIES.map((directory) => mkdir(join(root, directory), {

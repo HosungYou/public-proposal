@@ -6,6 +6,7 @@ import { afterEach, describe, expect, test } from "vitest";
 import {
   auditDocxArtifacts,
   auditFigureArtifacts,
+  auditFigureSemanticValue,
   auditProposal,
   auditReleaseReadiness,
   auditRenderArtifacts,
@@ -19,6 +20,7 @@ import {
 } from "@longtable/kpp-core";
 import {
   R08_TOKEN_PROFILE_SHA256,
+  describeFigureSemanticValue,
   renderFigureArtifact,
   type GanttFigureSpec,
 } from "@longtable/kpp-renderers";
@@ -248,6 +250,33 @@ describe("artifact-backed proposal audits", () => {
     expect(blocked.findings.map((finding) => finding.code)).toContain("KPP_DESIGN_GANTT_STRUCTURE");
   });
 
+  test("allows a rendered decorative figure with zero bindings to reach the zero-credit value gate", async () => {
+    const root = await makeRoot("kpp-decorative-render-");
+    const specPath = join(root, "decorative.spec.json");
+    const svgPath = join(root, "decorative.svg");
+    const manifestPath = join(root, "decorative.render.json");
+    const decorative: GanttFigureSpec = {
+      figureId: "FIG-DECORATIVE-RENDERED", family: "gantt", title: "장식용 구분 표지", caption: "그림 1. 장식용 구분 표지",
+      evidenceIds: [], claimIds: [], inputKind: "semantic", tokenProfileHash: R08_TOKEN_PROFILE_SHA256,
+      semanticValueIntent: "decorative", decisionEffect: "", nonDuplicateOf: [], encodedVariables: [],
+      data: {
+        kind: "time_axis", periods: ["D1", "D2"],
+        workPackages: [{ id: "WP-01", label: "구분", owner: "운영팀", start: 0, end: 1, evidenceIds: [] }],
+        milestones: [{ id: "M-01", label: "구분", period: 1, owner: "운영팀", evidenceIds: [], acceptance: "장 구분" }],
+      },
+    };
+    const rendered = await renderFigureArtifact(decorative);
+    await Promise.all([
+      writeFile(specPath, `${JSON.stringify(decorative)}\n`, "utf8"),
+      writeFile(svgPath, rendered.svg, "utf8"),
+      writeFile(manifestPath, `${JSON.stringify(rendered.manifest)}\n`, "utf8"),
+    ]);
+
+    expect((await auditFigureArtifacts([{ specPath, svgPath, manifestPath }])).status).toBe("PASS");
+    expect(auditFigureSemanticValue([describeFigureSemanticValue(decorative)], []).findings.map(({ code }) => code))
+      .toContain("KPP_FIGURE_VALUE_DECORATIVE");
+  });
+
   test("blocks a stale predecessor receipt even when every receipt says PASS", async () => {
     const root = await renderedProjectFixture();
     const receipt = join(root, "receipts", "render.json");
@@ -261,10 +290,27 @@ describe("artifact-backed proposal audits", () => {
     expect(result.findings.map((finding) => finding.code)).toContain("KPP_RELEASE_RECEIPT_CHAIN");
   });
 
-  test("writes a stable audit/audit.json that is bound to all real artifacts", async () => {
+  test("writes a stable structured audit when required reference and mode-role bindings are absent", async () => {
     const figure = await figureFixture();
     const docx = await docxFixture(figure);
     const render = await renderFixture(docx.docxPath);
+    const architectureRoot = await makeRoot("kpp-stable-architecture-");
+    const architecturePath = join(architectureRoot, "page-architecture.json");
+    const authoringResponsePath = join(architectureRoot, "authoring-response.json");
+    await writeFile(architecturePath, `${JSON.stringify(singlePageArchitecture(false), null, 2)}\n`);
+    await writeFile(authoringResponsePath, `${JSON.stringify({
+      schemaVersion: "1.0.0",
+      blocks: [{
+        pageId: "BLK-SCHEDULE-NARRATIVE", claimIds: ["CL-1"], evidenceIds: ["EV-1"], status: "provisional",
+        text: "일정의 근거는 별도 표에서 검토한다.", evaluatorAnswer: "일정 관문을 확인한다.", pendingBlankFieldIds: [],
+      }],
+    }, null, 2)}\n`);
+    const boundManifest = JSON.parse(await readFile(docx.buildManifestPath, "utf8")) as Record<string, unknown>;
+    boundManifest.inputs = {
+      ...((boundManifest.inputs as Record<string, unknown> | undefined) ?? {}),
+      pageArchitectureSha256: await sha256File(architecturePath),
+    };
+    await writeFile(docx.buildManifestPath, `${JSON.stringify(boundManifest, null, 2)}\n`);
     const root = await renderedProjectFixture({
       built: [docx.buildManifestPath, docx.docxPath],
       rendered: [render.manifestPath, render.pdfPath, render.pagePath],
@@ -274,22 +320,38 @@ describe("artifact-backed proposal audits", () => {
     const first = await auditProposal({
       root,
       docx,
+      pageArchitecturePath: architecturePath,
       renderManifestPath: render.manifestPath,
       trustedPdftotextPath: render.extractorPath,
       figures: [figure],
+      authoringResponsePath,
       outputPath,
     });
     const firstBytes = await readFile(outputPath, "utf8");
     const second = await auditProposal({
       root,
       docx,
+      pageArchitecturePath: architecturePath,
       renderManifestPath: render.manifestPath,
       trustedPdftotextPath: render.extractorPath,
       figures: [figure],
+      authoringResponsePath,
       outputPath,
     });
 
-    expect(first.status, JSON.stringify(first.findings)).toBe("PASS");
+    expect(first.status, JSON.stringify(first.findings)).toBe("BLOCKED");
+    expect(first.findings.map(({ code }) => code)).toEqual(expect.arrayContaining([
+      "KPP_REFERENCE_MANIFEST_UNBOUND",
+      "KPP_OPERATING_MODEL_TRACEABILITY_ROLE_MISSING",
+    ]));
+    expect(first.slices.map(({ sliceId }) => sliceId)).toEqual(expect.arrayContaining([
+      "page_architecture",
+      "reference_integrity",
+      "render_repetition",
+      "figure_value",
+      "korean_prose_review",
+      "operating_model_traceability",
+    ]));
     expect(second).toEqual(first);
     expect(await readFile(outputPath, "utf8")).toBe(firstBytes);
     expect(first.artifacts.every((artifact) => /^[a-f0-9]{64}$/u.test(artifact.sha256))).toBe(true);
@@ -312,7 +374,7 @@ describe("artifact-backed proposal audits", () => {
 
     expect(report.status).toBe("BLOCKED");
     expect(report.findings.map((finding) => finding.code)).toContain("KPP_RELEASE_RECEIPT_BINDING");
-  });
+  }, 60_000);
 
   test("blocks when the rendered PDF was produced from a different DOCX", async () => {
     const docx = await docxFixture();
@@ -332,12 +394,79 @@ describe("artifact-backed proposal audits", () => {
     expect(report.status).toBe("BLOCKED");
     expect(report.findings.map((finding) => finding.code)).toContain("KPP_DESIGN_SURFACE_LINEAGE");
   }, 60_000);
+
+  test("composes measured title hierarchy into the proposal audit blocker", async () => {
+    const docx = await docxFixture();
+    const render = await renderFixture(docx.docxPath);
+    const architectureRoot = await makeRoot("kpp-architecture-audit-");
+    const architecturePath = join(architectureRoot, "page-architecture.json");
+    await writeFile(architecturePath, `${JSON.stringify({
+      schemaVersion: "2.0.0",
+      projectId: "rendered-architecture-fixture",
+      documentMode: "private_partnership",
+      modePolicyVersion: "1.0.0",
+      architectureStatus: "staged",
+      chapters: [{ chapterId: "CH-01" }],
+      sections: [{ sectionId: "SEC-01", chapterId: "CH-01" }],
+      pages: [{
+        pageId: "P-01", chapterId: "CH-01", sectionId: "SEC-01",
+        pageRole: "operating_model", surfaceTemplateId: "operating_model",
+        titleScope: "section", titlePointSize: 16, continuation: true,
+        dominantSurface: "narrative", surfaceVisibility: "internal",
+        claimIds: [], proofIds: [], referenceIds: [], figureIds: [],
+        continuityFromPageId: "P-00",
+      }],
+    }, null, 2)}\n`);
+    const buildManifest = JSON.parse(await readFile(docx.buildManifestPath, "utf8")) as Record<string, unknown>;
+    buildManifest.inputs = {
+      ...((buildManifest.inputs as Record<string, unknown> | undefined) ?? {}),
+      pageArchitectureSha256: await sha256File(architecturePath),
+    };
+    await writeFile(docx.buildManifestPath, `${JSON.stringify(buildManifest, null, 2)}\n`);
+    const root = await renderedProjectFixture({
+      built: [docx.buildManifestPath, docx.docxPath],
+      rendered: [render.manifestPath, render.pdfPath, render.pagePath],
+    });
+
+    const report = await auditProposal({
+      root,
+      docx,
+      pageArchitecturePath: architecturePath,
+      renderManifestPath: render.manifestPath,
+      trustedPdftotextPath: render.extractorPath,
+      figures: [],
+      outputPath: join(root, "audit", "architecture-blocked.json"),
+    });
+
+    expect(report.findings.map((finding) => finding.code), JSON.stringify(report.findings)).toContain("KPP_PAGE_CONTINUATION_UNOBSERVED");
+    expect(report.artifacts.map((artifact) => artifact.path)).toContain(architecturePath);
+  }, 60_000);
 });
 
 async function makeRoot(prefix: string): Promise<string> {
   const root = await mkdtemp(join(tmpdir(), prefix));
   roots.push(root);
   return root;
+}
+
+function singlePageArchitecture(continuation: boolean): Record<string, unknown> {
+  return {
+    schemaVersion: "2.0.0",
+    projectId: "rendered-architecture-fixture",
+    documentMode: "private_partnership",
+    modePolicyVersion: "1.0.0",
+    architectureStatus: "staged",
+    chapters: [{ chapterId: "CH-01" }],
+    sections: [{ sectionId: "SEC-01", chapterId: "CH-01" }],
+    pages: [{
+      pageId: "P-01", chapterId: "CH-01", sectionId: "SEC-01",
+      pageRole: "operating_model", surfaceTemplateId: "operating_model",
+      titleScope: "section", titlePointSize: 12, continuation,
+      dominantSurface: "narrative", surfaceVisibility: "internal",
+      claimIds: [], proofIds: [], referenceIds: [], figureIds: [],
+      ...(continuation ? { continuityFromPageId: "P-00" } : {}),
+    }],
+  };
 }
 
 async function docxFixture(figure?: {
@@ -526,6 +655,10 @@ async function figureFixture(): Promise<{
     claimIds: ["CL-1"],
     inputKind: "semantic",
     tokenProfileHash: R08_TOKEN_PROFILE_SHA256,
+    semanticValueIntent: "operational_control",
+    decisionEffect: "수행 일정의 담당자와 승인 관문을 확정한다.",
+    nonDuplicateOf: ["BLK-SCHEDULE-NARRATIVE"],
+    encodedVariables: ["owner", "timing", "acceptance"],
     family: "gantt",
     data: {
       kind: "time_axis",

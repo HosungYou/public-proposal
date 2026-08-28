@@ -1,0 +1,15 @@
+{
+  "schemaVersion": "1.0.0",
+  "fixtureId": "anonymized-pharmacy-private-partnership",
+  "projectId": "anon-pharmacy-partnership-review",
+  "documentMode": "private_partnership",
+  "anonymization": {
+    "institution": "지역 약사회 A",
+    "partner": "헬스테크 기업 B",
+    "people": "의사결정자 및 실무담당자(익명)",
+    "realWorldIdentifiersPresent": false
+  },
+  "statusClasses": ["official_fact", "proposal_design", "pending_consultation"],
+  "pageRoles": ["mutual_value", "party_roles", "operating_model", "collaboration_options", "next_decision"],
+  "reviewBoundary": "REVIEW_CANDIDATE_NOT_APPROVED_OR_PUBLISHED"
+}

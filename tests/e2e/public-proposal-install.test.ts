@@ -13,14 +13,14 @@ afterEach(async () => {
 });
 
 describe("public proposal clean installation", () => {
-  it("reports the packaged plugin, KPP, LongTable, and worker at their pinned versions", async () => {
+  it("reports one public skill surface with internal KPP, LongTable, HWPX, and worker dependencies", async () => {
     const result = await runCleanInstallFixture();
 
     expect(result.exitCode).toBe(0);
     expect(result.report).toMatchObject({
       ok: true,
       manifest: {
-        kppVersion: "0.2.1",
+        kppVersion: "0.3.0",
         longtableVersion: "0.1.72",
         workerProtocol: "1.0.0",
       },
@@ -28,9 +28,10 @@ describe("public proposal clean installation", () => {
           name: "public-proposal",
           marketplaceSource: "./plugin",
         },
-        registeredSkills: {
-          longtable: true,
-          longtableResearch: true,
+        registeredSkills: ["korean-public-proposal"],
+        hwpxEngine: {
+          commit: "96a2633f23a08f707679d7e212ebdc59948260e6",
+          verified: true,
         },
     });
     expect(result.report.commands.map(({ name }) => name)).toEqual([
@@ -39,7 +40,7 @@ describe("public proposal clean installation", () => {
       "kpp doctor",
       "longtable doctor",
     ]);
-  });
+  }, 30_000);
 
   it("enforces an explicit fixture-only write boundary and environment allowlist", async () => {
     const result = await runCleanInstallFixture();
@@ -59,7 +60,7 @@ describe("public proposal clean installation", () => {
     );
     expect(runnerWrites.length).toBeGreaterThan(0);
     expect(runnerWrites.every(({ writePath }) => resolve(writePath).startsWith(`${resolve(result.report.fixtureRoot)}/`))).toBe(true);
-  });
+  }, 30_000);
 });
 
 describe("proposal-class research matrix", () => {

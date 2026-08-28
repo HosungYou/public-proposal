@@ -211,7 +211,7 @@ async function createFixture(temporaryDirectories: string[]) {
     writeFile(terminologyPath, terminologyText, "utf8"),
   ]);
 
-  expect(await run(["init", root, "--json"])).toMatchObject({ code: 0, stderr: "" });
+  expect(await run(["init", root, "--document-mode", "research_service", "--json"])).toMatchObject({ code: 0, stderr: "" });
   expect(await run(["ingest", root, rfpPath, "--json"])).toMatchObject({ code: 0, stderr: "" });
   const requirementsPath = join(fixtureDirectory, "requirements.json");
   await writeFile(requirementsPath, `${JSON.stringify({
@@ -234,6 +234,10 @@ async function createFixture(temporaryDirectories: string[]) {
         intent: "schedule",
         dataShape: "time_axis",
         decisionTask: "수행 일정을 검토한다.",
+        semanticValueIntent: "operational_control",
+        decisionEffect: "일정의 담당자와 검증 관문을 확정한다.",
+        nonDuplicateOf: ["BLK-SCHEDULE-NARRATIVE"],
+        encodedVariables: ["owner", "timing", "acceptance"],
         claimIds: ["CLAIM-001"],
         evidenceIds: ["EV-001"],
         family: "gantt",

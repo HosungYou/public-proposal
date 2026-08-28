@@ -1,6 +1,6 @@
 import {
   R08_RENDERER_TOKENS,
-  assertNonEmptyIds,
+  assertFigureEvidenceIds,
   assertText,
   escapeXml,
   figureScopedIds,
@@ -46,12 +46,11 @@ export function renderFramework(figure: FrameworkFigureSpec): string {
     if (from === undefined || to === undefined) {
       throw new Error("Framework connector layout could not resolve a declared node");
     }
-    const path = connectorPath(from, to, nodeWidth, nodeHeight);
-    const label = connectorLabelPosition(from, to, nodeWidth, nodeHeight);
-    lines.push(`  <g data-kpp-role="connector" data-from="${escapeXml(edge.from)}" data-to="${escapeXml(edge.to)}">`);
-    lines.push(`    <path d="${path}" fill="none" stroke="${R08_RENDERER_TOKENS.navySecondary}" stroke-width="2" marker-end="url(#${ids.arrow})"/>`);
+    const layout = connectorLayout(from, to, nodeWidth, nodeHeight, positions);
+    lines.push(`  <g data-kpp-role="connector" data-from="${escapeXml(edge.from)}" data-to="${escapeXml(edge.to)}" data-kpp-route="${layout.route}">`);
+    lines.push(`    <path d="${layout.path}" fill="none" stroke="${R08_RENDERER_TOKENS.navySecondary}" stroke-width="2" marker-end="url(#${ids.arrow})"/>`);
     if (edge.label !== undefined) {
-      lines.push(`    <text class="meta" text-anchor="middle" x="${format(label.x)}" y="${format(label.y)}">${escapeXml(edge.label)}</text>`);
+      lines.push(`    <text class="meta" data-kpp-role="connector-label" data-from="${escapeXml(edge.from)}" data-to="${escapeXml(edge.to)}" text-anchor="middle" x="${format(layout.label.x)}" y="${format(layout.label.y)}">${escapeXml(edge.label)}</text>`);
     }
     lines.push("  </g>");
   }
@@ -92,7 +91,7 @@ function validateFramework(figure: FrameworkFigureSpec): readonly FrameworkNode[
     assertText(node.owner, "node.owner");
     assertText(node.state, "node.state");
     assertText(node.acceptance, "node.acceptance");
-    assertNonEmptyIds(node.evidenceIds, "node.evidenceIds");
+    assertFigureEvidenceIds(figure, node.evidenceIds, "node.evidenceIds");
     if (byId.has(node.id)) {
       throw new Error("Framework node IDs must be unique");
     }
@@ -125,29 +124,64 @@ interface NodePosition {
   readonly row: number;
 }
 
-function connectorPath(from: NodePosition, to: NodePosition, width: number, height: number): string {
+interface ConnectorLayout {
+  readonly path: string;
+  readonly label: Readonly<{ x: number; y: number }>;
+  readonly route: "direct" | "above-row" | "orthogonal";
+}
+
+function connectorLayout(
+  from: NodePosition,
+  to: NodePosition,
+  width: number,
+  height: number,
+  positions: ReadonlyMap<string, NodePosition>,
+): ConnectorLayout {
   if (from.row === to.row) {
     const leftToRight = from.x < to.x;
+    const intervening = [...positions.values()].some((position) => (
+      position.row === from.row
+      && position.x > Math.min(from.x, to.x)
+      && position.x < Math.max(from.x, to.x)
+    ));
+    if (intervening) {
+      // A skipped node must never be crossed by a connector or its label.
+      // Route above the row and keep the label in the clear band between the
+      // chapter title and the node cards.  The previous midpoint placement
+      // put S→B labels inside the intervening A card, hiding the text.
+      const routeY = Math.max(44, Math.min(from.y, to.y) - 18);
+      const fromX = leftToRight ? from.x + width + 4 : from.x - 4;
+      const toX = leftToRight ? to.x - 8 : to.x + width + 8;
+      return {
+        path: `M ${format(fromX)} ${format(from.y + height / 2)} V ${format(routeY)} H ${format(toX)} V ${format(to.y + height / 2)}`,
+        label: { x: (fromX + toX) / 2, y: routeY - 6 },
+        route: "above-row",
+      };
+    }
     const fromX = leftToRight ? from.x + width + 4 : from.x - 4;
     const toX = leftToRight ? to.x - 8 : to.x + width + 8;
     const centerY = from.y + height / 2;
-    return `M ${format(fromX)} ${format(centerY)} H ${format(toX)}`;
+    return {
+      path: `M ${format(fromX)} ${format(centerY)} H ${format(toX)}`,
+      // Keep direct-edge labels in the clear band above the node cards.  The
+      // former center-line placement put even adjacent labels partly under a
+      // node fill when the gap was narrower than the text width.
+      label: { x: (fromX + toX) / 2, y: from.y - 8 },
+      route: "direct",
+    };
   }
   const fromX = from.x + width / 2;
   const fromY = from.y + height + 4;
   const toX = to.x + width / 2;
   const toY = to.y - 8;
   const middleY = from.y + height + (to.y - (from.y + height)) / 2;
-  return `M ${format(fromX)} ${format(fromY)} V ${format(middleY)} H ${format(toX)} V ${format(toY)}`;
-}
-
-function connectorLabelPosition(from: NodePosition, to: NodePosition, width: number, height: number): Readonly<{ x: number; y: number }> {
-  if (from.row === to.row) {
-    return { x: (from.x + width + to.x) / 2, y: from.y + height / 2 - 9 };
-  }
   return {
-    x: (from.x + width / 2 + to.x + width / 2) / 2,
-    y: from.y + height + (to.y - (from.y + height)) / 2 - 6,
+    path: `M ${format(fromX)} ${format(fromY)} V ${format(middleY)} H ${format(toX)} V ${format(toY)}`,
+    label: {
+      x: (from.x + width / 2 + to.x + width / 2) / 2,
+      y: middleY - 6,
+    },
+    route: "orthogonal",
   };
 }
 

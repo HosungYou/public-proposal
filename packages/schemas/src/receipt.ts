@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { ProjectStateSchema } from "./project.js";
+import { DocumentModeSchema } from "./document-mode.js";
 
 const Sha256Schema = z.string().regex(/^[a-f0-9]{64}$/i);
 
@@ -18,6 +19,10 @@ export const ReceiptSchema = z.object({
   files: z.array(ReceiptFileSchema),
   inputReceiptHashes: z.array(Sha256Schema),
   result: ReceiptResultSchema,
+  projectId: z.string().trim().min(1).optional(),
+  documentMode: DocumentModeSchema.optional(),
+  modePolicyVersion: z.string().trim().min(1).optional(),
+  receiptKind: z.string().trim().min(1).optional(),
 }).superRefine((receipt, context) => {
   if (receipt.result === "PASS" && receipt.files.length === 0) {
     context.addIssue({

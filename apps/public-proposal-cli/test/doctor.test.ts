@@ -164,8 +164,8 @@ describe("public proposal doctor", () => {
     );
   });
 
-  it.each(["longtable", "longtable-research"])("blocks when the plugin-discoverable %s skill is missing", async (skill) => {
-    const report = await runDoctor(fakeDoctorInput(), fakeDoctorDependencies({ missingSkill: skill }));
+  it("blocks when the plugin exposes an additional skill surface", async () => {
+    const report = await runDoctor(fakeDoctorInput(), fakeDoctorDependencies({ extraSkillSurface: "longtable" }));
 
     expect(report.ok).toBe(false);
     expect(report.checks).toContainEqual(expect.objectContaining({
@@ -227,7 +227,7 @@ function fakeDoctorDependencies(input?: {
   pluginManifestSha?: string;
   installedPluginSha?: string;
     installedWorkerSha?: string;
-    missingSkill?: string;
+    extraSkillSurface?: string;
     codexRegistration?: boolean;
 }): FakeDoctorDependencies {
   const kppVersion = input?.kppVersion === undefined ? SUPPORTED_KPP_VERSION : input.kppVersion;
@@ -259,9 +259,9 @@ function fakeDoctorDependencies(input?: {
         return JSON.stringify({
           schemaVersion: "1.0.0",
           packageVersion: "0.1.0",
-          kppVersion: "0.2.1",
+          kppVersion: "0.3.0",
           longtableVersion: "0.1.72",
-          pluginVersion: "0.1.0",
+          pluginVersion: "0.2.2",
           workerProtocol: "1.0.0",
           installRoot: "/home/ada/.config/public-proposal",
           pluginManifestSha256: "sha256:/home/ada/.config/public-proposal/plugin/.codex-plugin/plugin.json",
@@ -297,18 +297,6 @@ function fakeDoctorDependencies(input?: {
       if (path === "/home/ada/.config/public-proposal/plugin/skills/korean-public-proposal/SKILL.md") {
         return "# Korean Public Proposal\n";
       }
-      if (path === "/home/ada/.config/public-proposal/plugin/skills/longtable/SKILL.md" && input?.missingSkill !== "longtable") {
-        return "# LongTable\n";
-      }
-      if (path === "/home/ada/.config/public-proposal/plugin/skills/longtable-research/SKILL.md" && input?.missingSkill !== "longtable-research") {
-        return "# LongTable Research\n";
-      }
-      if (path === "/home/ada/.config/public-proposal/marketplace/plugin/skills/longtable/SKILL.md" && input?.missingSkill !== "longtable") {
-        return "# LongTable\n";
-      }
-      if (path === "/home/ada/.config/public-proposal/marketplace/plugin/skills/longtable-research/SKILL.md" && input?.missingSkill !== "longtable-research") {
-        return "# LongTable Research\n";
-      }
       if (path === "/pkg/plugin/.codex-plugin/plugin.json") {
         return JSON.stringify({ name: "public-proposal", version: "0.1.0" });
       }
@@ -325,6 +313,13 @@ function fakeDoctorDependencies(input?: {
     },
     exists: async (path) => path.startsWith("/home/ada/.config/public-proposal") || path.startsWith("/pkg"),
     realpath: async (path) => path,
+    listDir: async () => ["korean-public-proposal", ...(input?.extraSkillSurface ? [input.extraSkillSurface] : [])].sort(),
+    verifyHwpxEngine: async (skillRoot) => ({
+      commit: "96a2633f23a08f707679d7e212ebdc59948260e6",
+      root: `${skillRoot}/vendor/hwpx-skill`,
+      verified: true,
+      fileCount: 118,
+    }),
     spawn: async (command, args) => {
       const rendered = [command, ...args].join(" ");
       commands.push(rendered);

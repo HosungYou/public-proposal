@@ -20,6 +20,7 @@ import { manifestPath, manifestTempPath, installationRoot } from "../paths.js";
 import { nodeFs } from "../process.js";
 import { createPackageVersionResolver } from "../package-version.js";
 import { installManagedWorker, type ManagedWorkerInstallOptions } from "../worker.js";
+import { installPinnedHwpxEngine, verifyInstalledHwpxEngine, type HwpxEngineInstallation } from "../hwpx-engine.js";
 import { kppCheck, longtableCheck, runDoctor } from "./doctor.js";
 
 export interface SetupDependencies {
@@ -37,11 +38,14 @@ export interface SetupDependencies {
   readonly copyDir?: (from: string, to: string) => Promise<void>;
   readonly remove?: (path: string) => Promise<void>;
   readonly installWorker?: (root: string, runner: ProcessRunner, options?: ManagedWorkerInstallOptions) => Promise<WorkerInstallation>;
+  readonly installHwpxEngine?: (skillRoot: string, runner: ProcessRunner) => Promise<HwpxEngineInstallation>;
+  readonly verifyHwpxEngine?: (skillRoot: string) => Promise<HwpxEngineInstallation>;
+  readonly listDir?: (path: string) => Promise<readonly string[]>;
 }
 
 const PLAN = [
   "public-proposal plugin",
-  "@longtable/kpp-cli@0.2.1",
+  "@longtable/kpp-cli@0.3.0",
   "@longtable/cli@0.1.72",
   "managed worker protocol 1.0.0",
 ];
@@ -61,6 +65,7 @@ export async function runSetup(
   const copyDir = dependencies.copyDir ?? nodeFs.copyDir;
   const remove = dependencies.remove ?? nodeFs.remove;
   const installWorker = dependencies.installWorker ?? installManagedWorker;
+  const installHwpxEngine = dependencies.installHwpxEngine ?? installPinnedHwpxEngine;
 
   if (options.dryRun) {
     return { ok: true, plan: PLAN, writes: [], checks: [] };
@@ -103,7 +108,7 @@ export async function runSetup(
   }
   const legacyManifest = await readLegacyManifest(dependencies, manifest);
   if (legacyManifest) {
-    return migrateLegacyManifest(legacyManifest, installRoot, packageRoot, dependencies, exists, remove, installWorker);
+    return migrateLegacyManifest(legacyManifest, installRoot, packageRoot, dependencies, exists, remove, installWorker, installHwpxEngine);
   }
   if (await exists(manifest)) {
     return failed("PP_INSTALL_MANIFEST_MISMATCH", "Existing installation receipt cannot be parsed or is unsupported.", []);
@@ -150,19 +155,11 @@ export async function runSetup(
       join(ownedPaths[0], "skills", "korean-public-proposal", "BUNDLE-MANIFEST.json"),
       dependencies,
     );
+    await installHwpxEngine(join(ownedPaths[0], "skills", "korean-public-proposal"), dependencies.spawn);
     await copyDir(join(packageRoot, "marketplace"), ownedPaths[1]);
     await copyDir(join(packageRoot, "plugin"), join(ownedPaths[1], "plugin"));
     writes.push(ownedPaths[1]);
     await mirrorPackagedMarketplaceManifest(packageRoot, ownedPaths[1], dependencies);
-    await runRequired(dependencies.spawn, "longtable", [
-      "codex",
-      "install-skills",
-      "--surface",
-      "compact",
-      "--dir",
-      join(ownedPaths[0], "skills"),
-    ]);
-    await ensureLongTableResearchSkill(join(ownedPaths[0], "skills"), dependencies, exists);
     await copyDir(join(ownedPaths[0], "skills"), join(ownedPaths[1], "plugin", "skills"));
     marketplaceAdded = await ensureMarketplaceRegistered(
       dependencies.spawn,
@@ -197,6 +194,8 @@ export async function runSetup(
         exists,
         realpath: dependencies.realpath,
         sha256: dependencies.sha256,
+        listDir: dependencies.listDir,
+        verifyHwpxEngine: dependencies.verifyHwpxEngine ?? verifyInstalledHwpxEngine,
       },
     );
     doctorChecks = doctor.checks;
@@ -376,6 +375,7 @@ async function migrateLegacyManifest(
   exists: (path: string) => Promise<boolean>,
   remove: (path: string) => Promise<void>,
   installWorker: (root: string, runner: ProcessRunner, options?: ManagedWorkerInstallOptions) => Promise<WorkerInstallation>,
+  installHwpxEngine: (skillRoot: string, runner: ProcessRunner) => Promise<HwpxEngineInstallation>,
 ): Promise<SetupResult> {
   const requestedRoot = resolve(installRoot);
   const manifest = manifestPath(requestedRoot);
@@ -427,10 +427,7 @@ async function migrateLegacyManifest(
   try {
     const worker = await installWorker(requestedRoot, dependencies.spawn, { updateManifest: false });
     writes.push(workerRoot);
-    await runRequired(dependencies.spawn, "longtable", [
-      "codex", "install-skills", "--surface", "compact", "--dir", join(requestedRoot, "plugin", "skills"),
-    ]);
-    await ensureLongTableResearchSkill(join(requestedRoot, "plugin", "skills"), dependencies, exists);
+    await installHwpxEngine(join(requestedRoot, "plugin", "skills", "korean-public-proposal"), dependencies.spawn);
     await dependencies.copyDir?.(
       join(requestedRoot, "plugin", "skills"),
       join(requestedRoot, "marketplace", "plugin", "skills"),
@@ -460,6 +457,8 @@ async function migrateLegacyManifest(
         exists,
         realpath: dependencies.realpath,
         sha256: dependencies.sha256,
+        listDir: dependencies.listDir,
+        verifyHwpxEngine: dependencies.verifyHwpxEngine ?? verifyInstalledHwpxEngine,
       },
     );
     if (!doctor.ok) {
@@ -722,7 +721,7 @@ async function buildManifest(
     packageVersion,
     kppVersion: SUPPORTED_KPP_VERSION,
     longtableVersion: SUPPORTED_LONGTABLE_VERSION,
-    pluginVersion: plugin.version ?? "0.1.0",
+    pluginVersion: plugin.version ?? "0.2.2",
     workerProtocol: WORKER_PROTOCOL_VERSION,
     installRoot,
     pluginManifestSha256: await dependencies.sha256(pluginManifestPath),
@@ -736,29 +735,6 @@ async function buildManifest(
 
 async function mirrorPackagedFile(from: string, to: string, dependencies: SetupDependencies): Promise<void> {
   await dependencies.writeFile(to, await dependencies.readFile(from));
-}
-
-async function ensureLongTableResearchSkill(
-  skillsRoot: string,
-  dependencies: Pick<SetupDependencies, "readFile" | "writeFile">,
-  exists: (path: string) => Promise<boolean>,
-): Promise<void> {
-  const canonicalPath = join(skillsRoot, "longtable-research", "SKILL.md");
-  if (await exists(canonicalPath)) return;
-  const compatibilityPath = join(skillsRoot, "scholar-research", "SKILL.md");
-  let compatibilitySkill: string;
-  try {
-    compatibilitySkill = await dependencies.readFile(compatibilityPath);
-  } catch {
-    throw new SetupCommandError(
-      "PP_LONGTABLE_REQUIRED",
-      "Pinned LongTable CLI did not install the required longtable-research skill surface.",
-    );
-  }
-  const canonicalSkill = compatibilitySkill
-    .replace(/^name:\s*scholar-research\s*$/mu, "name: longtable-research")
-    .replace(/^#\s+scholar-research\s*$/mu, "# longtable-research");
-  await dependencies.writeFile(canonicalPath, canonicalSkill);
 }
 
 function failed(code: string, message: string, writes: readonly string[], checks: readonly DoctorCheck[] = []): SetupResult {

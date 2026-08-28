@@ -1,6 +1,6 @@
 {
   "name": "@longtable/public-proposal",
-  "version": "0.1.3",
+  "version": "0.2.2",
   "description": "Meta-installer scaffold for the LongTable public proposal toolchain.",
   "repository": {
     "type": "git",
@@ -37,7 +37,7 @@
   },
   "dependencies": {
     "@longtable/cli": "0.1.72",
-    "@longtable/kpp-cli": "0.2.1",
+    "@longtable/kpp-cli": "0.3.0",
     "commander": "15.0.0",
     "yaml": "2.9.0",
     "zod": "4.4.3"

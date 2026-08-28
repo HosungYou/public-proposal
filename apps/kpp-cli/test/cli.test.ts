@@ -94,6 +94,135 @@ describe("kpp CLI", () => {
     await expect(readFile(join(root, "kpp.project.yaml"), "utf8")).resolves.toContain(
       "proposalClass: general_procurement",
     );
+    await expect(readFile(join(root, "kpp.project.yaml"), "utf8")).resolves.toContain(
+      "schemaVersion: 2.0.0",
+    );
+    await expect(readFile(join(root, "kpp.project.yaml"), "utf8")).resolves.toContain(
+      "documentMode: public_procurement",
+    );
+  });
+
+  it("accepts an explicit document mode during init", async () => {
+    const root = await mkdtemp(join(tmpdir(), "kpp-cli-"));
+    temporaryDirectories.push(root);
+
+    const initialized = await run([
+      "init",
+      root,
+      "--document-mode",
+      "private_partnership",
+      "--json",
+    ]);
+
+    expect(initialized).toMatchObject({ code: 0, stderr: "" });
+    expect(parseEnvelope(initialized.stdout)).toMatchObject({
+      data: {
+        schemaVersion: "2.0.0",
+        documentMode: "private_partnership",
+        modePolicyVersion: "1.0.0",
+        migrationHistory: [],
+      },
+    });
+  });
+
+  it("keeps proposal class and document mode independent during init", async () => {
+    const root = await mkdtemp(join(tmpdir(), "kpp-cli-"));
+    temporaryDirectories.push(root);
+
+    const initialized = await run([
+      "init",
+      root,
+      "--proposal-class",
+      "research_service",
+      "--document-mode",
+      "private_partnership",
+      "--json",
+    ]);
+
+    expect(initialized).toMatchObject({ code: 0, stderr: "" });
+    expect(parseEnvelope(initialized.stdout)).toMatchObject({
+      data: {
+        proposalClass: "research_service",
+        documentMode: "private_partnership",
+      },
+    });
+  });
+
+  it("rejects unsupported migration targets and unknown document modes", async () => {
+    const root = await mkdtemp(join(tmpdir(), "kpp-cli-migrate-"));
+    temporaryDirectories.push(root);
+
+    const unsupportedTarget = await run(["migrate", root, "--to", "3.0.0", "--json"]);
+    const unknownMode = await run(["migrate", root, "--document-mode", "unknown_mode", "--json"]);
+
+    expect(unsupportedTarget.code).toBe(1);
+    expect(parseEnvelope(unsupportedTarget.stdout)).toMatchObject({
+      code: "KPP_MIGRATION_UNSUPPORTED_TARGET",
+    });
+    expect(unknownMode.code).toBe(1);
+    expect(parseEnvelope(unknownMode.stdout)).toMatchObject({ code: "KPP_INPUT_COMMAND" });
+  });
+
+  it("fails closed when doctor encounters an unknown schema version", async () => {
+    const root = await mkdtemp(join(tmpdir(), "kpp-cli-migrate-"));
+    temporaryDirectories.push(root);
+    await writeFile(join(root, "kpp.project.yaml"), [
+      "schemaVersion: 3.0.0",
+      "projectId: unknown-schema",
+      "proposalClass: general_procurement",
+      "state: INIT",
+      "issuerPack: null",
+      "approvalPolicy: single_owner",
+      "",
+    ].join("\n"));
+
+    const diagnosis = await run(["doctor", root, "--json"]);
+
+    expect(diagnosis.code).toBe(1);
+    expect(parseEnvelope(diagnosis.stdout)).toMatchObject({
+      code: "KPP_MIGRATION_UNSUPPORTED_SOURCE",
+    });
+  });
+
+  it("migrates only when --apply is supplied and doctor leaves v1 metadata untouched", async () => {
+    const root = await mkdtemp(join(tmpdir(), "kpp-cli-migrate-"));
+    temporaryDirectories.push(root);
+    const projectPath = join(root, "kpp.project.yaml");
+    const legacyProject = [
+      "schemaVersion: 1.0.0",
+      "projectId: legacy-project",
+      "proposalClass: general_procurement",
+      "state: INIT",
+      "issuerPack: null",
+      "approvalPolicy: single_owner",
+      "",
+    ].join("\n");
+    await writeFile(projectPath, legacyProject);
+
+    const diagnosis = await run(["doctor", root, "--json"]);
+    const dryRun = await run([
+      "migrate",
+      root,
+      "--document-mode",
+      "private_partnership",
+      "--json",
+    ]);
+
+    expect(diagnosis).toMatchObject({ code: 0, stderr: "" });
+    expect(dryRun).toMatchObject({ code: 0, stderr: "" });
+    await expect(readFile(projectPath, "utf8")).resolves.toBe(legacyProject);
+    await expect(readdir(root)).resolves.not.toContain(".kpp-migrations");
+
+    const applied = await run([
+      "migrate",
+      root,
+      "--document-mode",
+      "private_partnership",
+      "--apply",
+      "--json",
+    ]);
+    expect(applied).toMatchObject({ code: 0, stderr: "" });
+    await expect(readFile(projectPath, "utf8")).resolves.toContain("schemaVersion: 2.0.0");
   });
 
   it("persists an explicit proposal class during init", async () => {
@@ -182,10 +311,19 @@ describe("kpp CLI", () => {
   });
 
   it("does not pass worker protocol when only the version environment value is set", async () => {
-    const result = await runProcess(process.execPath, ["apps/kpp-cli/dist/main.js", "doctor", "--json"], {
-      KPP_WORKER_PATH: undefined,
-      KPP_WORKER_PROTOCOL_VERSION: "1.0.0",
-    });
+    const directory = await mkdtemp(join(tmpdir(), "kpp-cli-doctor-"));
+    temporaryDirectories.push(directory);
+    const result = await runProcess(
+      process.execPath,
+      [join(process.cwd(), "apps/kpp-cli/dist/main.js"), "doctor", "--json"],
+      {
+        KPP_WORKER_PATH: undefined,
+        KPP_WORKER_PROTOCOL_VERSION: "1.0.0",
+        PUBLIC_PROPOSAL_INSTALLATION_MANIFEST: undefined,
+        HOME: directory,
+      },
+      directory,
+    );
 
     expect(result).toMatchObject({ code: 0, stderr: "" });
     expect(checkNamed(parseEnvelope(result.stdout), "worker_protocol")).toMatchObject({
@@ -344,10 +482,11 @@ async function runProcess(
   command: string,
   args: readonly string[],
   overrides?: NodeJS.ProcessEnv,
+  workingDirectory: string = process.cwd(),
 ): Promise<CommandResult> {
   return new Promise((resolve) => {
     const child = spawn(command, args, {
-      cwd: process.cwd(),
+      cwd: workingDirectory,
       env: { ...process.env, ...overrides },
       stdio: ["ignore", "pipe", "pipe"],
     });
@@ -390,9 +529,9 @@ async function writeManagedManifest(
   await writeFile(path, `${JSON.stringify({
     schemaVersion: "1.0.0",
     packageVersion: "0.1.0",
-    kppVersion: "0.2.1",
+    kppVersion: "0.3.0",
     longtableVersion: "0.1.72",
-    pluginVersion: "0.1.0",
+    pluginVersion: "0.2.0",
     workerProtocol: "1.0.0",
     installRoot,
     pluginManifestSha256: "sha256:plugin",

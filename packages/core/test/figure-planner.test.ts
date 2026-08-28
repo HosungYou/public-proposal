@@ -65,6 +65,22 @@ describe("semantic figure planner", () => {
     }), "KPP_EVIDENCE_FIGURE_UNBOUND");
   });
 
+  it("represents a decorative figure with zero evidentiary bindings", () => {
+    expect(planFigure({
+      ...baseRequest(),
+      semanticValueIntent: "decorative",
+      decisionEffect: "",
+      nonDuplicateOf: [],
+      encodedVariables: [],
+      claimIds: [],
+      evidenceIds: [],
+    })).toMatchObject({
+      semanticValueIntent: "decorative",
+      claimIds: [],
+      evidenceIds: [],
+    });
+  });
+
   it("validates actual inspected Korean reference pages and emits only a provisional topology study", async () => {
     const source = await createVisualSourceFixture(temporaryDirectories);
     const packet = await validateVisualSourcePacket(source.packet);
@@ -212,6 +228,10 @@ function baseRequest(overrides: Record<string, unknown> = {}) {
     intent: "flow",
     dataShape: "process_flow",
     decisionTask: "평가자가 수행 방법을 검토한다.",
+    semanticValueIntent: "causal_mechanism",
+    decisionEffect: "평가자가 수행 경로의 인과관계를 판단한다.",
+    nonDuplicateOf: ["BLK-001"],
+    encodedVariables: ["input", "method", "output"],
     evidenceIds: ["EV-001"],
     claimIds: ["CLAIM-001"],
     ...overrides,

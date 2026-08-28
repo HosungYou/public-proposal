@@ -1,0 +1,26 @@
+{
+  "schemaVersion": "1.0.0",
+  "evaluation": "kpp-prose-human-ab-2026-08-25",
+  "disclosure": "Do not disclose until the reviewer submits all three choices.",
+  "pairs": [
+    {
+      "pair": 1,
+      "profile": "evaluator_proposal",
+      "baseline": "B",
+      "vnext": "A"
+    },
+    {
+      "pair": 2,
+      "profile": "research_analytic",
+      "baseline": "B",
+      "vnext": "A"
+    },
+    {
+      "pair": 3,
+      "profile": "partnership_brief",
+      "baseline": "A",
+      "vnext": "B"
+    }
+  ],
+  "passRule": "Promote when vNext wins at least two pairs and receives no material fact-preservation or information-sufficiency objection. A tie or baseline preference is calibration evidence, not an automatic failure."
+}

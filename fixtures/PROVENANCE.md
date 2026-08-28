@@ -19,3 +19,12 @@ and are not checked in.
 `PASS` for this fixture means the synthetic bytes satisfy a technical audit. It
 does not assert that any institution's proposal is current, accurate, visually
 approved for a submission, or human-approved.
+
+## Anonymized pharmacy private-partnership fixture
+
+`valid/pharmacy-private-partnership` is a fully synthetic, anonymized KPP vNext
+regression fixture. It contains no real institution, person, address, contact
+detail, contract amount, or asserted operational fact. Its three source records
+separate `official_fact`, `proposal_design`, and `pending_consultation`. The two
+pharmacy known-bad fixtures are mutation manifests over that base and exist only
+to prove title hierarchy, topology repetition, and decorative-evidence gates.

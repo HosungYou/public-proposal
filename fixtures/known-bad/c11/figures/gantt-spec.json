@@ -5,6 +5,10 @@
   "evidenceIds": ["EV-C11"],
   "claimIds": ["CL-C11"],
   "inputKind": "semantic",
+  "semanticValueIntent": "operational_control",
+  "decisionEffect": "일정 검토의 담당자와 승인 조건을 확정한다.",
+  "nonDuplicateOf": ["BLK-C11-SCHEDULE-NARRATIVE"],
+  "encodedVariables": ["owner", "timing", "acceptance"],
   "family": "gantt",
   "data": {"kind": "time_axis", "periods": ["D1", "D50", "D100"], "workPackages": [{"id": "WP1", "label": "검토", "owner": "책임자", "start": 0, "end": 1, "evidenceIds": ["EV-C11"]}], "milestones": [{"id": "M1", "label": "검토", "period": 1, "owner": "책임자", "evidenceIds": ["EV-C11"], "acceptance": "승인"}]}
 }

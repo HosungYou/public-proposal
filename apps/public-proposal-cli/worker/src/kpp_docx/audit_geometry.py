@@ -28,6 +28,7 @@ def audit_docx_geometry(
     findings: list[dict[str, Any]] = []
     facts = {"bodyParagraphs": 0, "nativeTables": 0, "drawings": 0, "captions": 0}
     embedded_media: list[dict[str, str]] = []
+    page_observations: list[dict[str, Any]] = []
     try:
         docx_hash = _sha256_file(docx)
     except OSError as error:
@@ -38,6 +39,7 @@ def audit_docx_geometry(
             facts,
             [_finding("KPP_DOCX_PACKAGE_INVALID", "DOCX 파일을 읽을 수 없습니다.", str(error))],
             embedded_media,
+            page_observations,
         )
 
     try:
@@ -50,12 +52,151 @@ def audit_docx_geometry(
             _audit_paragraphs(document, findings, facts)
             _audit_tables(document, findings, facts)
             _audit_drawings(document, relationships, names, archive, findings, facts, embedded_media)
+            page_observations = _observe_pages(document, styles, docx_hash)
     except (zipfile.BadZipFile, KeyError, ElementTree.ParseError, ValueError) as error:
         findings.append(
             _finding("KPP_DOCX_PACKAGE_INVALID", "DOCX ZIP/XML 패키지가 올바르지 않습니다.", str(error))
         )
 
-    return _report(docx, docx_hash, expected_profile_sha256, facts, findings, embedded_media)
+    return _report(
+        docx,
+        docx_hash,
+        expected_profile_sha256,
+        facts,
+        findings,
+        embedded_media,
+        page_observations,
+    )
+
+
+def _observe_pages(
+    document: ElementTree.Element,
+    styles: ElementTree.Element,
+    source_sha256: str,
+) -> list[dict[str, Any]]:
+    style_sizes = _style_point_sizes(styles)
+    body = document.find(f"./{W}body")
+    if body is None:
+        return []
+    raw_pages: list[list[ElementTree.Element]] = [[]]
+    for child in list(body):
+        if child.tag == f"{W}sectPr":
+            continue
+        if child.tag == f"{W}p" and child.find(f".//{W}br[@{W}type='page']") is not None:
+            if raw_pages[-1]:
+                raw_pages.append([])
+            continue
+        raw_pages[-1].append(child)
+    pages = [page for page in raw_pages if page]
+    width_point, height_point = _page_size_points(body)
+    observations: list[dict[str, Any]] = []
+    for index, elements in enumerate(pages):
+        headings: list[float] = []
+        titles: list[dict[str, object]] = []
+        signature: list[str] = []
+        text_blocks = 0
+        table_count = 0
+        figure_count = 0
+        for element_index, element in enumerate(elements):
+            if element.tag == f"{W}tbl":
+                table_count += 1
+                signature.append(f"table:{len(element.findall(f'.//{W}tr'))}")
+                continue
+            if element.tag != f"{W}p":
+                continue
+            text = "".join(node.text or "" for node in element.findall(f".//{W}t"))
+            style = _attribute(element.find(f"./{W}pPr/{W}pStyle"), W, "val") or "none"
+            drawings = len(element.findall(f".//{W}drawing"))
+            figure_count += drawings
+            if text.strip():
+                text_blocks += 1
+            signature.append(f"{style}:{len(text.strip())}:{drawings}")
+            if style == "KPPHeading1":
+                point_size = _paragraph_heading_point_size(element, style_sizes.get(style, 0.0))
+                if point_size > 0:
+                    headings.append(point_size)
+                    region = "top" if element_index < max(2, len(elements) // 3) else "body"
+                    titles.append(
+                        {
+                            "textFingerprint": hashlib.sha256(text.strip().encode("utf-8")).hexdigest(),
+                            "pointSize": point_size,
+                            "region": region,
+                        }
+                    )
+        observations.append(
+            {
+                "pageNumber": index + 1,
+                "pageLocator": f"page:{index + 1:04d}",
+                "sourceArtifactSha256": source_sha256,
+                "measuredHeadingPointSizes": headings,
+                "titleBlocks": titles,
+                "surfaceFamily": _observed_surface_family(table_count, figure_count),
+                "regionFingerprints": [
+                    hashlib.sha256("\0".join(signature).encode("utf-8")).hexdigest()
+                ],
+                "geometry": {
+                    "widthPoint": width_point,
+                    "heightPoint": height_point,
+                    "textBlockCount": text_blocks,
+                    "tableCount": table_count,
+                    "figureCount": figure_count,
+                },
+                "continuationMarkers": {
+                    "fromPrevious": index > 0,
+                    "toNext": index < len(pages) - 1,
+                },
+            }
+        )
+    return observations
+
+
+def _style_point_sizes(styles: ElementTree.Element) -> dict[str, float]:
+    sizes: dict[str, float] = {}
+    for style in styles.findall(f"./{W}style"):
+        style_id = _attribute(style, W, "styleId")
+        raw_size = _attribute(style.find(f"./{W}rPr/{W}sz"), W, "val")
+        if style_id and raw_size:
+            try:
+                sizes[style_id] = int(raw_size) / 2
+            except ValueError:
+                continue
+    return sizes
+
+
+def _paragraph_heading_point_size(
+    paragraph: ElementTree.Element,
+    fallback: float,
+) -> float:
+    sizes: list[float] = []
+    for run in paragraph.findall(f"./{W}r"):
+        raw_size = _attribute(run.find(f"./{W}rPr/{W}sz"), W, "val")
+        if raw_size is None:
+            continue
+        try:
+            sizes.append(int(raw_size) / 2)
+        except ValueError:
+            continue
+    return max(sizes, default=fallback)
+
+
+def _page_size_points(body: ElementTree.Element) -> tuple[float, float]:
+    page_size = body.find(f"./{W}sectPr/{W}pgSz")
+    try:
+        width = int(_attribute(page_size, W, "w") or "11906") / 20
+        height = int(_attribute(page_size, W, "h") or "16838") / 20
+    except ValueError:
+        width, height = 595.3, 841.9
+    return round(width, 1), round(height, 1)
+
+
+def _observed_surface_family(table_count: int, figure_count: int) -> str:
+    if table_count and figure_count:
+        return "mixed"
+    if table_count:
+        return "table"
+    if figure_count:
+        return "figure"
+    return "narrative"
 
 
 def _audit_styles(styles: ElementTree.Element, findings: list[dict[str, Any]]) -> None:
@@ -253,15 +394,21 @@ def _report(
     facts: dict[str, int],
     findings: list[dict[str, Any]],
     embedded_media: list[dict[str, str]],
+    page_observations: list[dict[str, Any]],
 ) -> dict[str, Any]:
     ordered = sorted(findings, key=lambda item: (item["code"], item["message"]))
     return {
         "schemaVersion": "1",
         "status": "PASS" if not ordered else "BLOCKED",
-        "docx": {"path": str(path), "sha256": docx_hash},
+        "docx": {
+            "path": str(path),
+            "sha256": docx_hash,
+            "bytes": path.stat().st_size if path.is_file() else None,
+        },
         "expectedProfileSha256": profile_hash,
         "facts": facts,
         "embeddedMedia": embedded_media,
+        "pageObservations": page_observations,
         "findings": ordered,
     }
 
