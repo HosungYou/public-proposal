@@ -100,6 +100,7 @@ function listRelativeFiles(root, relativeRoot = "") {
 
 function classifyBundlePath(path) {
   if (path === "SKILL.md") return "skill";
+  if (path === "HWPX-ENGINE.json") return "reference";
   if (path.startsWith("references/")) return "reference";
   if (path.startsWith("scripts/")) return "script";
   if (path.startsWith("assets/")) return "asset";

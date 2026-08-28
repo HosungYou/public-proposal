@@ -60,6 +60,8 @@ test("the public proposal plugin ships a validated package copy and rewrites the
   const sourceFiles = await listFilesRecursive(sourcePluginRoot);
   const packagedFiles = await listFilesRecursive(packagedPluginRoot);
   expect(packagedFiles).toEqual(sourceFiles);
+  expect(await topLevelSkillSurfaces(sourcePluginRoot)).toEqual(["korean-public-proposal"]);
+  expect(await topLevelSkillSurfaces(packagedPluginRoot)).toEqual(["korean-public-proposal"]);
   expect(sourceFiles).toContain("skills/korean-public-proposal/scripts/audit_surface_contract.py");
   expect(sourceFiles.some((path) => path.includes("__pycache__") || path.endsWith(".pyc"))).toBe(false);
 
@@ -77,6 +79,30 @@ test("the public proposal plugin ships a validated package copy and rewrites the
     expect(sha256(packagedPayload)).toBe(entry.sha256);
     expect(packagedPayload.byteLength).toBe(entry.bytes);
   }
+});
+
+test("the Korean authority declares the pinned HWPX engine as its native default", async () => {
+  const skillRoot = join(sourcePluginRoot, "skills", "korean-public-proposal");
+  const skill = await readFile(join(skillRoot, "SKILL.md"), "utf8");
+  const engine = parseJson(await readFile(join(skillRoot, "HWPX-ENGINE.json"), "utf8")) as {
+    repository?: string;
+    commit?: string;
+    destinationRoot?: string;
+    files?: Array<{ source?: string; destination?: string; sha256?: string }>;
+  };
+
+  expect(engine).toMatchObject({
+    repository: "https://github.com/jkf87/hwpx-skill.git",
+    commit: "96a2633f23a08f707679d7e212ebdc59948260e6",
+    destinationRoot: "vendor/hwpx-skill",
+  });
+  expect(engine.files?.length).toBeGreaterThan(50);
+  expect(engine.files?.some(({ source, destination }) => source === "SKILL.md" && destination === "UPSTREAM-SKILL.md")).toBe(true);
+  expect(engine.files?.some(({ destination }) => destination?.endsWith("/SKILL.md") || destination === "SKILL.md")).toBe(false);
+  expect(engine.files?.every(({ sha256 }) => /^[a-f0-9]{64}$/u.test(sha256 ?? ""))).toBe(true);
+  expect(skill).toContain("HWPX-first");
+  expect(skill).toContain("vendor/hwpx-skill/UPSTREAM-SKILL.md");
+  expect(skill).toContain("source-native routing");
 });
 
 test("the canonical, source, and packaged Korean skill payloads share the vNext contract", async () => {
@@ -196,10 +222,10 @@ test("the bundle validator rejects generic absolute source path leaks in bundle 
 
 test("the package sync rejects generic absolute source path leaks outside the bundled Korean skill", async () => {
   const repoRoot = await cloneSyncFixtureRepo();
-  const publicSkillPath = join(repoRoot, "plugins", "public-proposal", "skills", "public-proposal", "SKILL.md");
-  const original = await readFile(publicSkillPath, "utf8");
+  const pluginManifestPath = join(repoRoot, "plugins", "public-proposal", ".codex-plugin", "plugin.json");
+  const original = await readFile(pluginManifestPath, "utf8");
   const leaked = [original.trimEnd(), "", ...absoluteLeakFixtures, ""].join("\n");
-  await writeFile(publicSkillPath, leaked, "utf8");
+  await writeFile(pluginManifestPath, leaked, "utf8");
 
   await expect(runSync(repoRoot)).rejects.toThrow(/absolute source path/i);
 });
@@ -371,6 +397,17 @@ async function listFilesRecursive(root: string, baseRoot: string = root): Promis
     }),
   );
   return files.flat().sort();
+}
+
+async function topLevelSkillSurfaces(pluginRoot: string): Promise<string[]> {
+  const skillsRoot = join(pluginRoot, "skills");
+  const entries = await readdir(skillsRoot, { withFileTypes: true });
+  const surfaces: string[] = [];
+  for (const entry of entries) {
+    if (!entry.isDirectory()) continue;
+    if (existsSync(join(skillsRoot, entry.name, "SKILL.md"))) surfaces.push(entry.name);
+  }
+  return surfaces.sort();
 }
 
 interface BundleManifest {

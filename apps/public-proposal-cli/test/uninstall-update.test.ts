@@ -473,7 +473,7 @@ function fakeManifest(input?: Partial<InstallManifest>): InstallManifest {
     packageVersion: "0.1.0",
     kppVersion: "0.3.0",
     longtableVersion: "0.1.72",
-    pluginVersion: "0.2.0",
+    pluginVersion: "0.2.2",
     workerProtocol: "1.0.0",
     installRoot,
     pluginManifestSha256: "sha256:plugin",

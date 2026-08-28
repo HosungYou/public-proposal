@@ -15,6 +15,7 @@ import { nodeFs } from "../process.js";
 import { createPackageVersionResolver } from "../package-version.js";
 import { readPackagedMarketplaceManifest } from "../marketplace.js";
 import { verifyManagedWorkerFromManifestContents, verifyWorkerProtocol } from "../worker.js";
+import { verifyInstalledHwpxEngine, type HwpxEngineInstallation } from "../hwpx-engine.js";
 
 export interface DoctorDependencies {
   readonly packageRoot?: string;
@@ -24,6 +25,8 @@ export interface DoctorDependencies {
   readonly exists: (path: string) => Promise<boolean>;
   readonly realpath?: (path: string) => Promise<string>;
   readonly sha256: (path: string) => Promise<string>;
+  readonly listDir?: (path: string) => Promise<readonly string[]>;
+  readonly verifyHwpxEngine?: (skillRoot: string) => Promise<HwpxEngineInstallation>;
 }
 
 const RESEARCH_CLASSES = new Set(["academic_research", "research_service", "policy_research"]);
@@ -124,10 +127,7 @@ async function pluginCheck(
   const bundleManifestPath = join(packageRoot, "plugin", "skills", "korean-public-proposal", "BUNDLE-MANIFEST.json");
   const installedPluginPath = join(installRoot, "plugin", ".codex-plugin", "plugin.json");
   const installedBundlePath = join(installRoot, "plugin", "skills", "korean-public-proposal", "BUNDLE-MANIFEST.json");
-  const longtableSkillPath = join(installRoot, "plugin", "skills", "longtable", "SKILL.md");
-  const longtableResearchSkillPath = join(installRoot, "plugin", "skills", "longtable-research", "SKILL.md");
-  const registeredLongtableSkillPath = join(installRoot, "marketplace", "plugin", "skills", "longtable", "SKILL.md");
-  const registeredLongtableResearchSkillPath = join(installRoot, "marketplace", "plugin", "skills", "longtable-research", "SKILL.md");
+  const installedSkillRoot = join(installRoot, "plugin", "skills", "korean-public-proposal");
   try {
     const [pluginRaw, bundleRaw, marketplaceManifest, packagePluginSha] = await Promise.all([
       dependencies.readFile(pluginManifestPath),
@@ -206,23 +206,19 @@ async function pluginCheck(
     if (bundleCheck) {
       return bundleCheck;
     }
-    const [longtableSkill, longtableResearchSkill, registeredLongtableSkill, registeredLongtableResearchSkill, marketplaces, plugins] = await Promise.all([
-      dependencies.readFile(longtableSkillPath).catch(() => ""),
-      dependencies.readFile(longtableResearchSkillPath).catch(() => ""),
-      dependencies.readFile(registeredLongtableSkillPath).catch(() => ""),
-      dependencies.readFile(registeredLongtableResearchSkillPath).catch(() => ""),
+    const [marketplaces, plugins, skillSurfaces, hwpxEngine] = await Promise.all([
       dependencies.spawn("codex", ["plugin", "marketplace", "list", "--json"]),
       dependencies.spawn("codex", ["plugin", "list", "--json"]),
+      dependencies.listDir ? dependencies.listDir(join(installRoot, "plugin", "skills")) : Promise.resolve(["korean-public-proposal"]),
+      (dependencies.verifyHwpxEngine ?? verifyInstalledHwpxEngine)(installedSkillRoot),
     ]);
     const marketplacePath = await canonicalPath(join(installRoot, "marketplace"), dependencies.realpath);
     const marketplaceRegistered = marketplaces.code === 0
       && marketplaceListContains(marketplaces.stdout, marketplacePath);
     const pluginRegistered = plugins.code === 0 && pluginListContains(plugins.stdout);
     if (
-      !longtableSkill.trim()
-      || !longtableResearchSkill.trim()
-      || !registeredLongtableSkill.trim()
-      || !registeredLongtableResearchSkill.trim()
+      skillSurfaces.length !== 1
+      || skillSurfaces[0] !== "korean-public-proposal"
       || !marketplaceRegistered
       || !pluginRegistered
     ) {
@@ -231,14 +227,12 @@ async function pluginCheck(
         status: "blocker",
         code: "PP_PLUGIN_NOT_INSTALLED",
         detected: {
-          longtableSkill: Boolean(longtableSkill.trim()),
-          longtableResearchSkill: Boolean(longtableResearchSkill.trim()),
-          registeredLongtableSkill: Boolean(registeredLongtableSkill.trim()),
-          registeredLongtableResearchSkill: Boolean(registeredLongtableResearchSkill.trim()),
+          skillSurfaces,
+          hwpxEngine,
           marketplaceRegistered,
           pluginRegistered,
         },
-        message: "Public Proposal and both LongTable skills must be discoverable through the registered Codex plugin.",
+        message: "Public Proposal must expose exactly one Korean skill surface through the registered Codex plugin.",
       };
     }
     return {
@@ -248,11 +242,12 @@ async function pluginCheck(
         version: installedPlugin.version,
         pluginSha: installedPluginSha,
         bundleSha: installedBundleSha,
-        skills: ["longtable", "longtable-research"],
+        skills: ["korean-public-proposal"],
+        hwpxEngine,
         marketplaceRegistered,
         pluginRegistered,
       },
-      message: "Public Proposal and LongTable skills are discoverable through the registered Codex plugin.",
+      message: "The single Korean Public Proposal surface and pinned HWPX engine are verified.",
     };
   } catch (error) {
     return {

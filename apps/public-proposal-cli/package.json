@@ -1,6 +1,6 @@
 {
   "name": "@longtable/public-proposal",
-  "version": "0.2.0",
+  "version": "0.2.2",
   "description": "Meta-installer scaffold for the LongTable public proposal toolchain.",
   "repository": {
     "type": "git",

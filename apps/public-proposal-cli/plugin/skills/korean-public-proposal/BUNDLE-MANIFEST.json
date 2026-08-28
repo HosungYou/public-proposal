@@ -4,9 +4,15 @@
   "sourceSnapshotDate": "2026-08-20",
   "files": [
     {
+      "path": "HWPX-ENGINE.json",
+      "bytes": 25609,
+      "sha256": "933758b7744f77e5dc88e77d2889aeb351be9962de8fe00ae13904caa3a1fe52",
+      "classification": "reference"
+    },
+    {
       "path": "SKILL.md",
-      "bytes": 19320,
-      "sha256": "f6dc1cc00815134ef5e30685460c18aaec7ca5ffbaf7ee554d7560b63e47a3dd",
+      "bytes": 21022,
+      "sha256": "17a9e630b75a4e9a73bdd7995e92660edaf2ece279a75e9150d4c1b6c06f7e2c",
       "classification": "skill"
     },
     {

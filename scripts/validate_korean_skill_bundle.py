@@ -13,7 +13,7 @@ from urllib.parse import urlparse
 
 
 ALLOWED_CLASSIFICATIONS = {"skill", "reference", "script", "asset"}
-EXPECTED_TOP_LEVEL = {"SKILL.md", "references", "scripts", "assets", "BUNDLE-MANIFEST.json"}
+EXPECTED_TOP_LEVEL = {"SKILL.md", "HWPX-ENGINE.json", "references", "scripts", "assets", "BUNDLE-MANIFEST.json"}
 HEX64_RE = re.compile(r"^[0-9a-f]{64}$")
 URI_TOKEN_RE = re.compile(r"(?P<token>[A-Za-z][A-Za-z0-9+.\-]*:[^\s\"'`<>|]+)")
 WINDOWS_DRIVE_TOKEN_RE = re.compile(r"(?:(?<=^)|(?<=[\s\"'`(=,\[]))(?P<token>[A-Za-z]:[\\/][^\s\"'`<>|]+)")

@@ -6,15 +6,15 @@ This repository is the canonical GitHub home for the English `$public-proposal` 
 
 ## Install and run
 
-The public `@longtable/public-proposal@0.2.0` package is available from npm. The Codex setup path is:
+The public `@longtable/public-proposal@0.2.2` package is available from npm. The Codex setup path is:
 
 ```bash
 npx @longtable/public-proposal setup --provider codex
 ```
 
-To reproduce this exact release, use `npx @longtable/public-proposal@0.2.0 ...`; leaving off the version resolves the current `latest` tag.
+To reproduce this exact release, use `npx @longtable/public-proposal@0.2.2 ...`; leaving off the version resolves the current `latest` tag.
 
-It pins `@longtable/kpp-cli@0.3.0`, `@longtable/cli@0.1.72`, and managed worker protocol `1.0.0`. LongTable installs `$longtable` and `$longtable-research` into the registered Public Proposal plugin's `skills/` surface, and doctor verifies those files plus Codex marketplace/plugin registration. Node `>=22 <27` and Python `>=3.11 <3.15` are compatibility requirements. The current setup and doctor commands verify that the required executables are available; they do not yet enforce those runtime version ranges.
+It pins `@longtable/kpp-cli@0.3.0`, `@longtable/cli@0.1.72`, managed worker protocol `1.0.0`, and the exact upstream HWPX engine commit recorded in the bundled manifest. The plugin exposes only `korean-public-proposal`; LongTable remains an internal research dependency and does not create extra user-facing skill surfaces. Doctor verifies the single surface, pinned HWPX bytes, Codex registration, and internal runtimes. Node `>=22 <27` and Python `>=3.11 <3.15` are compatibility requirements. The current setup and doctor commands verify that the required executables are available; they do not yet enforce those runtime version ranges.
 
 After setup, inspect the installed boundary without changing it:
 

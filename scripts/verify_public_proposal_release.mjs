@@ -52,10 +52,21 @@ export async function runCleanEnvironmentFixture() {
   const manifest = await readJson(installationPath).catch(() => null);
   const pluginManifestPath = join(installRoot, "plugin", ".codex-plugin", "plugin.json");
   const marketplacePath = join(installRoot, "marketplace", ".agents", "plugins", "marketplace.json");
-  const registeredSkills = {
-    longtable: await readFile(join(installRoot, "marketplace", "plugin", "skills", "longtable", "SKILL.md"), "utf8").then(() => true).catch(() => false),
-    longtableResearch: await readFile(join(installRoot, "marketplace", "plugin", "skills", "longtable-research", "SKILL.md"), "utf8").then(() => true).catch(() => false),
-  };
+  const registeredSkills = (await readdir(join(installRoot, "marketplace", "plugin", "skills"), { withFileTypes: true }).catch(() => []))
+    .filter((entry) => entry.isDirectory())
+    .filter((entry) => existsSync(join(installRoot, "marketplace", "plugin", "skills", entry.name, "SKILL.md")))
+    .map((entry) => entry.name)
+    .sort();
+  const hwpxEngine = await readJson(join(
+    installRoot,
+    "marketplace",
+    "plugin",
+    "skills",
+    "korean-public-proposal",
+    "vendor",
+    "hwpx-skill",
+    "INSTALLATION.json",
+  )).catch(() => null);
   const pluginManifest = await readJson(pluginManifestPath).catch(() => null);
   const marketplace = await readJson(marketplacePath).catch(() => null);
   const marketplaceEntry = marketplace?.plugins?.find?.((entry) => entry?.name === "public-proposal");
@@ -79,8 +90,10 @@ export async function runCleanEnvironmentFixture() {
       && pluginManifest?.name === "public-proposal"
       && marketplaceEntry?.source?.source === "local"
       && marketplaceEntry?.source?.path === "./plugin"
-      && registeredSkills.longtable
-      && registeredSkills.longtableResearch
+      && registeredSkills.length === 1
+      && registeredSkills[0] === "korean-public-proposal"
+      && hwpxEngine?.commit === "96a2633f23a08f707679d7e212ebdc59948260e6"
+      && hwpxEngine?.verified === true
       && isolation.violations.length === 0
       && isolation.deniedWriteProbe.exitCode !== 0,
     fixtureRoot,
@@ -94,6 +107,7 @@ export async function runCleanEnvironmentFixture() {
       marketplaceSource: marketplaceEntry?.source?.path ?? null,
     },
     registeredSkills,
+    hwpxEngine,
     envelopes: { setup: setupEnvelope, publicDoctor: publicDoctorEnvelope, kppDoctor: kppDoctorEnvelope, longtableDoctor: longtableDoctorEnvelope },
     isolation,
     commands,
@@ -607,6 +621,7 @@ function writeGuardArguments(fixtureRoot) {
   const readableRoots = [
     ...canonicalVariants(REPOSITORY_ROOT),
     ...canonicalVariants(fixtureRoot).map(temporaryTraversalRoot),
+    "/usr",
   ];
   const fixtureRoots = canonicalVariants(fixtureRoot);
   return [

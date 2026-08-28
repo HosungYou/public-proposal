@@ -7,6 +7,20 @@ description: Use when creating, restyling, auditing, visually benchmarking, pack
 
 Build a mode-correct document package whose visual system is subordinate to the issuer's official documents. Treat architecture, compliance, evidence, reproducible rendering, and governed reuse as part of document design.
 
+This is the plugin's only user-facing skill surface. KPP and LongTable remain internal governance and evidence tools. Do not expose, install, or ask the user to select separate Public Proposal or LongTable skill surfaces.
+
+## Native document engine
+
+Use **HWPX-first** production with issuer/source-native routing:
+
+- If the issuer supplies an HWPX/HWP form, preserve it with the pinned upstream HWPX engine installed at `vendor/hwpx-skill/`.
+- If no official editable form is mandated, author the governed content once, build HWPX as the primary editable artifact, render its PDF as the visual authority, and derive DOCX as an explicitly parity-checked secondary artifact.
+- If the issuer supplies a DOCX-only form, keep that form DOCX-native; do not round-trip it through HWPX.
+
+Before creating, cloning, filling, or validating HWPX, read `vendor/hwpx-skill/UPSTREAM-SKILL.md` and follow its decision tree and finalization sequence. Its scripts, templates, assets, references, and tests are fetched byte-for-byte from `jkf87/hwpx-skill` commit `96a2633f23a08f707679d7e212ebdc59948260e6`; `HWPX-ENGINE.json` is the hash authority. The upstream `SKILL.md` is renamed only to prevent a second discoverable skill surface.
+
+Preserve the upstream engine. KPP may add content/evidence/page/approval contracts around it, but must not replace its HWPX construction, template cloning, namespace repair, line-cache removal, structural validation, or layout-check behavior with a DOCX generator.
+
 ## Authority order
 
 Apply rules in this order. A higher item always overrides a lower item.
@@ -52,9 +66,9 @@ Never redesign an official annex's wording, field order, signature area, or requ
 
 Red flags: a page helper that always accepts `title`; an explicit break after every subsection; repeated title/lead/judgment bands; continuation pages with headings over 12 pt; a release claim based only on technical PASS. Stop, correct the architecture, rerender, and reaudit.
 
-## Word production
+## Native production and DOCX derivation
 
-Use the `documents` and `korean-word-common` skills together. Copy `assets/Korean Public Proposal A4 v1.docx` when available. Use named styles, real numbering, fixed DXA table geometry, A4 portrait, and the project profile's exact tokens.
+For HWPX-native work, use the pinned engine above and its `geomto.py`, `yoyak.py`, `md2hwpx.py`, template-cloning, finalization, and validation paths as routed by the upstream decision tree. For a required DOCX-native issuer form or the requested secondary DOCX derivative, use the `documents` and `korean-word-common` skills together. Never label a DOCX derivative as layout-identical until page-by-page parity has been inspected.
 
 Default ordinary-page profile when the issuer is silent:
 
