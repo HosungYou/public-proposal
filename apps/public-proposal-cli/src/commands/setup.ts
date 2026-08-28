@@ -77,13 +77,27 @@ export async function runSetup(
     if (existingValidation) {
       return failed(existingValidation.code, existingValidation.message, []);
     }
+    let currentManifest = existingManifest;
     if (!existingManifest.codexRegistrations) {
       const reconciled = await reconcileUntrackedCodexRegistrations(installRoot, dependencies.spawn);
       if (reconciled.error) return failed(reconciled.error.code, reconciled.error.message, []);
-      const upgradedManifest = { ...existingManifest, codexRegistrations: reconciled.registrations };
+      currentManifest = { ...existingManifest, codexRegistrations: reconciled.registrations };
+    }
+    if (await packagedPluginPayloadChanged(packageRoot, installRoot, dependencies)) {
+      return refreshExistingPluginInstallation(
+        currentManifest,
+        installRoot,
+        packageRoot,
+        dependencies,
+        copyDir,
+        remove,
+        installHwpxEngine,
+      );
+    }
+    if (!existingManifest.codexRegistrations) {
       const tempManifest = manifestTempPath(installRoot);
       try {
-        await dependencies.writeFile(tempManifest, serializeManifest(upgradedManifest), 0o600);
+        await dependencies.writeFile(tempManifest, serializeManifest(currentManifest), 0o600);
         await dependencies.rename(tempManifest, manifest);
       } catch (error) {
         return failed("PP_SETUP_COMMAND_FAILED", error instanceof Error ? error.message : String(error), []);
@@ -94,7 +108,7 @@ export async function runSetup(
         writes: [manifest],
         manifestPath: manifest,
         checks: [],
-        manifest: upgradedManifest,
+        manifest: currentManifest,
       };
     }
     return {
@@ -108,7 +122,17 @@ export async function runSetup(
   }
   const legacyManifest = await readLegacyManifest(dependencies, manifest);
   if (legacyManifest) {
-    return migrateLegacyManifest(legacyManifest, installRoot, packageRoot, dependencies, exists, remove, installWorker, installHwpxEngine);
+    return migrateLegacyManifest(
+      legacyManifest,
+      installRoot,
+      packageRoot,
+      dependencies,
+      exists,
+      copyDir,
+      remove,
+      installWorker,
+      installHwpxEngine,
+    );
   }
   if (await exists(manifest)) {
     return failed("PP_INSTALL_MANIFEST_MISMATCH", "Existing installation receipt cannot be parsed or is unsupported.", []);
@@ -234,6 +258,159 @@ export async function runSetup(
     return rollbackFailures.length === 0
       ? failed(code, message, writes, doctorChecks)
       : failed("PP_SETUP_ROLLBACK_FAILED", `${message}; rollback failed: ${rollbackFailures.join("; ")}`, writes, doctorChecks);
+  }
+}
+
+async function packagedPluginPayloadChanged(
+  packageRoot: string,
+  installRoot: string,
+  dependencies: SetupDependencies,
+): Promise<boolean> {
+  const comparisons = [
+    [join(packageRoot, "plugin", ".codex-plugin", "plugin.json"), join(installRoot, "plugin", ".codex-plugin", "plugin.json")],
+    [
+      join(packageRoot, "plugin", "skills", "korean-public-proposal", "BUNDLE-MANIFEST.json"),
+      join(installRoot, "plugin", "skills", "korean-public-proposal", "BUNDLE-MANIFEST.json"),
+    ],
+  ] as const;
+  for (const [packagedPath, installedPath] of comparisons) {
+    try {
+      const [packaged, installed] = await Promise.all([
+        dependencies.readFile(packagedPath),
+        dependencies.readFile(installedPath),
+      ]);
+      if (packaged !== installed) return true;
+    } catch {
+      return true;
+    }
+  }
+  return false;
+}
+
+async function refreshExistingPluginInstallation(
+  existingManifest: InstallManifest,
+  installRoot: string,
+  packageRoot: string,
+  dependencies: SetupDependencies,
+  copyDir: (from: string, to: string) => Promise<void>,
+  remove: (path: string) => Promise<void>,
+  installHwpxEngine: (skillRoot: string, runner: ProcessRunner) => Promise<HwpxEngineInstallation>,
+): Promise<SetupResult> {
+  const integrity = await packageIntegrity(packageRoot, dependencies);
+  if (integrity.status !== "pass") {
+    return { ok: false, plan: PLAN, writes: [], checks: [integrity], error: { code: integrity.code ?? "PP_PLUGIN_INTEGRITY_FAILED", message: integrity.message } };
+  }
+  const registration = await reconcileUntrackedCodexRegistrations(installRoot, dependencies.spawn, dependencies.realpath);
+  if (registration.error) return failed(registration.error.code, registration.error.message, []);
+
+  const pluginPath = join(installRoot, "plugin");
+  const marketplacePath = join(installRoot, "marketplace");
+  const nextPluginPath = join(installRoot, ".plugin-next");
+  const nextMarketplacePath = join(installRoot, ".marketplace-next");
+  const previousPluginPath = join(installRoot, ".plugin-previous");
+  const previousMarketplacePath = join(installRoot, ".marketplace-previous");
+  const manifest = manifestPath(installRoot);
+  let pluginMoved = false;
+  let marketplaceMoved = false;
+  let nextPluginActivated = false;
+  let nextMarketplaceActivated = false;
+  try {
+    for (const path of [nextPluginPath, nextMarketplacePath, previousPluginPath, previousMarketplacePath]) {
+      await remove(path);
+    }
+    await copyDir(join(packageRoot, "plugin"), nextPluginPath);
+    await mirrorPackagedFile(
+      join(packageRoot, "plugin", ".codex-plugin", "plugin.json"),
+      join(nextPluginPath, ".codex-plugin", "plugin.json"),
+      dependencies,
+    );
+    await mirrorPackagedFile(
+      join(packageRoot, "plugin", "skills", "korean-public-proposal", "BUNDLE-MANIFEST.json"),
+      join(nextPluginPath, "skills", "korean-public-proposal", "BUNDLE-MANIFEST.json"),
+      dependencies,
+    );
+    await installHwpxEngine(join(nextPluginPath, "skills", "korean-public-proposal"), dependencies.spawn);
+    await copyDir(join(packageRoot, "marketplace"), nextMarketplacePath);
+    await copyDir(join(packageRoot, "plugin"), join(nextMarketplacePath, "plugin"));
+    await mirrorPackagedMarketplaceManifest(packageRoot, nextMarketplacePath, dependencies);
+    await copyDir(join(nextPluginPath, "skills"), join(nextMarketplacePath, "plugin", "skills"));
+
+    await dependencies.rename(pluginPath, previousPluginPath);
+    pluginMoved = true;
+    await dependencies.rename(nextPluginPath, pluginPath);
+    nextPluginActivated = true;
+    await dependencies.rename(marketplacePath, previousMarketplacePath);
+    marketplaceMoved = true;
+    await dependencies.rename(nextMarketplacePath, marketplacePath);
+    nextMarketplaceActivated = true;
+
+    const refreshedManifest = await buildManifest(
+      packageRoot,
+      installRoot,
+      existingManifest.ownedPaths,
+      existingManifest.worker,
+      existingManifest.codexRegistrations ?? registration.registrations,
+      dependencies,
+    );
+    const manifestContents = serializeManifest(refreshedManifest);
+    const doctor = await runDoctor(
+      {
+        installRoot,
+        expectedKppVersion: SUPPORTED_KPP_VERSION,
+        expectedLongtableVersion: SUPPORTED_LONGTABLE_VERSION,
+        expectedWorkerProtocol: WORKER_PROTOCOL_VERSION,
+      },
+      {
+        packageRoot,
+        packageVersion: dependencies.packageVersion,
+        spawn: dependencies.spawn,
+        readFile: async (path) => (path === manifest ? manifestContents : dependencies.readFile(path)),
+        exists: dependencies.exists ?? defaultExists(dependencies),
+        realpath: dependencies.realpath,
+        sha256: dependencies.sha256,
+        listDir: dependencies.listDir,
+        verifyHwpxEngine: dependencies.verifyHwpxEngine ?? verifyInstalledHwpxEngine,
+      },
+    );
+    if (!doctor.ok) {
+      const failedCheck = doctor.checks.find((check) => check.status === "blocker") ?? doctor.checks[0];
+      throw new SetupCommandError(failedCheck.code ?? "PP_DOCTOR_BLOCKED", failedCheck.message);
+    }
+    const tempManifest = manifestTempPath(installRoot);
+    await dependencies.writeFile(tempManifest, manifestContents, 0o600);
+    await dependencies.rename(tempManifest, manifest);
+    for (const path of [previousPluginPath, previousMarketplacePath]) {
+      try { await remove(path); } catch { /* committed installation remains valid; stale backup cleanup is retry-safe */ }
+    }
+    return {
+      ok: true,
+      plan: PLAN,
+      writes: [pluginPath, marketplacePath, manifest],
+      manifestPath: manifest,
+      checks: doctor.checks,
+      manifest: refreshedManifest,
+    };
+  } catch (error) {
+    const rollbackFailures: string[] = [];
+    try {
+      if (nextPluginActivated) await remove(pluginPath);
+      if (pluginMoved) await dependencies.rename(previousPluginPath, pluginPath);
+    } catch (rollbackError) {
+      rollbackFailures.push(`restore plugin: ${rollbackError instanceof Error ? rollbackError.message : String(rollbackError)}`);
+    }
+    try {
+      if (nextMarketplaceActivated) await remove(marketplacePath);
+      if (marketplaceMoved) await dependencies.rename(previousMarketplacePath, marketplacePath);
+    } catch (rollbackError) {
+      rollbackFailures.push(`restore marketplace: ${rollbackError instanceof Error ? rollbackError.message : String(rollbackError)}`);
+    }
+    for (const path of [nextPluginPath, nextMarketplacePath, previousPluginPath, previousMarketplacePath]) {
+      try { await remove(path); } catch { /* best-effort cleanup after restoring the owned roots */ }
+    }
+    const message = error instanceof Error ? error.message : String(error);
+    return rollbackFailures.length
+      ? failed("PP_SETUP_ROLLBACK_FAILED", `${message}; rollback failed: ${rollbackFailures.join("; ")}`, [])
+      : failed(error instanceof SetupCommandError ? error.code : "PP_SETUP_COMMAND_FAILED", message, []);
   }
 }
 
@@ -373,6 +550,7 @@ async function migrateLegacyManifest(
   packageRoot: string,
   dependencies: SetupDependencies,
   exists: (path: string) => Promise<boolean>,
+  copyDir: (from: string, to: string) => Promise<void>,
   remove: (path: string) => Promise<void>,
   installWorker: (root: string, runner: ProcessRunner, options?: ManagedWorkerInstallOptions) => Promise<WorkerInstallation>,
   installHwpxEngine: (skillRoot: string, runner: ProcessRunner) => Promise<HwpxEngineInstallation>,
@@ -427,13 +605,8 @@ async function migrateLegacyManifest(
   try {
     const worker = await installWorker(requestedRoot, dependencies.spawn, { updateManifest: false });
     writes.push(workerRoot);
-    await installHwpxEngine(join(requestedRoot, "plugin", "skills", "korean-public-proposal"), dependencies.spawn);
-    await dependencies.copyDir?.(
-      join(requestedRoot, "plugin", "skills"),
-      join(requestedRoot, "marketplace", "plugin", "skills"),
-    );
     const ownedPaths = installerOwnedRoots(requestedRoot);
-    const installManifest = await buildManifest(
+    const provisionalManifest = await buildManifest(
       packageRoot,
       requestedRoot,
       ownedPaths,
@@ -441,41 +614,24 @@ async function migrateLegacyManifest(
       registrationReconciliation.registrations,
       dependencies,
     );
-    const manifestContents = serializeManifest(installManifest);
-    const doctor = await runDoctor(
-      {
-        installRoot: requestedRoot,
-        expectedKppVersion: SUPPORTED_KPP_VERSION,
-        expectedLongtableVersion: SUPPORTED_LONGTABLE_VERSION,
-        expectedWorkerProtocol: WORKER_PROTOCOL_VERSION,
-      },
-      {
-        packageRoot,
-        packageVersion: dependencies.packageVersion,
-        spawn: dependencies.spawn,
-        readFile: async (path) => (path === manifest ? manifestContents : dependencies.readFile(path)),
-        exists,
-        realpath: dependencies.realpath,
-        sha256: dependencies.sha256,
-        listDir: dependencies.listDir,
-        verifyHwpxEngine: dependencies.verifyHwpxEngine ?? verifyInstalledHwpxEngine,
-      },
+    const refreshed = await refreshExistingPluginInstallation(
+      provisionalManifest,
+      requestedRoot,
+      packageRoot,
+      dependencies,
+      copyDir,
+      remove,
+      installHwpxEngine,
     );
-    if (!doctor.ok) {
-      const failedCheck = doctor.checks.find((check) => check.status === "blocker") ?? doctor.checks[0];
-      throw new SetupCommandError(failedCheck.code ?? "PP_DOCTOR_BLOCKED", failedCheck.message);
+    if (!refreshed.ok) {
+      throw new SetupCommandError(
+        refreshed.error?.code ?? "PP_DOCTOR_BLOCKED",
+        refreshed.error?.message ?? "Refreshed installation failed validation.",
+      );
     }
-    const tempManifest = manifestTempPath(requestedRoot);
-    await dependencies.writeFile(tempManifest, manifestContents, 0o600);
-    writes.push(tempManifest);
-    await dependencies.rename(tempManifest, manifest);
     return {
-      ok: true,
-      plan: PLAN,
-      writes: [workerRoot, manifest],
-      manifestPath: manifest,
-      checks: doctor.checks,
-      manifest: installManifest,
+      ...refreshed,
+      writes: [workerRoot, ...refreshed.writes],
     };
   } catch (error) {
     await Promise.all([manifestTempPath(requestedRoot), workerRoot].map(async (path) => {
