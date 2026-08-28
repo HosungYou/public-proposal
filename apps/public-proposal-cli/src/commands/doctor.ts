@@ -1,4 +1,5 @@
 import { dirname, join } from "node:path";
+import { homedir } from "node:os";
 import { fileURLToPath } from "node:url";
 import {
   parseInstallManifest,
@@ -19,6 +20,8 @@ import { verifyInstalledHwpxEngine, type HwpxEngineInstallation } from "../hwpx-
 
 export interface DoctorDependencies {
   readonly packageRoot?: string;
+  readonly codexCacheRoot?: string;
+  readonly verifyActiveCache?: boolean;
   readonly packageVersion?: PackageVersionResolver;
   readonly spawn: ProcessRunner;
   readonly readFile: (path: string) => Promise<string>;
@@ -67,6 +70,7 @@ function defaultDoctorDependencies(): DoctorDependencies {
   return {
     ...nodeFs,
     packageRoot,
+    codexCacheRoot: join(homedir(), ".codex", "plugins", "cache"),
     packageVersion: createPackageVersionResolver(packageRoot, nodeFs.readFile),
   };
 }
@@ -209,6 +213,46 @@ async function pluginCheck(
     const bundleCheck = await validateBundleFiles(installedBundleRaw, join(installRoot, "plugin", "skills", "korean-public-proposal"), dependencies);
     if (bundleCheck) {
       return bundleCheck;
+    }
+    if (dependencies.verifyActiveCache !== false) {
+      const activeSkillPath = join(
+        dependencies.codexCacheRoot ?? join(homedir(), ".codex", "plugins", "cache"),
+        "public-proposal",
+        "public-proposal",
+        manifest.pluginVersion,
+        "skills",
+        "korean-public-proposal",
+        "SKILL.md",
+      );
+      if (!await dependencies.exists(activeSkillPath)) {
+        return {
+          name: "plugin",
+          status: "blocker",
+          code: "PP_ACTIVE_CACHE_MISSING",
+          detected: { pluginVersion: manifest.pluginVersion, activeSkillPath },
+          message: "Codex active plugin cache does not contain the installed Korean skill version.",
+          action: "Refresh the Codex plugin installation and rerun doctor.",
+        };
+      }
+      const [installedSkillSha, activeSkillSha] = await Promise.all([
+        dependencies.sha256(join(installedSkillRoot, "SKILL.md")),
+        dependencies.sha256(activeSkillPath),
+      ]);
+      if (installedSkillSha !== activeSkillSha) {
+        return {
+          name: "plugin",
+          status: "blocker",
+          code: "PP_ACTIVE_CACHE_DRIFT",
+          detected: {
+            pluginVersion: manifest.pluginVersion,
+            installedSkillSha,
+            activeSkillSha,
+            activeSkillPath,
+          },
+          message: "Codex is loading different Korean skill bytes under the same plugin version.",
+          action: "Remove the stale cache entry and reinstall the immutable plugin version.",
+        };
+      }
     }
     const [marketplaces, plugins, skillSurfaces, hwpxEngine] = await Promise.all([
       dependencies.spawn("codex", ["plugin", "marketplace", "list", "--json"]),

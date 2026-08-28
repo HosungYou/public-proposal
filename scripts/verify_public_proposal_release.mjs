@@ -701,7 +701,12 @@ case "$name" in
     elif [ "$1 $2 $3" = "plugin marketplace remove" ]; then rm -f "$state_root/.marketplace-registered"
     elif [ "$1 $2" = "plugin list" ]; then
       if [ -f "$state_root/.plugin-registered" ]; then printf '{"installed":[{"pluginId":"public-proposal@public-proposal","installed":true}],"available":[]}\n'; else printf '{"installed":[],"available":[]}\n'; fi
-    elif [ "$1 $2" = "plugin add" ]; then printf registered > "$state_root/.plugin-registered"
+    elif [ "$1 $2" = "plugin add" ]; then
+      printf registered > "$state_root/.plugin-registered"
+      plugin_version=$(sed -n 's/.*"version"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$state_root/plugin/.codex-plugin/plugin.json" | head -1)
+      active_skill_root="$HOME/.codex/plugins/cache/public-proposal/public-proposal/$plugin_version/skills/korean-public-proposal"
+      mkdir -p "$active_skill_root"
+      cp -R "$state_root/plugin/skills/korean-public-proposal/." "$active_skill_root/"
     elif [ "$1 $2" = "plugin remove" ]; then rm -f "$state_root/.plugin-registered"
     else printf '{"ok":true}\n'; fi
     ;;

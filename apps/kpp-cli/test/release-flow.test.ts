@@ -275,6 +275,23 @@ describe("verified proposal release flow", () => {
     await expect(access(join(fixture.root, "receipts", "build.json"))).rejects.toBeDefined();
   });
 
+  it("rejects a design authority that is not bound to the design-lock receipt", async () => {
+    const fixture = await createContentApprovedProject(
+      roots,
+      false,
+      false,
+      1,
+      false,
+      undefined,
+      false,
+      false,
+    );
+
+    await expect(buildProject(fixture.root, { requestPath: fixture.requestPath }))
+      .rejects.toMatchObject({ code: "KPP_BUILD_DESIGN_AUTHORITY_UNBOUND" });
+    await expect(access(join(fixture.root, "receipts", "build.json"))).rejects.toBeDefined();
+  });
+
   it("rejects unapproved headings, table captions, or figure IDs before the worker publishes", async () => {
     const fixture = await createContentApprovedProject(roots);
     const request = JSON.parse(await readFile(fixture.requestPath, "utf8")) as {
@@ -437,6 +454,7 @@ async function createContentApprovedProject(
   crossModeArchitecture = false,
   continuationTitlePoint?: number,
   restatesFigureDecisionEffect = false,
+  bindDesignAuthority = true,
 ): Promise<{
   readonly root: string;
   readonly requestPath: string;
@@ -523,6 +541,19 @@ async function createContentApprovedProject(
   const pageArchitecturePath = join(root, "content", "page-architecture.json");
   const referenceManifestPath = join(root, "evidence", "reference-manifest.json");
   await writeFile(join(root, "figures", "design-profile.json"), `${JSON.stringify(profile)}\n`);
+  const designAuthorityPath = join(root, "figures", "design-authority.json");
+  const designAuthority = {
+    schemaVersion: "kpp-design-authority-1.0",
+    authorityId: "AUTH-RELEASE-FIXTURE",
+    sourceClassification: "approved_project_reference",
+    useBoundary: "visual_language_only",
+    sourcePath: TEMPLATE,
+    sourceSha256: await sha256File(TEMPLATE),
+    renderedPages: [{ pageNumber: 1, path: TEMPLATE, sha256: await sha256File(TEMPLATE) }],
+    templateAssetId: "korean-public-proposal-a4-v1",
+    surfaceProfileId: profile.profileId,
+  };
+  await writeFile(designAuthorityPath, `${JSON.stringify(designAuthority, null, 2)}\n`);
   const auditFigures: { specPath: string; svgPath: string; manifestPath: string }[] = [];
   const embeddedFigures: Record<string, unknown>[] = [];
   for (const [index, semanticFigure] of figuresToBuild.entries()) {
@@ -643,11 +674,12 @@ async function createContentApprovedProject(
     [responsePath, structurePath],
     withFigure
       ? [
+          ...(bindDesignAuthority ? [designAuthorityPath] : []),
           figureManifestPath,
           ...embeddedFigures.map((figure) => figure.path as string),
           ...auditFigures.flatMap((figure) => [figure.specPath, figure.svgPath, figure.manifestPath]),
         ]
-      : [figureManifestPath],
+      : [...(bindDesignAuthority ? [designAuthorityPath] : []), figureManifestPath],
     undefined,
     {
       requirements: [join(root, "content", "page-plan.json"), pageArchitecturePath],
@@ -657,6 +689,7 @@ async function createContentApprovedProject(
   const request = {
     schemaVersion: "1.0.0",
     projectId: "release-build-fixture",
+    designAuthority,
     template: { assetId: "korean-public-proposal-a4-v1", path: TEMPLATE, sha256: await sha256File(TEMPLATE) },
     pagePlan,
     evidenceLedger,

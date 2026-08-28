@@ -18,7 +18,7 @@ describe("public proposal installer contracts", () => {
       packageVersion: "0.1.0",
       kppVersion: "0.3.0",
       longtableVersion: "0.1.72",
-      pluginVersion: "0.2.2",
+      pluginVersion: "0.2.3",
       workerProtocol: "1.0.0",
       installRoot: "/tmp/public-proposal",
       pluginManifestSha256: "sha256:plugin",

@@ -11,8 +11,8 @@
     },
     {
       "path": "SKILL.md",
-      "bytes": 22190,
-      "sha256": "126e7620d5a80cd9bf7d08ea94a8f26acb2a5a6433a5bb942d83c987b4509232",
+      "bytes": 23992,
+      "sha256": "aee761f7ac49026f32b680482d3198b407a9bbe54a2cac74ec4d6406252988a3",
       "classification": "skill"
     },
     {
@@ -154,6 +154,12 @@
       "classification": "reference"
     },
     {
+      "path": "scripts/audit_derivative_parity.py",
+      "bytes": 9635,
+      "sha256": "384e6d149fb16b1b6e3f770c187299367c131e612be7a5df7bf1923fa1f323b1",
+      "classification": "script"
+    },
+    {
       "path": "scripts/audit_docx_integrity.py",
       "bytes": 8027,
       "sha256": "94df046d9e64ad8776d477dddc61d5c688611de68c26127a5c8209d3ca6c411b",
@@ -179,8 +185,8 @@
     },
     {
       "path": "scripts/audit_surface_contract.py",
-      "bytes": 18800,
-      "sha256": "36e3102a0375b116d64ea10a3759ae5a9c4b7569ed14f7ec847bd4d7b71c0cc4",
+      "bytes": 19034,
+      "sha256": "450c32b440aa893b550b536f454d312a70223b2124cb0bb6eedbd968b8c9d96b",
       "classification": "script"
     },
     {

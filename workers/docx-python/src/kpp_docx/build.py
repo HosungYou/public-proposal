@@ -311,6 +311,34 @@ class SurfaceProfile(StrictModel):
     table: TableProfile
 
 
+class RenderedReferencePage(StrictModel):
+    page_number: int = Field(alias="pageNumber", gt=0)
+    path: str = Field(min_length=1)
+    sha256: str = Field(pattern=r"^[a-f0-9]{64}$")
+
+
+class DesignAuthorityRef(StrictModel):
+    schema_version: Literal["kpp-design-authority-1.0"] = Field(
+        alias="schemaVersion"
+    )
+    authority_id: str = Field(alias="authorityId", min_length=1)
+    source_classification: Literal[
+        "official_template", "report_reference", "approved_project_reference"
+    ] = Field(alias="sourceClassification")
+    use_boundary: Literal[
+        "form_locked", "structure_only", "visual_language_only"
+    ] = Field(alias="useBoundary")
+    source_path: str = Field(alias="sourcePath", min_length=1)
+    source_sha256: str = Field(
+        alias="sourceSha256", pattern=r"^[a-f0-9]{64}$"
+    )
+    rendered_pages: list[RenderedReferencePage] = Field(
+        alias="renderedPages", min_length=1
+    )
+    template_asset_id: str = Field(alias="templateAssetId", min_length=1)
+    surface_profile_id: str = Field(alias="surfaceProfileId", min_length=1)
+
+
 class BuildOutput(StrictModel):
     docx_path: str = Field(alias="docxPath", min_length=1)
     manifest_path: str = Field(alias="manifestPath", min_length=1)
@@ -321,6 +349,7 @@ class BuildRequest(StrictModel):
 
     schema_version: Literal[SCHEMA_VERSION] = Field(alias="schemaVersion")
     project_id: str = Field(alias="projectId", min_length=1)
+    design_authority: DesignAuthorityRef = Field(alias="designAuthority")
     template: TemplateRef
     page_plan: PagePlan = Field(alias="pagePlan")
     page_architecture: PageArchitecture | None = Field(alias="pageArchitecture", default=None)
@@ -335,6 +364,12 @@ class BuildRequest(StrictModel):
 
     @model_validator(mode="after")
     def validate_cross_references(self) -> "BuildRequest":
+        if self.design_authority.template_asset_id != self.template.asset_id:
+            raise ValueError("designAuthority templateAssetId must match template")
+        if self.design_authority.surface_profile_id != self.surface_profile.profile_id:
+            raise ValueError(
+                "designAuthority surfaceProfileId must match surfaceProfile"
+            )
         page_ids = [page.page_id for page in self.page_plan.pages]
         if len(page_ids) != len(set(page_ids)):
             raise ValueError("pagePlan pageId values must be unique")
@@ -533,6 +568,27 @@ class BuildResult(BaseModel):
 def build_document(request: BuildRequest) -> BuildResult:
     """Build a proposal DOCX and a manifest bound to its exact inputs and output."""
 
+    authority_source_path = Path(
+        request.design_authority.source_path
+    ).expanduser().resolve()
+    if not authority_source_path.is_file():
+        raise ValueError(
+            f"design authority source is missing: {authority_source_path}"
+        )
+    if _sha256_file(authority_source_path) != request.design_authority.source_sha256:
+        raise ValueError("design authority source SHA-256 does not match")
+    for page in request.design_authority.rendered_pages:
+        rendered_page_path = Path(page.path).expanduser().resolve()
+        if not rendered_page_path.is_file():
+            raise ValueError(
+                f"design authority rendered page is missing: {rendered_page_path}"
+            )
+        if _sha256_file(rendered_page_path) != page.sha256:
+            raise ValueError(
+                f"design authority rendered page SHA-256 does not match: "
+                f"{page.page_number}"
+            )
+
     template_path = Path(request.template.path).expanduser().resolve()
     if not template_path.is_file():
         raise ValueError(f"template is missing: {template_path}")
@@ -685,6 +741,16 @@ def build_document(request: BuildRequest) -> BuildResult:
             "schemaVersion": SCHEMA_VERSION,
             "builderVersion": BUILDER_VERSION,
             "projectId": request.project_id,
+            "designAuthority": {
+                "authorityId": request.design_authority.authority_id,
+                "sourceClassification": (
+                    request.design_authority.source_classification
+                ),
+                "useBoundary": request.design_authority.use_boundary,
+                "sourcePath": str(authority_source_path),
+                "sourceSha256": request.design_authority.source_sha256,
+                "sha256": _sha256_json(request.design_authority),
+            },
             "template": {
                 "assetId": request.template.asset_id,
                 "path": str(template_path),
@@ -701,6 +767,21 @@ def build_document(request: BuildRequest) -> BuildResult:
                 "contentBlocksSha256": _sha256_json(request.content_blocks),
                 "figureManifestSha256": _sha256_json(request.figure_manifest),
                 "surfaceProfileSha256": _sha256_json(request.surface_profile),
+                "governedContentSha256": _sha256_json(
+                    {
+                        "pagePlan": request.page_plan.model_dump(by_alias=True),
+                        "evidenceLedger": request.evidence_ledger.model_dump(
+                            by_alias=True
+                        ),
+                        "contentBlocks": [
+                            block.model_dump(by_alias=True)
+                            for block in request.content_blocks
+                        ],
+                        "figureManifest": request.figure_manifest.model_dump(
+                            by_alias=True
+                        ),
+                    }
+                ),
             },
             "pages": [
                 {

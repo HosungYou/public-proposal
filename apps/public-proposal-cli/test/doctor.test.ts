@@ -164,6 +164,17 @@ describe("public proposal doctor", () => {
     );
   });
 
+  it("blocks when the active Codex cache has different skill bytes for the same plugin version", async () => {
+    const report = await runDoctor(fakeDoctorInput(), fakeDoctorDependencies({ activeCacheDrift: true }));
+
+    expect(report.ok).toBe(false);
+    expect(report.checks).toContainEqual(expect.objectContaining({
+      name: "plugin",
+      status: "blocker",
+      code: "PP_ACTIVE_CACHE_DRIFT",
+    }));
+  });
+
   it("blocks when an installation receipt is self-consistent but stale against the current package bundle", async () => {
     const report = await runDoctor(fakeDoctorInput(), fakeDoctorDependencies({ packageBundleDrift: true }));
 
@@ -241,6 +252,7 @@ function fakeDoctorDependencies(input?: {
     extraSkillSurface?: string;
     codexRegistration?: boolean;
     packageBundleDrift?: boolean;
+    activeCacheDrift?: boolean;
 }): FakeDoctorDependencies {
   const kppVersion = input?.kppVersion === undefined ? SUPPORTED_KPP_VERSION : input.kppVersion;
   const longtableVersion =
@@ -256,8 +268,14 @@ function fakeDoctorDependencies(input?: {
 
   return {
     packageRoot: "/pkg",
+    codexCacheRoot: "/home/ada/.codex/plugins/cache",
     commands,
     sha256: async (path) => {
+      if (path === "/home/ada/.codex/plugins/cache/public-proposal/public-proposal/0.2.3/skills/korean-public-proposal/SKILL.md") {
+        return input?.activeCacheDrift
+          ? "sha256:active-cache-drift"
+          : "sha256:/home/ada/.config/public-proposal/plugin/skills/korean-public-proposal/SKILL.md";
+      }
       if (path === "/home/ada/.config/public-proposal/plugin/.codex-plugin/plugin.json") return installedPluginSha;
       if (path === "/home/ada/.config/public-proposal/plugin/skills/korean-public-proposal/BUNDLE-MANIFEST.json") {
         return "sha256:/home/ada/.config/public-proposal/plugin/skills/korean-public-proposal/BUNDLE-MANIFEST.json";
@@ -273,7 +291,7 @@ function fakeDoctorDependencies(input?: {
           packageVersion: "0.1.0",
           kppVersion: "0.3.0",
           longtableVersion: "0.1.72",
-          pluginVersion: "0.2.2",
+          pluginVersion: "0.2.3",
           workerProtocol: "1.0.0",
           installRoot: "/home/ada/.config/public-proposal",
           pluginManifestSha256: "sha256:/home/ada/.config/public-proposal/plugin/.codex-plugin/plugin.json",
@@ -309,6 +327,9 @@ function fakeDoctorDependencies(input?: {
       if (path === "/home/ada/.config/public-proposal/plugin/skills/korean-public-proposal/SKILL.md") {
         return "# Korean Public Proposal\n";
       }
+      if (path === "/home/ada/.codex/plugins/cache/public-proposal/public-proposal/0.2.3/skills/korean-public-proposal/SKILL.md") {
+        return input?.activeCacheDrift ? "# Stale Korean Public Proposal\n" : "# Korean Public Proposal\n";
+      }
       if (path === "/pkg/plugin/.codex-plugin/plugin.json") {
         return JSON.stringify({ name: "public-proposal", version: "0.1.0" });
       }
@@ -334,7 +355,7 @@ function fakeDoctorDependencies(input?: {
       }
       throw Object.assign(new Error(`ENOENT ${path}`), { code: "ENOENT" });
     },
-    exists: async (path) => path.startsWith("/home/ada/.config/public-proposal") || path.startsWith("/pkg"),
+    exists: async (path) => path.startsWith("/home/ada/.config/public-proposal") || path.startsWith("/home/ada/.codex/plugins/cache") || path.startsWith("/pkg"),
     realpath: async (path) => path,
     listDir: async () => ["korean-public-proposal", ...(input?.extraSkillSurface ? [input.extraSkillSurface] : [])].sort(),
     verifyHwpxEngine: async (skillRoot) => ({

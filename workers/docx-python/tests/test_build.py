@@ -53,6 +53,23 @@ def sample_request(tmp_path: Path) -> BuildRequest:
         {
             "schemaVersion": "1.0.0",
             "projectId": "synthetic-research-proposal",
+            "designAuthority": {
+                "schemaVersion": "kpp-design-authority-1.0",
+                "authorityId": "AUTH-SYNTHETIC-R08",
+                "sourceClassification": "approved_project_reference",
+                "useBoundary": "visual_language_only",
+                "sourcePath": str(TEMPLATE),
+                "sourceSha256": _sha256(TEMPLATE),
+                "renderedPages": [
+                    {
+                        "pageNumber": 1,
+                        "path": str(TEMPLATE),
+                        "sha256": _sha256(TEMPLATE),
+                    }
+                ],
+                "templateAssetId": "korean-public-proposal-a4-v1",
+                "surfaceProfileId": "synthetic-korean-public-research-v1",
+            },
             "template": {
                 "assetId": "korean-public-proposal-a4-v1",
                 "path": str(TEMPLATE),
@@ -143,6 +160,14 @@ def sample_request(tmp_path: Path) -> BuildRequest:
             },
         }
     )
+
+
+def test_rejects_build_request_without_design_authority(tmp_path: Path) -> None:
+    payload = sample_request(tmp_path).model_dump(by_alias=True)
+    del payload["designAuthority"]
+
+    with pytest.raises(ValidationError, match="designAuthority"):
+        BuildRequest.model_validate(payload)
 
 
 def test_build_applies_body_and_table_contract(tmp_path: Path) -> None:
@@ -289,6 +314,19 @@ def test_rejects_template_hash_drift_before_writing_outputs(tmp_path: Path) -> N
         assert "template SHA-256" in str(error)
     else:
         raise AssertionError("template hash drift must block the build")
+
+    assert not Path(request.output.docx_path).exists()
+    assert not Path(request.output.manifest_path).exists()
+
+
+def test_rejects_design_authority_source_hash_drift_before_writing_outputs(
+    tmp_path: Path,
+) -> None:
+    request = sample_request(tmp_path)
+    request.design_authority.source_sha256 = "0" * 64
+
+    with pytest.raises(ValueError, match="design authority source SHA-256"):
+        build_document(request)
 
     assert not Path(request.output.docx_path).exists()
     assert not Path(request.output.manifest_path).exists()

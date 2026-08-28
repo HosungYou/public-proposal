@@ -212,6 +212,7 @@ export async function runSetup(
       },
       {
         packageRoot,
+        verifyActiveCache: false,
         packageVersion: dependencies.packageVersion,
         spawn: dependencies.spawn,
         readFile: async (path) => (path === manifest ? manifestContents : dependencies.readFile(path)),
@@ -362,6 +363,7 @@ async function refreshExistingPluginInstallation(
       },
       {
         packageRoot,
+        verifyActiveCache: false,
         packageVersion: dependencies.packageVersion,
         spawn: dependencies.spawn,
         readFile: async (path) => (path === manifest ? manifestContents : dependencies.readFile(path)),
@@ -877,7 +879,7 @@ async function buildManifest(
     packageVersion,
     kppVersion: SUPPORTED_KPP_VERSION,
     longtableVersion: SUPPORTED_LONGTABLE_VERSION,
-    pluginVersion: plugin.version ?? "0.2.2",
+    pluginVersion: plugin.version ?? "0.2.3",
     workerProtocol: WORKER_PROTOCOL_VERSION,
     installRoot,
     pluginManifestSha256: await dependencies.sha256(pluginManifestPath),

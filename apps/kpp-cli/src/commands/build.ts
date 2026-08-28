@@ -105,6 +105,7 @@ export async function buildProject(
     }
   }
   await validateApprovedContent(root, request);
+  await validateDesignAuthority(root, request);
   await validateManagedTemplate(request);
   await validateApprovedStructure(root, request);
   await validateLockedFigureSources(root, request);
@@ -379,6 +380,58 @@ async function validateManagedTemplate(request: Record<string, unknown>): Promis
     throw new KppError("KPP_BUILD_TEMPLATE_UNBOUND", "BuildRequest template은 관리된 Korean Public Proposal A4 asset/hash와 일치해야 합니다.", {
       expected: { assetId: "korean-public-proposal-a4-v1", path: expectedPath, sha256: actualHash },
       actual: template,
+      stage: "CONTENT_APPROVED",
+    });
+  }
+}
+
+async function validateDesignAuthority(root: string, request: Record<string, unknown>): Promise<void> {
+  const authorityPath = join(root, "figures", "design-authority.json");
+  const canonical = await realpath(authorityPath).catch(() => undefined);
+  const authority = objectAt(request, "designAuthority");
+  if (canonical === undefined || authority === undefined) {
+    throw new KppError("KPP_BUILD_DESIGN_AUTHORITY_UNBOUND", "잠긴 design authority가 필요합니다.", {
+      path: authorityPath,
+      stage: "CONTENT_APPROVED",
+    });
+  }
+  const authorityHash = await sha256File(canonical);
+  const receipt = await verifyReceipt(join(root, "receipts", "design-lock.json"));
+  const receiptBound = receipt.valid && await Promise.all(receipt.receipt.files.map(async (file) => ({
+    path: await realpath(file.path).catch(() => undefined),
+    sha256: file.sha256,
+  }))).then((files) => files.some((file) => file.path === canonical && file.sha256 === authorityHash));
+  if (!receiptBound) {
+    throw new KppError("KPP_BUILD_DESIGN_AUTHORITY_UNBOUND", "design authority가 DESIGN_LOCKED receipt에 결속되지 않았습니다.", {
+      path: canonical,
+      actual: authorityHash,
+      stage: "CONTENT_APPROVED",
+    });
+  }
+  const expected = await readJsonObject(canonical, "KPP_BUILD_DESIGN_AUTHORITY_UNBOUND");
+  if (canonicalJson(authority) !== canonicalJson(expected)) {
+    throw new KppError("KPP_BUILD_DESIGN_AUTHORITY_UNBOUND", "BuildRequest design authority가 잠긴 원장과 다릅니다.", {
+      path: canonical,
+      expected: authorityHash,
+      actual: authority,
+      stage: "CONTENT_APPROVED",
+    });
+  }
+  const sourcePath = typeof authority.sourcePath === "string"
+    ? await realpath(authority.sourcePath).catch(() => undefined)
+    : undefined;
+  if (sourcePath === undefined || typeof authority.sourceSha256 !== "string" || await sha256File(sourcePath) !== authority.sourceSha256) {
+    throw new KppError("KPP_BUILD_DESIGN_AUTHORITY_UNBOUND", "design authority source bytes가 잠긴 해시와 다릅니다.", {
+      actual: authority,
+      stage: "CONTENT_APPROVED",
+    });
+  }
+  const template = objectAt(request, "template");
+  const profile = objectAt(request, "surfaceProfile");
+  if (authority.templateAssetId !== template?.assetId || authority.surfaceProfileId !== profile?.profileId) {
+    throw new KppError("KPP_BUILD_DESIGN_AUTHORITY_UNBOUND", "design authority가 BuildRequest template/profile과 일치하지 않습니다.", {
+      expected: { templateAssetId: template?.assetId, surfaceProfileId: profile?.profileId },
+      actual: authority,
       stage: "CONTENT_APPROVED",
     });
   }
