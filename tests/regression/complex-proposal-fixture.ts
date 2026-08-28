@@ -228,6 +228,17 @@ export async function materializeComplexPrivatePartnership(outputRoot?: string):
     availability: "available",
   }));
   const profile = lockedProfile();
+  const designAuthority = {
+    schemaVersion: "kpp-design-authority-1.0",
+    authorityId: "AUTH-COMPLEX-PRIVATE-PARTNERSHIP",
+    sourceClassification: "approved_project_reference",
+    useBoundary: "visual_language_only",
+    sourcePath: TEMPLATE,
+    sourceSha256: await sha256File(TEMPLATE),
+    renderedPages: [{ pageNumber: 1, path: TEMPLATE, sha256: await sha256File(TEMPLATE) }],
+    templateAssetId: "korean-public-proposal-a4-v1",
+    surfaceProfileId: profile.profileId,
+  };
   const figureManifest = { schemaVersion: "1.0.0", figures: embeddedFigures };
   const responseBlocks = PAGES.map((_, index) => ({
     pageId: pageId(index),
@@ -250,6 +261,7 @@ export async function materializeComplexPrivatePartnership(outputRoot?: string):
     evidence: join(root, "evidence", "evidence-ledger.json"),
     references: join(root, "evidence", "reference-manifest.json"),
     profile: join(root, "figures", "design-profile.json"),
+    designAuthority: join(root, "figures", "design-authority.json"),
     figureManifest: join(root, "figures", "build-figure-manifest.json"),
   };
   await Promise.all([
@@ -260,19 +272,21 @@ export async function materializeComplexPrivatePartnership(outputRoot?: string):
     writeJson(paths.evidence, evidenceLedger),
     writeJson(paths.references, { schemaVersion: "2.0.0", projectId: PROJECT_ID, documentMode: "private_partnership", modePolicyVersion: "1.0.0", references }),
     writeJson(paths.profile, profile),
+    writeJson(paths.designAuthority, designAuthority),
     writeJson(paths.figureManifest, figureManifest),
   ]);
   await advanceToContentApproved(root, {
     source: sourcePaths,
     requirements: [paths.pagePlan, paths.architecture],
     evidence: [paths.evidence, paths.architecture, paths.references, ...sourcePaths],
-    design: [paths.profile, paths.figureManifest, ...embeddedFigures.map(({ path }) => String(path)), ...auditFigures.flatMap((figure) => [figure.specPath, figure.svgPath, figure.manifestPath])],
+    design: [paths.profile, paths.designAuthority, paths.figureManifest, ...embeddedFigures.map(({ path }) => String(path)), ...auditFigures.flatMap((figure) => [figure.specPath, figure.svgPath, figure.manifestPath])],
     content: [paths.response, paths.structure],
   });
   const requestPath = join(root, "build", "build-request.json");
   await writeJson(requestPath, {
     schemaVersion: "1.0.0",
     projectId: PROJECT_ID,
+    designAuthority,
     template: { assetId: "korean-public-proposal-a4-v1", path: TEMPLATE, sha256: await sha256File(TEMPLATE) },
     pagePlan,
     pageArchitecture: architecture,
