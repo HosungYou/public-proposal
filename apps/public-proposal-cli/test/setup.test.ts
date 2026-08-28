@@ -199,6 +199,33 @@ describe("public proposal setup", () => {
     expect(fake.commands.filter((command) => command.includes("plugin marketplace add"))).toHaveLength(1);
   });
 
+  it("refreshes installer-owned plugin payloads when the current package bundle changes at the same version", async () => {
+    const fake = fakeSetupDependencies();
+    const installRoot = "/home/ada/.config/public-proposal";
+    const first = await runSetup(
+      { provider: "codex", installScope: "user", cwd: "/work", home: "/home/ada" },
+      fake,
+    );
+    expect(first.ok).toBe(true);
+
+    fake.files["/pkg/plugin/skills/korean-public-proposal/BUNDLE-MANIFEST.json"] = JSON.stringify({
+      schemaVersion: "1.0.0",
+      revision: "portable-fonts",
+    });
+    fake.files["/pkg/plugin/skills/korean-public-proposal/SKILL.md"] = "# Korean Public Proposal refreshed\n";
+    const second = await runSetup(
+      { provider: "codex", installScope: "user", cwd: "/work", home: "/home/ada" },
+      fake,
+    );
+
+    expect(second.ok).toBe(true);
+    expect(second.writes).not.toEqual([]);
+    expect(fake.files[`${installRoot}/plugin/skills/korean-public-proposal/SKILL.md`]).toBe(
+      "# Korean Public Proposal refreshed\n",
+    );
+    expect(fake.files[`${installRoot}/plugin/skills/korean-public-proposal/BUNDLE-MANIFEST.json`]).toContain("portable-fonts");
+  });
+
   it("rolls back owned setup paths and does not publish a manifest when a post-mutation step fails", async () => {
     const fake = fakeSetupDependencies({
       commandFailures: new Map([["codex plugin add public-proposal@public-proposal", { code: 1, stdout: "", stderr: "install failed" }]]),
@@ -439,11 +466,19 @@ describe("public proposal setup", () => {
     );
 
     expect(result.ok).toBe(true);
-    expect(fake.removed).toEqual([]);
+    expect(fake.removed).not.toContain(`${installRoot}/plugin`);
+    expect(fake.removed).not.toContain(`${installRoot}/marketplace`);
+    expect(fake.removed).not.toContain(`${installRoot}/worker`);
     expect(fake.writes).toEqual(expect.arrayContaining([
       `${installRoot}/worker`,
       `${installRoot}/installation.json.tmp`,
     ]));
+    expect(fake.files[`${installRoot}/plugin/.codex-plugin/plugin.json`]).toBe(
+      fake.files["/pkg/plugin/.codex-plugin/plugin.json"],
+    );
+    expect(fake.files[`${installRoot}/plugin/skills/korean-public-proposal/BUNDLE-MANIFEST.json`]).toBe(
+      fake.files["/pkg/plugin/skills/korean-public-proposal/BUNDLE-MANIFEST.json"],
+    );
     const manifest = JSON.parse(fake.files[`${installRoot}/installation.json`]);
     expect(manifest).toMatchObject({
       installRoot,
@@ -481,7 +516,7 @@ describe("public proposal setup", () => {
     expect(JSON.parse(fake.files[`${installRoot}/installation.json`])).not.toHaveProperty("worker");
   });
 
-  it("preserves exact Task 3 receipt bytes after post-install migration failure and retries", async () => {
+  it("restores the exact Task 3 installation after post-install migration failure and retries", async () => {
     const fake = fakeSetupDependencies();
     const installRoot = "/home/ada/.config/public-proposal";
     const legacyBytes = JSON.stringify(task3Manifest(installRoot));
@@ -499,7 +534,11 @@ describe("public proposal setup", () => {
     expect(failed.ok).toBe(false);
     expect(failed.error?.code).toBe("PP_WORKER_PROTOCOL_MISMATCH");
     expect(fake.files[`${installRoot}/installation.json`]).toBe(legacyBytes);
-    expect(fake.removed).toEqual([`${installRoot}/worker`]);
+    expect(fake.removed).toEqual(expect.arrayContaining([
+      `${installRoot}/plugin`,
+      `${installRoot}/marketplace`,
+      `${installRoot}/worker`,
+    ]));
     expect(fake.files[`${installRoot}/plugin/.codex-plugin/plugin.json`]).toContain("public-proposal");
     expect(fake.files[`${installRoot}/marketplace/.dir`]).toBe("dir");
     expect(fake.files[`${installRoot}/codex-skills/.dir`]).toBe("dir");
@@ -512,6 +551,12 @@ describe("public proposal setup", () => {
     );
 
     expect(retried.ok).toBe(true);
+    expect(fake.files[`${installRoot}/plugin/.codex-plugin/plugin.json`]).toBe(
+      fake.files["/pkg/plugin/.codex-plugin/plugin.json"],
+    );
+    expect(fake.files[`${installRoot}/plugin/skills/korean-public-proposal/BUNDLE-MANIFEST.json`]).toBe(
+      fake.files["/pkg/plugin/skills/korean-public-proposal/BUNDLE-MANIFEST.json"],
+    );
     expect(JSON.parse(fake.files[`${installRoot}/installation.json`])).toMatchObject({
       worker: {
         executable: `${installRoot}/worker/bin/python`,
@@ -654,8 +699,9 @@ function fakeSetupDependencies(input?: {
         renames.push({ from, to });
         return;
       }
-      files[to] = files[from];
-      delete files[from];
+      const moving = Object.entries(files).filter(([path]) => path === from || path.startsWith(`${from}/`));
+      for (const [path] of moving) delete files[path];
+      for (const [path, contents] of moving) files[`${to}${path.slice(from.length)}`] = contents;
       renames.push({ from, to });
     },
     remove: async (path) => {

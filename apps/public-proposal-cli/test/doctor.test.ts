@@ -164,6 +164,17 @@ describe("public proposal doctor", () => {
     );
   });
 
+  it("blocks when an installation receipt is self-consistent but stale against the current package bundle", async () => {
+    const report = await runDoctor(fakeDoctorInput(), fakeDoctorDependencies({ packageBundleDrift: true }));
+
+    expect(report.ok).toBe(false);
+    expect(report.checks).toContainEqual(expect.objectContaining({
+      name: "plugin",
+      status: "blocker",
+      code: "PP_PLUGIN_INTEGRITY_FAILED",
+    }));
+  });
+
   it("blocks when the plugin exposes an additional skill surface", async () => {
     const report = await runDoctor(fakeDoctorInput(), fakeDoctorDependencies({ extraSkillSurface: "longtable" }));
 
@@ -229,6 +240,7 @@ function fakeDoctorDependencies(input?: {
     installedWorkerSha?: string;
     extraSkillSurface?: string;
     codexRegistration?: boolean;
+    packageBundleDrift?: boolean;
 }): FakeDoctorDependencies {
   const kppVersion = input?.kppVersion === undefined ? SUPPORTED_KPP_VERSION : input.kppVersion;
   const longtableVersion =
@@ -301,7 +313,18 @@ function fakeDoctorDependencies(input?: {
         return JSON.stringify({ name: "public-proposal", version: "0.1.0" });
       }
       if (path === "/pkg/plugin/skills/korean-public-proposal/BUNDLE-MANIFEST.json") {
-        return JSON.stringify({ schemaVersion: "1.0.0" });
+        return JSON.stringify(input?.packageBundleDrift ? {
+          schemaVersion: "1.0.0",
+          revision: "new-package-bundle",
+        } : {
+          schemaVersion: "1.0.0",
+          files: [
+            {
+              path: "SKILL.md",
+              sha256: "sha256:/home/ada/.config/public-proposal/plugin/skills/korean-public-proposal/SKILL.md",
+            },
+          ],
+        });
       }
       if (path === "/pkg/marketplace/marketplace.json") {
         return JSON.stringify({

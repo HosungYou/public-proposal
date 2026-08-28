@@ -185,6 +185,8 @@ async function pluginCheck(
     const installedPlugin = JSON.parse(installedPluginRaw) as { name?: string; version?: string };
     if (
       installedPlugin.name !== "public-proposal" ||
+      installedPluginRaw !== pluginRaw ||
+      installedBundleRaw !== bundleRaw ||
       installedPluginSha !== manifest.pluginManifestSha256 ||
       installedBundleSha !== manifest.bundleManifestSha256
     ) {
@@ -194,6 +196,8 @@ async function pluginCheck(
         code: "PP_PLUGIN_INTEGRITY_FAILED",
         detected: {
           installedPluginName: installedPlugin.name,
+          packagePluginMatches: installedPluginRaw === pluginRaw,
+          packageBundleMatches: installedBundleRaw === bundleRaw,
           installedPluginSha,
           expectedPluginSha: manifest.pluginManifestSha256,
           installedBundleSha,
