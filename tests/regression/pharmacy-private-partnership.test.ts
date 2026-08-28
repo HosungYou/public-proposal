@@ -36,7 +36,7 @@ describe("anonymized pharmacy private-partnership regression", () => {
     expect(surfaceAudit.status).toBe("PASS");
     expect(surfaceAudit.observations).toMatchObject({ tableCount: 3, svgCount: 4, pageCount: 5, bound: true });
     const visualAudit = await runVisualAudit(fixture.root, result.rendered.pdfPath, result.rendered.manifestPath);
-    expect(visualAudit.status).toBe("PASS");
+    expect(visualAudit.status, JSON.stringify(visualAudit)).toBe("PASS");
     expect(visualAudit.humanReviewRequired).toBe(true);
     expect(visualAudit.observations).toMatchObject({ pageCount: 5, pageImageCount: 5, svgHiddenLabels: 0 });
     expect(visualAudit.observations.svgConnectorLabels).toBeGreaterThan(0);

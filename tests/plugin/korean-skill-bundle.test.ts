@@ -63,6 +63,7 @@ test("the public proposal plugin ships a validated package copy and rewrites the
   expect(await topLevelSkillSurfaces(sourcePluginRoot)).toEqual(["korean-public-proposal"]);
   expect(await topLevelSkillSurfaces(packagedPluginRoot)).toEqual(["korean-public-proposal"]);
   expect(sourceFiles).toContain("skills/korean-public-proposal/scripts/audit_surface_contract.py");
+  expect(sourceFiles).toContain("skills/korean-public-proposal/scripts/normalize_hwpx_portable_fonts.py");
   expect(sourceFiles.some((path) => path.includes("__pycache__") || path.endsWith(".pyc"))).toBe(false);
 
   for (const relativePath of sourceFiles) {
@@ -103,6 +104,57 @@ test("the Korean authority declares the pinned HWPX engine as its native default
   expect(skill).toContain("HWPX-first");
   expect(skill).toContain("vendor/hwpx-skill/UPSTREAM-SKILL.md");
   expect(skill).toContain("source-native routing");
+  expect(skill).toContain("normalize_hwpx_portable_fonts.py");
+});
+
+test("portable HWPX font normalization preserves every unrelated ZIP member", async () => {
+  const fixtureRoot = await mkdtemp(join(tmpdir(), "public-proposal-hwpx-fonts-"));
+  tempDirectories.push(fixtureRoot);
+  const input = join(fixtureRoot, "input.hwpx");
+  const output = join(fixtureRoot, "output.hwpx");
+  const script = join(sourcePluginRoot, "skills", "korean-public-proposal", "scripts", "normalize_hwpx_portable_fonts.py");
+  const builder = [
+    "import sys, zipfile",
+    "path = sys.argv[1]",
+    "header = '<hh:header xmlns:hh=\"urn:test\"><hh:font face=\"함초롬바탕\"/><hh:font face=\"함초롬돋움\"/></hh:header>'.encode()",
+    "with zipfile.ZipFile(path, 'w') as z:",
+    " z.writestr(zipfile.ZipInfo('mimetype'), b'application/hwp+zip', compress_type=zipfile.ZIP_STORED)",
+    " z.writestr('Contents/header.xml', header)",
+    " z.writestr('Contents/section0.xml', b'<section>KEEP</section>')",
+  ].join("\n");
+  await execFile("python3", ["-c", builder, input]);
+
+  const result = await execFile("python3", [script, input, "--output", output]);
+  const report = parseJson(result.stdout) as { ok?: boolean; replacements?: Record<string, number>; unchangedMemberCount?: number };
+  expect(report).toMatchObject({
+    ok: true,
+    replacements: { "함초롬바탕": 1, "함초롬돋움": 1 },
+    unchangedMemberCount: 2,
+  });
+  const [inputHeader, outputHeader, inputSection, outputSection] = await Promise.all([
+    execFile("unzip", ["-p", input, "Contents/header.xml"]),
+    execFile("unzip", ["-p", output, "Contents/header.xml"]),
+    execFile("unzip", ["-p", input, "Contents/section0.xml"]),
+    execFile("unzip", ["-p", output, "Contents/section0.xml"]),
+  ]);
+  expect(inputHeader.stdout).toContain("함초롬바탕");
+  expect(outputHeader.stdout).toContain("Noto Serif CJK KR");
+  expect(outputHeader.stdout).toContain("Noto Sans CJK KR");
+  expect(outputSection.stdout).toBe(inputSection.stdout);
+});
+
+test("rendered visual text matching tolerates renderer-inserted Korean whitespace", async () => {
+  const script = join(sourcePluginRoot, "skills", "korean-public-proposal", "scripts", "audit_rendered_visual.py");
+  const probe = [
+    "import importlib.util, sys",
+    "spec = importlib.util.spec_from_file_location('visual_audit', sys.argv[1])",
+    "module = importlib.util.module_from_spec(spec)",
+    "sys.modules[spec.name] = module",
+    "spec.loader.exec_module(module)",
+    "assert module.normalize_search_text('지역 약사회 A 는') == module.normalize_search_text('지역 약사회 A는')",
+    "assert module.normalize_search_text('100 일 계획은') == module.normalize_search_text('100일 계획은')",
+  ].join("\n");
+  await expect(execFile("python3", ["-c", probe, script])).resolves.toBeDefined();
 });
 
 test("the canonical, source, and packaged Korean skill payloads share the vNext contract", async () => {

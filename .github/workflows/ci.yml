@@ -25,7 +25,7 @@ jobs:
           enable-cache: true
 
       - name: Install document rendering dependencies
-        run: sudo apt-get update && sudo apt-get install -y libreoffice poppler-utils fonts-noto-cjk
+        run: sudo apt-get update && sudo apt-get install -y libreoffice poppler-utils fonts-noto-cjk python3-docx python3-pil
 
       - name: Install JavaScript dependencies
         run: npm ci

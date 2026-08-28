@@ -21,6 +21,7 @@ import struct
 import subprocess
 import sys
 import tempfile
+import unicodedata
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -29,6 +30,11 @@ from xml.etree import ElementTree as ET
 
 FLOAT_RE = re.compile(r"^-?\d+(?:\.\d+)?$")
 SVG_NS = "http://www.w3.org/2000/svg"
+
+
+def normalize_search_text(value: str) -> str:
+    """Normalize renderer-inserted whitespace without changing page scope."""
+    return re.sub(r"\s+", "", unicodedata.normalize("NFKC", value))
 
 
 @dataclass(frozen=True)
@@ -493,11 +499,12 @@ def audit_pdf_pages(pages: list[dict[str, Any]], contract: dict[str, Any]) -> tu
         if density < min_density or density > max_density:
             findings.append(finding("KPP_FRONTIER_PAGE_DENSITY", f"page:{page_no}", ratio=round(density, 4), expected=[min_density, max_density]))
         page_text = " ".join(item["text"] for item in text_blocks)
+        normalized_page_text = normalize_search_text(page_text)
         for requirement in required_text:
             if not isinstance(requirement, dict) or int(requirement.get("page", -1)) != page_no:
                 continue
             expected = str(requirement.get("text", "")).strip()
-            if expected and expected not in page_text:
+            if expected and normalize_search_text(expected) not in normalized_page_text:
                 findings.append(finding("KPP_VISUAL_REQUIRED_TEXT_MISSING", f"page:{page_no}", text=expected))
         for prohibition in forbidden_text:
             if not isinstance(prohibition, dict) or int(prohibition.get("page", -1)) != page_no:
@@ -509,7 +516,7 @@ def audit_pdf_pages(pages: list[dict[str, Any]], contract: dict[str, Any]) -> tu
                     item["text"] for item in text_blocks
                     if item["box"].top <= height * 0.25
                 )
-            if forbidden and forbidden in region_text:
+            if forbidden and normalize_search_text(forbidden) in normalize_search_text(region_text):
                 findings.append(finding("KPP_VISUAL_FORBIDDEN_TEXT_PRESENT", f"page:{page_no}", text=forbidden))
     return findings, observations
 
