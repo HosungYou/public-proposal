@@ -212,6 +212,7 @@ export async function runSetup(
       },
       {
         packageRoot,
+        verifyActiveCache: false,
         packageVersion: dependencies.packageVersion,
         spawn: dependencies.spawn,
         readFile: async (path) => (path === manifest ? manifestContents : dependencies.readFile(path)),
@@ -362,6 +363,7 @@ async function refreshExistingPluginInstallation(
       },
       {
         packageRoot,
+        verifyActiveCache: false,
         packageVersion: dependencies.packageVersion,
         spawn: dependencies.spawn,
         readFile: async (path) => (path === manifest ? manifestContents : dependencies.readFile(path)),
