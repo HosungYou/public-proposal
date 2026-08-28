@@ -27,7 +27,7 @@ describe("complex community-care proposal regression", () => {
     expect(surfaceAudit.observations).toMatchObject({ tableCount: 8, svgCount: 8, pageCount: 8, bound: true });
 
     const visualAudit = await runVisualAudit(fixture.root, result.rendered.pdfPath, result.rendered.manifestPath);
-    expect(visualAudit.status).toBe("PASS");
+    expect(visualAudit.status, JSON.stringify(visualAudit)).toBe("PASS");
     expect(visualAudit.humanReviewRequired).toBe(true);
     expect(visualAudit.observations).toMatchObject({ pageCount: 8, pageImageCount: 8, svgHiddenLabels: 0 });
     expect(visualAudit.observations.surfaceTypes).toEqual(expect.arrayContaining(["figure", "mixed", "table"]));
