@@ -143,6 +143,20 @@ test("portable HWPX font normalization preserves every unrelated ZIP member", as
   expect(outputSection.stdout).toBe(inputSection.stdout);
 });
 
+test("rendered visual text matching tolerates renderer-inserted Korean whitespace", async () => {
+  const script = join(sourcePluginRoot, "skills", "korean-public-proposal", "scripts", "audit_rendered_visual.py");
+  const probe = [
+    "import importlib.util, sys",
+    "spec = importlib.util.spec_from_file_location('visual_audit', sys.argv[1])",
+    "module = importlib.util.module_from_spec(spec)",
+    "sys.modules[spec.name] = module",
+    "spec.loader.exec_module(module)",
+    "assert module.normalize_search_text('지역 약사회 A 는') == module.normalize_search_text('지역 약사회 A는')",
+    "assert module.normalize_search_text('100 일 계획은') == module.normalize_search_text('100일 계획은')",
+  ].join("\n");
+  await expect(execFile("python3", ["-c", probe, script])).resolves.toBeDefined();
+});
+
 test("the canonical, source, and packaged Korean skill payloads share the vNext contract", async () => {
   const sourceSkillRoot = join(sourcePluginRoot, "skills", "korean-public-proposal");
   const packagedSkillRoot = join(packagedPluginRoot, "skills", "korean-public-proposal");

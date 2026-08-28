@@ -173,8 +173,8 @@
     },
     {
       "path": "scripts/audit_rendered_visual.py",
-      "bytes": 32469,
-      "sha256": "05e8ec1a5c5a66b6027f88770637a77e6f1526aed21b921bada24a1ba0d10060",
+      "bytes": 32826,
+      "sha256": "f24081c10c94334bc21a832e65b3ea7cba1c8da437d5d0490ebae734eb5860fd",
       "classification": "script"
     },
     {
